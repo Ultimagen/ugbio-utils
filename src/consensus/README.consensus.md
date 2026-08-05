@@ -4,31 +4,43 @@ Performance & duplex reports for the **ReadFuserAlignSort** (consensus tool)
 pipeline at Ultima Genomics.
 
 The consensus step (`read_fuser`) fuses the reads of each UMI/MI family into a
-single consensus read and records, on that read, an `rs:B:i` tag:
+single consensus read and records, on that read:
 
 ```
-rs = [n_forward_strand_reads, n_reverse_strand_reads]
+rn:Z:<comma-separated list of the fused query names>
+nf:i:<n_forward_strand_reads>
+nr:i:<n_reverse_strand_reads>
 ```
 
-i.e. how many original reads on the forward (+) and reverse (−) strand were
-fused. From this single tag the report classifies every consensus read and
-measures family size **directly** (no MI re-grouping needed):
+i.e. which reads were fused, and how many of them were on the forward (+) and
+reverse (−) strand. From these tags the report classifies every consensus read
+and measures family size **directly** (no MI re-grouping needed):
 
-| Category | `rs` condition | Family size |
-|----------|----------------|-------------|
-| both-strands **duplex** | both entries > 0 | `n_fwd + n_rev` |
-| **single-strand** duplicate | exactly one entry is 0 | the non-zero entry |
-| **singleton** / pass-through | no `rs` tag | 1 |
+| Category | Condition | Family size |
+|----------|-----------|-------------|
+| both-strands **duplex** | `nf > 0` and `nr > 0` | `nf + nr` |
+| **single-strand** duplicate | exactly one of `nf`/`nr` is 0 | the non-zero count |
+| **singleton** / pass-through | no `rn` tag | 1 |
 
-`sum(rs)` equals the length of the `rn` (fused read-name) list, so the two tag
-encodings agree on family size.
+`nf + nr` equals the number of names in `rn`, so the two encodings agree on
+family size; the report cross-checks this and warns on a mismatch.
+
+> **A consensus read is identified by the presence of `rn`, never by a strand
+> tag.** Trimmer already emits `rs:i` ("start position in input of segment ...",
+> see the `@CO` lines in the input header) on the *input* reads, and that tag
+> survives onto the reads the consensus step passes through unchanged. An earlier
+> read_fuser wrote the strand counts as `fs`/`rs`, which collided with it and made
+> every pass-through read look like a consensus read; the counts were renamed to
+> `nf`/`nr` to break the collision. Keying off `rn` is collision-proof and also
+> handles the fact that `nf` is simply *absent* (not zero) on pass-through reads —
+> a parquet reader would fill that absence as `0`.
 
 ## What the report summarises (per sample)
 
 - **Sorter QC** — alignment, duplication and coverage metrics from
   `sorter_stats_csv` (post-consensus).
 - **Duplex family metrics** — average MI-family size *and* covered depth for
-  duplex families and for single-strand duplicate families, from the `rs` tag.
+  duplex families and for single-strand duplicate families, from the `nf`/`nr` tags.
   These are scanned over one chromosome (`--duplex-chrom`, default `chr20`) — a
   representative sample that avoids reading the whole (very large) CRAM. When a
   targets BED is given, the scan is restricted to the targeted intervals on that
@@ -63,9 +75,24 @@ consensus_report \
         sorter_stats_json=Z0316.json bedgraph=Z0316_0.bedGraph.gz \
     --reference ref.fasta --targets exome.bed --output run_report.html
 
+# ReadFuserAlignSort three-way comparison: input vs singletons vs consensus CRAM.
+# Only the consensus CRAM carries rn/nf/nr, so it is the only one given a cram=
+# (the others contribute alignment metrics alone, and need no localised CRAM).
+# --no-summary drops the median-across-samples table, meaningless across these three.
+consensus_report \
+    --sample name=Z0315.input sorter_stats_csv=input.csv sorter_stats_json=input.json \
+    --sample name=Z0315.singletons sorter_stats_csv=sing.csv sorter_stats_json=sing.json \
+    --sample name=Z0315.consensus cram=cons.cram crai=cons.cram.crai \
+        sorter_stats_csv=cons.csv sorter_stats_json=cons.json \
+        consensus_log=Z0315.consensus.stdout.log \
+    --reference ref.fasta --no-summary --output comparison.html
+
 # b37 reference: scan chromosome 20 under its b37 name
 consensus_report ... --duplex-chrom 20 --output report.html
 ```
+
+Sample rows appear in the order the `--sample` blocks are given, so the
+input → singletons → consensus reading order above is preserved in the table.
 
 Outputs (alongside `--output`):
 
@@ -77,7 +104,7 @@ Outputs (alongside `--output`):
 
 | Module | Role |
 |--------|------|
-| `duplex_metrics.py` | Parse `rs:B:i`, classify families, family size + coverage per category (with an `MI`-tag fallback). |
+| `duplex_metrics.py` | Parse `rn`/`nf`/`nr`, classify families, family size + coverage per category (with an `MI`-tag fallback). |
 | `on_target.py` | Genome-wide and optional on-target coverage from a bedGraph + targets BED. |
 | `consensus_log.py` | Parse the consensus tool stdout log for performance counters. |
 | `consensus_report.py` | CLI orchestration: read local inputs, compute metrics, write the HTML report + CSVs. |

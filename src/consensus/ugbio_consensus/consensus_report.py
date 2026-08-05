@@ -11,7 +11,7 @@ Per sample the report covers:
   local ``sorter_stats_csv`` (post-consensus).
 * **Duplex family metrics** - average MI-family size and covered depth for
   *both-strands duplex* families and for *single-strand duplicate* families,
-  measured directly from the consensus reads' ``fs:i``/``rs:i`` strand tags
+  measured directly from the consensus reads' ``nf:i``/``nr:i`` strand tags
   (forward / reverse read counts) - see :mod:`ugbio_consensus.duplex_metrics`.
 * **On-target metrics (optional)** - when a ``--targets`` BED is supplied
   (e.g. an exome capture BED), on-target rate and on-target mean coverage from
@@ -38,6 +38,19 @@ Multiple samples (one ``--sample`` block per sample)::
         --sample name=Z0316 cram=Z0316.cram sorter_stats_csv=Z0316.csv \\
             sorter_stats_json=Z0316.json bedgraph=Z0316_0.bedGraph.gz \\
         --reference ref.fasta --targets exome.bed --output run_report.html
+
+Comparing one run's three read populations - the pipeline input, the
+pass-through singletons, and the fused consensus reads - as three rows. Only the
+consensus CRAM carries ``rn``/``nf``/``nr``, so it is the only block given a
+``cram=`` (the others contribute alignment metrics alone); ``--no-summary`` drops
+the median row, which is meaningless across populations::
+
+    consensus_report \\
+        --sample name=Z0315.input      sorter_stats_csv=input.csv      sorter_stats_json=input.json \\
+        --sample name=Z0315.singletons sorter_stats_csv=singletons.csv sorter_stats_json=singletons.json \\
+        --sample name=Z0315.consensus  cram=consensus.cram \\
+            sorter_stats_csv=consensus.csv sorter_stats_json=consensus.json \\
+        --reference ref.fasta --no-summary --output compare_report.html
 """
 
 from __future__ import annotations
@@ -72,7 +85,7 @@ DEFAULT_QC_METRICS = [
     "PCT_duplicates",
 ]
 
-# Chromosome scanned for the strand-tag (fs/rs) duplex analysis. One whole chromosome gives a
+# Chromosome scanned for the strand-tag (nf/nr) duplex analysis. One whole chromosome gives a
 # stable, representative family-size / duplex estimate without reading the whole
 # (very large) CRAM. chr20 is a common QC-representative autosome; override with
 # --duplex-chrom (e.g. "20" for a b37 reference). When a targets BED is provided,
@@ -104,9 +117,13 @@ class SampleInputs:
     ----------
     name : str
         Sample name used as the row/label (e.g. ``Z0315``).
-    cram : str
+    cram : str | None
         Local path to the consensus CRAM (indexed; ``.crai`` alongside or via
-        ``crai``).
+        ``crai``). Optional: the CRAM is read *only* for the ``nf``/``nr`` duplex
+        family scan, so pass ``None`` for a sample whose reads carry no consensus
+        tags (e.g. the pipeline's input CRAM or its pass-through singleton CRAM).
+        Such a sample still contributes its full set of sorter alignment metrics;
+        only the duplex columns are left empty.
     sorter_stats_csv : str
         Local path to the sorter stats CSV.
     sorter_stats_json : str
@@ -122,9 +139,9 @@ class SampleInputs:
     """
 
     name: str
-    cram: str
     sorter_stats_csv: str
     sorter_stats_json: str
+    cram: str | None = None
     bedgraph: str | None = None
     consensus_log: str | None = None
     crai: str | None = None
@@ -132,6 +149,8 @@ class SampleInputs:
     def crai_path(self) -> str | None:
         if self.crai:
             return self.crai
+        if not self.cram:
+            return None
         default = self.cram + ".crai"
         return default if os.path.exists(default) else None
 
@@ -228,7 +247,7 @@ def analyze_sample(  # noqa: PLR0913
     target_size : int | None, optional
         Merged target size in bp (required with ``targets_sorted_bed``).
     duplex_intervals : list[tuple[str, int, int | None]]
-        Regions to scan for the strand-tag (fs/rs) duplex analysis (an ``end`` of ``None``
+        Regions to scan for the strand-tag (nf/nr) duplex analysis (an ``end`` of ``None``
         means "to the end of the contig"). Built by :func:`build_metrics_table`:
         the whole duplex chromosome, or its intersection with the targets BED.
     max_duplex_reads : int | None, optional
@@ -264,21 +283,33 @@ def analyze_sample(  # noqa: PLR0913
         record["on_target_rate"] = None
         record["target_mean_cvg"] = None
 
-    # --- Duplex / consensus family metrics from the fs/rs strand tags ---
-    fam = duplex_metrics.collect_family_metrics_from_rs_tags(
-        sample.cram,
-        duplex_intervals,
-        reference,
-        index_path=sample.crai_path(),
-        max_reads=max_duplex_reads,
-    )
-    per_cat = fam["per_category"]
-    for category in duplex_metrics.CATEGORIES:
-        record[f"{category}_avg_family_size"] = per_cat.loc[category, "avg_family_size"]
-        record[f"{category}_coverage"] = per_cat.loc[category, "coverage"]
-        record[f"{category}_n_reads"] = per_cat.loc[category, "n_reads"]
-    record["duplex_scan_reads"] = fam["n_reads_scanned"]
-    record["duplex_scan_bp"] = fam["total_interval_bp"]
+    # --- Duplex / consensus family metrics from the nf/nr strand tags ---
+    # Only meaningful for a CRAM whose reads carry the consensus tags. Samples
+    # given without a CRAM (the input CRAM, the pass-through singleton CRAM) get
+    # empty duplex columns but keep their alignment metrics above.
+    if sample.cram:
+        fam = duplex_metrics.collect_family_metrics_from_strand_tags(
+            sample.cram,
+            duplex_intervals,
+            reference,
+            index_path=sample.crai_path(),
+            max_reads=max_duplex_reads,
+        )
+        per_cat = fam["per_category"]
+        for category in duplex_metrics.CATEGORIES:
+            record[f"{category}_avg_family_size"] = per_cat.loc[category, "avg_family_size"]
+            record[f"{category}_coverage"] = per_cat.loc[category, "coverage"]
+            record[f"{category}_n_reads"] = per_cat.loc[category, "n_reads"]
+        record["duplex_scan_reads"] = fam["n_reads_scanned"]
+        record["duplex_scan_bp"] = fam["total_interval_bp"]
+    else:
+        logger.info("Sample %s has no CRAM; skipping the duplex family scan", sample.name)
+        for category in duplex_metrics.CATEGORIES:
+            record[f"{category}_avg_family_size"] = None
+            record[f"{category}_coverage"] = None
+            record[f"{category}_n_reads"] = None
+        record["duplex_scan_reads"] = None
+        record["duplex_scan_bp"] = None
 
     # --- Consensus-tool performance metrics from the stdout log (optional) ---
     if sample.consensus_log:
@@ -311,7 +342,7 @@ def build_metrics_table(  # noqa: PLR0913
         Optional targets BED enabling on-target metrics. When given, the duplex
         scan is restricted to the parts of ``duplex_chrom`` inside the targets.
     duplex_chrom : str, optional
-        Chromosome scanned for the strand-tag (fs/rs) duplex analysis (default
+        Chromosome scanned for the strand-tag (nf/nr) duplex analysis (default
         :data:`DEFAULT_DUPLEX_CHROM`). Without a targets BED the whole chromosome
         is scanned; with one, only its targeted intervals. Pass
         :data:`DUPLEX_CHROM_ALL` (``"all"``) to scan the whole CRAM (every contig,
@@ -322,7 +353,7 @@ def build_metrics_table(  # noqa: PLR0913
     Returns
     -------
     pd.DataFrame
-        One row per sample, sorted by ``sample``.
+        One row per sample, in the order the samples were given.
     """
     scan_all = duplex_chrom == DUPLEX_CHROM_ALL
     targets_sorted, target_size = (None, None)
@@ -354,7 +385,9 @@ def build_metrics_table(  # noqa: PLR0913
         )
         for s in samples
     ]
-    return pd.DataFrame(records).sort_values("sample").reset_index(drop=True)
+    # Keep the caller's sample order: for the input / singletons / consensus comparison
+    # that order is the reading order of the table, which sorting by name would scramble.
+    return pd.DataFrame(records).reset_index(drop=True)
 
 
 def summarize(df: pd.DataFrame) -> pd.Series:
@@ -419,7 +452,7 @@ def build_family_size_figure(df: pd.DataFrame) -> go.Figure:
             f"{duplex_metrics.DUPLEX}_avg_family_size": _CATEGORY_LABEL[duplex_metrics.DUPLEX],
             f"{duplex_metrics.SINGLE_STRAND}_avg_family_size": _CATEGORY_LABEL[duplex_metrics.SINGLE_STRAND],
         },
-        "Average MI-family size (from fs/rs strand tags)",
+        "Average MI-family size (from nf/nr strand tags)",
         "Average family size (reads)",
     )
 
@@ -586,8 +619,9 @@ def _assemble_html(title: str, tables_html: list[str], figures: list[go.Figure])
         "padding: 20px; background:#ffffff; color:#000000;'>",
         f"<h1 style='font-size:34px;'>{title}</h1>",
         "<p style='color:#000000'>Consensus tool (ReadFuserAlignSort) performance and duplex metrics. "
-        "Family size and duplex classification are derived from the per-read <code>fs:i</code> / "
-        "<code>rs:i</code> strand tags (forward / reverse read counts).</p>",
+        "Family size and duplex classification are derived from the per-read <code>nf:i</code> / "
+        "<code>nr:i</code> strand tags (forward / reverse read counts), on reads carrying the "
+        "<code>rn</code> consensus tag.</p>",
     ]
     parts.extend(tables_html)
     for i, fig in enumerate(figures):
@@ -597,7 +631,13 @@ def _assemble_html(title: str, tables_html: list[str], figures: list[go.Figure])
     return "\n".join(parts)
 
 
-def generate_report(df: pd.DataFrame, output_html: str, *, title: str = "Consensus Tool Report") -> str:
+def generate_report(
+    df: pd.DataFrame,
+    output_html: str,
+    *,
+    title: str = "Consensus Tool Report",
+    include_summary: bool = True,
+) -> str:
     """Build the HTML report from a per-sample metrics table.
 
     Parameters
@@ -608,22 +648,26 @@ def generate_report(df: pd.DataFrame, output_html: str, *, title: str = "Consens
         Output HTML path.
     title : str, optional
         Report title.
+    include_summary : bool, optional
+        Whether to emit the "median across samples" summary table. Set ``False``
+        when the rows are not comparable replicates - e.g. the RFAS
+        input/singletons/consensus comparison, where a median across the three
+        populations is meaningless.
 
     Returns
     -------
     str
         Path to the written HTML report.
     """
-    summary = summarize(df).rename("median (all samples)").to_frame().reset_index()
-    summary.columns = ["metric", "median (all samples)"]
-
     # consensus_* metrics get their own table below; drop them from the per-sample
     # table so they are not shown twice.
     per_sample_df = df[[c for c in df.columns if not c.startswith("consensus_")]]
-    tables = [
-        _build_table_html(summary, "Summary (median across samples)"),
-        _build_table_html(per_sample_df, "Per-sample metrics"),
-    ]
+    tables = []
+    if include_summary:
+        summary = summarize(df).rename("median (all samples)").to_frame().reset_index()
+        summary.columns = ["metric", "median (all samples)"]
+        tables.append(_build_table_html(summary, "Summary (median across samples)"))
+    tables.append(_build_table_html(per_sample_df, "Per-sample metrics"))
     consensus_table = _consensus_metrics_table(df)
     if consensus_table is not None:
         tables.append(_build_table_html(consensus_table, "Consensus tool performance (from stdout log)"))
@@ -656,12 +700,14 @@ def _parse_sample_block(tokens: list[str]) -> SampleInputs:
             raise ValueError(f"--sample expects key=value tokens, got '{token}'")
         key, value = token.split("=", 1)
         kv[key.strip()] = value.strip()
-    missing = {"name", "cram", "sorter_stats_csv", "sorter_stats_json"} - kv.keys()
+    # `cram` is optional: it is only needed for the duplex scan, so a sample can
+    # contribute alignment metrics alone (see SampleInputs.cram).
+    missing = {"name", "sorter_stats_csv", "sorter_stats_json"} - kv.keys()
     if missing:
         raise ValueError(f"--sample block missing required keys: {sorted(missing)}")
     return SampleInputs(
         name=kv["name"],
-        cram=kv["cram"],
+        cram=kv.get("cram"),
         sorter_stats_csv=kv["sorter_stats_csv"],
         sorter_stats_json=kv["sorter_stats_json"],
         bedgraph=kv.get("bedgraph"),
@@ -710,6 +756,15 @@ def parse_args(argv: list[str]) -> Namespace:
     ap.add_argument("--max-duplex-reads", type=int, help="Cap reads scanned per sample for duplex metrics")
     ap.add_argument("--title", default="Consensus Tool Report", help="Report title")
     ap.add_argument("--work-dir", help="Scratch dir (default: alongside --output)")
+    ap.add_argument(
+        "--no-summary",
+        dest="summary",
+        action="store_false",
+        help=(
+            "Omit the 'median across samples' summary table. Use when the samples are not "
+            "comparable replicates, e.g. comparing a run's input / singletons / consensus CRAMs."
+        ),
+    )
 
     # Single-sample flags
     ap.add_argument("--name", help="Sample name (single-sample mode; default: CRAM stem)")
@@ -727,8 +782,9 @@ def parse_args(argv: list[str]) -> Namespace:
         action="append",
         metavar="key=value",
         help=(
-            "Repeatable sample block: name= cram= sorter_stats_csv= sorter_stats_json= "
-            "[bedgraph=] [consensus_log=] [crai=]"
+            "Repeatable sample block: name= sorter_stats_csv= sorter_stats_json= "
+            "[cram=] [bedgraph=] [consensus_log=] [crai=]. Omit cram= to report alignment "
+            "metrics only, skipping the duplex scan (for CRAMs without consensus tags)."
         ),
     )
     return ap.parse_args(argv)
@@ -756,8 +812,9 @@ def run(argv: list[str]) -> pd.DataFrame:
     metrics.to_csv(csv_path, index=False)
     pd.DataFrame([asdict(s) for s in samples]).to_csv(os.path.splitext(args.output)[0] + "_manifest.csv", index=False)
 
-    generate_report(metrics, args.output, title=args.title)
-    logger.info("Summary (median across %d samples):\n%s", len(metrics), summarize(metrics).to_string())
+    generate_report(metrics, args.output, title=args.title, include_summary=args.summary)
+    if args.summary:
+        logger.info("Summary (median across %d samples):\n%s", len(metrics), summarize(metrics).to_string())
     return metrics
 
 
