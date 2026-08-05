@@ -260,7 +260,7 @@
           <div class="stat">
 
             <span class="stat-label">Supporting Reads</span>
-            <span class="stat-value">{{ detection.matched_supporting_reads }}</span>
+            <span class="stat-value">{{ "{:,}".format(detection.matched_supporting_reads) }}</span>
           </div>
         </div>
       </div>

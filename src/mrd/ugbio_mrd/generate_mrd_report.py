@@ -425,7 +425,20 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     denom_ratio, filt_ratio, _ = mrd.calc_tumor_fraction_denominator_ratio(
         mrd_report_inputs.featuremap_file, mrd_report_inputs.srsnv_metadata_json, read_filter_query
     )
-    # Track excluded loci per-signature (noise + multi-read) for precise coverage correction.
+    # Pre-compute denom ratio for the No-SNVQ-Filter secondary analysis.
+    # More reads pass without the SNVQ threshold, so the corrected coverage is larger.
+    _no_snvq_q_pre = " and ".join(
+        p.strip() for p in read_filter_query.split(" and ") if "snvq" not in p.lower()
+    )
+    if _no_snvq_q_pre and _no_snvq_q_pre != read_filter_query:
+        try:
+            denom_ratio_no_snvq, _, _ = mrd.calc_tumor_fraction_denominator_ratio(
+                mrd_report_inputs.featuremap_file, mrd_report_inputs.srsnv_metadata_json, _no_snvq_q_pre
+            )
+        except Exception:  # noqa: BLE001
+            denom_ratio_no_snvq = denom_ratio
+    else:
+        denom_ratio_no_snvq = denom_ratio
     # Using a dict[signature_name → (chrom,pos) index] avoids over-correcting coverage for
     # other signatures at the same position when only one was filtered.
 
@@ -860,13 +873,46 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         lod_recall=mrd_report_inputs.lod_recall,
     )
 
-    # Secondary analysis 2: unfiltered reads + filtered signatures
+    # Secondary analysis 2: No SNVQ Filter — derive from the already-loaded df_features.
+    # Apply per-read filter (filt>0 + mapq>=60), then re-compute locus filters from scratch.
+    _no_snvq_q = " and ".join(p.strip() for p in read_filter_query.split(" and ") if "snvq" not in p.lower())
+    df_features_no_snvq_filt = df_features.query(_no_snvq_q) if _no_snvq_q else df_features.copy()
+
+    # Re-apply LQ-reads locus filter: loci where LQ fraction (based on _no_snvq_q failures)
+    # exceeds the threshold are removed.
+    if thresh_noise_lq_reads is not None and _no_snvq_q:
+        _is_hq_ns = df_features.eval(_no_snvq_q)
+        _n_hq_ns = _is_hq_ns.groupby(level=["chrom", "pos"]).sum()
+        _n_total_ns = df_features.groupby(level=["chrom", "pos"]).size()
+        _lq_frac_ns = (_n_total_ns - _n_hq_ns) / _n_total_ns.clip(lower=1)
+        _noisy_ns = _lq_frac_ns[_lq_frac_ns > thresh_noise_lq_reads].index
+        df_features_no_snvq_filt = df_features_no_snvq_filt[
+            ~df_features_no_snvq_filt.index.isin(_noisy_ns)
+        ]
+
+    # Re-apply multi-read locus filter using TF estimated from no-SNVQ reads.
+    if thresh_multi_read_pvalue is not None:
+        _df_tf_ns, _ = mrd.get_tf_from_filtered_data(
+            df_features_no_snvq_filt, df_signatures_filt,
+            plot_results=False, title="No SNVQ (pre multi-read)", denom_ratio=denom_ratio,
+        )
+        while True:
+            _new_ns, _ = mrd.apply_multi_read_locus_filter(
+                df_features_no_snvq_filt, _df_tf_ns, df_signatures_filt, thresh_multi_read_pvalue,
+            )
+            if len(_new_ns) == len(df_features_no_snvq_filt):
+                break
+            df_features_no_snvq_filt = _new_ns
+            _df_tf_ns, _ = mrd.get_tf_from_filtered_data(
+                df_features_no_snvq_filt, df_signatures_filt,
+                plot_results=False, title="No SNVQ (multi-read iter)", denom_ratio=denom_ratio,
+            )
     df_tf_unfilt2, df_supporting_reads_per_locus_unfilt2 = mrd.get_tf_from_filtered_data(
-        df_features,
+        df_features_no_snvq_filt,
         df_signatures_filt,
         plot_results=False,
-        title="Unfiltered reads, filtered signatures",
-        denom_ratio=1,
+        title="No SNVQ filter reads, filtered signatures",
+        denom_ratio=denom_ratio_no_snvq,
     )
     detection_unfilt2 = run_detection_analysis(
         df_tf=df_tf_unfilt2,
@@ -905,6 +951,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         df_signatures_filt=df_signatures_filt,
         df_features=df_features,
         df_features_filt=df_features_filt,
+        df_features_no_snvq_filt=df_features_no_snvq_filt,
         df_supporting_reads_per_locus_unfilt=df_supporting_reads_per_locus_unfilt,
         df_supporting_reads_per_locus_unfilt2=df_supporting_reads_per_locus_unfilt2,
         basename=mrd_report_inputs.output_basename,
