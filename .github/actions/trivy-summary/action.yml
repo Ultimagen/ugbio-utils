@@ -1,0 +1,25 @@
+name: "Trivy Scan Summary"
+description: "Parse Trivy JSON output and generate ECR-style GitHub Actions summary"
+
+inputs:
+  results-file:
+    description: "Path to Trivy JSON output file"
+    required: true
+  image-name:
+    description: "Docker image name (with registry)"
+    required: true
+  image-tag:
+    description: "Docker image tag"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate summary from Trivy JSON
+      shell: bash
+      run: |
+        python3 ${{ github.action_path }}/trivy_json_to_summary.py \
+          --results-file "${{ inputs.results-file }}" \
+          --image-name "${{ inputs.image-name }}" \
+          --image-tag "${{ inputs.image-tag }}" \
+          --github-step-summary "$GITHUB_STEP_SUMMARY"
