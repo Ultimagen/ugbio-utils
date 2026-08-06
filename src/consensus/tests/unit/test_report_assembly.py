@@ -58,7 +58,36 @@ def test_generate_report_html(metrics_df, tmp_path):
     assert "Both-strands duplex" in content
     assert "On-target rate" in content
     assert "Consensus tool performance" in content
-    assert "fs:i" in content and "rs:i" in content
+    assert "nf:i" in content and "nr:i" in content
+    # median-across-samples table is on by default
+    assert "Summary (median across samples)" in content
+
+
+def test_generate_report_no_summary(metrics_df, tmp_path):
+    # The input/singletons/consensus comparison has no meaningful cross-sample median,
+    # so the summary table is suppressed there.
+    out = tmp_path / "report_no_summary.html"
+    consensus_report.generate_report(metrics_df, str(out), include_summary=False)
+    content = out.read_text()
+    assert "Summary (median across samples)" not in content
+    assert "Per-sample metrics" in content
+
+
+def test_sample_block_without_cram_parses(tmp_path):
+    # A row that only reports alignment metrics (input / singletons CRAM) omits cram=.
+    csv = tmp_path / "stats.csv"
+    csv.write_text("metric,value\n")
+    js = tmp_path / "stats.json"
+    js.write_text("{}\n")
+    sample = consensus_report._parse_sample_block(["name=input", f"sorter_stats_csv={csv}", f"sorter_stats_json={js}"])
+    assert sample.name == "input"
+    assert sample.cram is None
+    assert sample.crai_path() is None
+
+
+def test_sample_block_missing_required_key_raises(tmp_path):
+    with pytest.raises(ValueError, match="sorter_stats_json"):
+        consensus_report._parse_sample_block(["name=input", "sorter_stats_csv=x.csv"])
 
 
 def test_consensus_table_absent_without_log(metrics_df):

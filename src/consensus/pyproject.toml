@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_consensus"
-version = "1.27.0-0"
+version = "1.28.2-0"
 requires-python = ">=3.11"
 description = "Ultima Genomics consensus (ReadFuserAlignSort) performance & duplex reports"
 authors = [
