@@ -38,12 +38,21 @@ runs:
         output: 'trivy-results.json'
         exit-code: '0'
 
+    - name: Prepare artifact name
+      if: always()
+      id: artifact-name
+      shell: bash
+      run: |
+        # Sanitize artifact name by replacing invalid characters (/, :, etc.) with hyphens
+        SANITIZED_NAME=$(echo "${{ inputs.image-name }}-${{ inputs.image-tag }}" | sed 's/[\/:]/-/g')
+        echo "name=trivy-image-findings-${SANITIZED_NAME}" >> $GITHUB_OUTPUT
+
     - name: Upload Trivy image scan artifact
       if: always()
       continue-on-error: true
       uses: actions/upload-artifact@v4
       with:
-        name: trivy-image-findings-${{ inputs.image-name }}-${{ inputs.image-tag }}
+        name: ${{ steps.artifact-name.outputs.name }}
         path: trivy-results.json
         retention-days: ${{ inputs.artifact-retention-days }}
 
