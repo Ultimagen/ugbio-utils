@@ -262,10 +262,18 @@ jobs:
           path: .ugbio-utils-scripts
           sparse-checkout: |
             .github/utils
+          sparse-checkout-cone-mode: false
 
       - name: Generate Trivy summary
         if: always()
         run: |
+          # Verify script exists
+          if [ ! -f .ugbio-utils-scripts/.github/utils/trivy_json_to_summary.py ]; then
+            echo "::error::Trivy summary script not found after checkout"
+            ls -la .ugbio-utils-scripts/.github/ 2>&1 || echo "Directory doesn't exist"
+            exit 1
+          fi
+
           python3 .ugbio-utils-scripts/.github/utils/trivy_json_to_summary.py \
             --results-file trivy-results.json \
             --image-name "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}" \
