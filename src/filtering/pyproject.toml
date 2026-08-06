@@ -10,7 +10,7 @@ authors = [
 dependencies = [
     "ugbio_comparison",
     "pickle-secure>=0.99.9",
-    "dill>=0.3.9",
+    "dill>=0.4.1",
 ]
 requires-python = ">=3.11"
 readme = "README.filtering.md"
