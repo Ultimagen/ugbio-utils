@@ -253,10 +253,21 @@ jobs:
           path: trivy-results.json
           retention-days: 30
 
+      - name: Checkout ugbio-utils for scripts
+        if: always()
+        uses: actions/checkout@v4
+        with:
+          repository: Ultimagen/ugbio-utils
+          ref: ${{ inputs.git-ref || 'main' }}
+          path: .ugbio-utils-scripts
+          sparse-checkout: |
+            .github/utils
+
       - name: Generate Trivy summary
         if: always()
-        uses: ./.github/actions/trivy-summary
-        with:
-          results-file: trivy-results.json
-          image-name: "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}"
-          image-tag: "${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}"
+        run: |
+          python3 .ugbio-utils-scripts/.github/utils/trivy_json_to_summary.py \
+            --results-file trivy-results.json \
+            --image-name "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}" \
+            --image-tag "${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}" \
+            --github-step-summary "$GITHUB_STEP_SUMMARY"
