@@ -229,34 +229,12 @@ jobs:
             echo "- ${dest}" >> ${GITHUB_STEP_SUMMARY}
           done
 
-      - name: Run Trivy to scan built image
-        id: trivy-image
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@0.35.0
+      - name: Trivy image scan
+        if: always()
+        uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@DATA-10047-use-dependabot-for-trivy-fixes
         with:
-          scan-type: 'image'
           image-ref: '${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}:${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}'
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-          scanners: 'vuln,secret'
-          ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
-          format: 'json'
-          output: 'trivy-results.json'
-          exit-code: '0'
-
-      - name: Upload Trivy image scan artifact
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-image-findings-${{ inputs.docker-image }}-${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
-          path: trivy-results.json
-          retention-days: 30
-
-      - name: Generate Trivy summary
-        if: always()
-        uses: Ultimagen/ugbio-utils/.github/actions/trivy-summary@DATA-10047-use-dependabot-for-trivy-fixes
-        with:
-          results-file: trivy-results.json
           image-name: "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}"
           image-tag: "${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}"
+          ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
+          artifact-retention-days: "30"
