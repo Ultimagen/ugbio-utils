@@ -238,7 +238,7 @@ jobs:
           image-ref: '${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}:${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}'
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
-          scanners: 'vuln'
+          scanners: 'vuln,secret'
           ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
           format: 'json'
           output: 'trivy-results.json'
