@@ -224,6 +224,29 @@ jobs:
             echo "- ${dest}" >> ${GITHUB_STEP_SUMMARY}
           done
 
+      - name: Run Trivy to scan built image
+        id: trivy-image
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: 'image'
+          image-ref: '${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}:${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}'
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          scanners: 'vuln'
+          ignore-unfixed: false
+          format: 'sarif'
+          output: 'trivy-image-results.sarif'
+          exit-code: '0'
+
+      - name: Upload Trivy image scan artifact
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-findings-${{ inputs.docker-image }}-${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
+          path: trivy-image-results.sarif
+          retention-days: 30
+
       - name: Check ECR scan results
         id: ecr-scan
         continue-on-error: true

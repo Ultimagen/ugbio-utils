@@ -1,0 +1,39 @@
+version: 2
+updates:
+  # Docker base image updates
+  - package-ecosystem: "docker"
+    directories:
+      - "/ugbio_base"
+      - "/src/cloud_utils"
+      - "/src/cnv"
+      - "/src/comparison"
+      - "/src/core"
+      - "/src/featuremap"
+      - "/src/filtering"
+      - "/src/freec"
+      - "/src/methylation"
+      - "/src/mrd"
+      - "/src/omics"
+      - "/src/ppmseq"
+      - "/src/pypgx"
+      - "/src/seq_qc"
+      - "/src/single_cell"
+      - "/src/srsnv"
+      - "/src/t1k"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+      - "security"
+
+  # Python dependencies (UV workspace)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
