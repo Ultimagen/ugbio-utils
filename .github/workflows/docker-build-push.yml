@@ -235,17 +235,37 @@ jobs:
           severity: 'CRITICAL,HIGH,MEDIUM'
           scanners: 'vuln'
           ignore-unfixed: false
-          format: 'sarif'
-          output: 'trivy-image-results.sarif'
+          format: 'table'
+          output: 'trivy-results.txt'
           exit-code: '0'
 
       - name: Upload Trivy image scan artifact
+        if: always()
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: trivy-image-findings-${{ inputs.docker-image }}-${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
-          path: trivy-image-results.sarif
+          path: trivy-results.txt
           retention-days: 30
+
+      - name: Publish Trivy results to Summary
+        if: always()
+        run: |
+          if [[ -s trivy-results.txt ]]; then
+            {
+              echo "---"
+              echo "### Trivy Image Scan Results"
+              echo "**Image:** \`${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}:${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}\`"
+              echo ""
+              echo "<details><summary>Click to expand vulnerability report</summary>"
+              echo ""
+              echo '```'
+              cat trivy-results.txt
+              echo '```'
+              echo ""
+              echo "</details>"
+            } >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Check ECR scan results
         id: ecr-scan
