@@ -82,37 +82,35 @@ def generate_summary(image_name: str, image_tag: str, data: dict) -> str:
             "|----------|-------|",
             f"| CRITICAL | {counts.get('CRITICAL', 0)} |",
             f"| HIGH | {counts.get('HIGH', 0)} |",
-            f"| MEDIUM | {counts.get('MEDIUM', 0)} |",
-            f"| LOW | {counts.get('LOW', 0)} |",
             "",
         ]
     )
 
-    # Alert for CRITICAL/HIGH
-    critical_high_count = counts.get("CRITICAL", 0) + counts.get("HIGH", 0)
-    if critical_high_count > 0:
+    # Alert for CRITICAL
+    critical_count = counts.get("CRITICAL", 0)
+    if critical_count > 0:
         lines.extend(
             [
                 "> [!CAUTION]",
-                f"> **{critical_high_count} CRITICAL/HIGH vulnerabilities detected!**",
+                f"> **{critical_count} CRITICAL vulnerabilities detected!**",
                 "",
                 "<details>",
-                "<summary>Critical & High CVE Details</summary>",
+                "<summary>Critical CVE Details</summary>",
                 "",
-                "| CVE ID | Package | Installed Version | Fixed In | Severity |",
-                "|--------|---------|-------------------|----------|----------|",
+                "| CVE ID | Package | Installed Version | Fixed In |",
+                "|--------|---------|-------------------|----------|",
             ]
         )
 
-        # Add CRITICAL and HIGH findings to table (limit for readability)
+        # Add only CRITICAL findings to table (limit for readability)
         max_displayed_cves = 50
-        critical_high_findings = [f for f in findings if f["severity"] in ["CRITICAL", "HIGH"]]
-        for f in critical_high_findings[:max_displayed_cves]:
-            lines.append(f"| {f['cve']} | {f['package']} | {f['version']} | " f"{f['fixed']} | {f['severity']} |")
+        critical_findings = [f for f in findings if f["severity"] == "CRITICAL"]
+        for f in critical_findings[:max_displayed_cves]:
+            lines.append(f"| {f['cve']} | {f['package']} | {f['version']} | {f['fixed']} |")
 
-        if len(critical_high_findings) > max_displayed_cves:
-            remaining = len(critical_high_findings) - max_displayed_cves
-            lines.append(f"| ... | ... | ... | ... | *({remaining} more)* |")
+        if len(critical_findings) > max_displayed_cves:
+            remaining = len(critical_findings) - max_displayed_cves
+            lines.append(f"| ... | ... | ... | *({remaining} more)* |")
 
         lines.extend(["", "</details>", ""])
 

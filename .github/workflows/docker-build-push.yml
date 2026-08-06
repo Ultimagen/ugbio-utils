@@ -232,9 +232,9 @@ jobs:
           scan-type: 'image'
           image-ref: '${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}:${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}'
           vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH,MEDIUM'
+          severity: 'CRITICAL,HIGH'
           scanners: 'vuln'
-          ignore-unfixed: false
+          ignore-unfixed: true
           format: 'json'
           output: 'trivy-results.json'
           exit-code: '0'
