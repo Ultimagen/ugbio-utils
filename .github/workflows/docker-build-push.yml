@@ -60,6 +60,11 @@ on:
         required: false
         type: string
         default: ubuntu-latest
+      trivy-ignore-unfixed:
+        description: "Ignore unfixed vulnerabilities in Trivy scan (default: true)"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   id-token: write # Required for assuming an AWS role
@@ -234,7 +239,7 @@ jobs:
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
           scanners: 'vuln'
-          ignore-unfixed: true
+          ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
           format: 'json'
           output: 'trivy-results.json'
           exit-code: '0'
