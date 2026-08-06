@@ -258,7 +258,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Ultimagen/ugbio-utils
-          ref: ${{ inputs.git-ref || 'main' }}
+          ref: main
           path: .ugbio-utils-scripts
           sparse-checkout: |
             .github/utils
