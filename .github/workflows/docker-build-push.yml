@@ -231,7 +231,7 @@ jobs:
 
       - name: Trivy image scan
         if: always()
-        uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@DATA-10047-use-dependabot-for-trivy-fixes
+        uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@main
         with:
           image-ref: '${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}:${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}'
           image-name: "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}"
