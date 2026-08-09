@@ -47,6 +47,27 @@ class TestParsers:
 
         pd.testing.assert_frame_equal(result_csv, ref_csv)
 
+    def test_process_mbias_with_stderr_in_input(self, tmpdir, resources_dir):
+        """MethylDackel stderr captured into the mbias table must not change the parsed metrics."""
+        output_prefix = f"{tmpdir}/output_Mbias_with_stderr"
+        output_file = output_prefix + ".csv"
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+        process_mbias.run(
+            [
+                "process_Mbias",
+                "--input",
+                f"{resources_dir}/input_Mbias_with_stderr.bedGraph",
+                "--output",
+                f"{output_prefix}",
+            ]
+        )
+
+        result_csv = pd.read_csv(output_file)
+        ref_csv = pd.read_csv(open(f"{resources_dir}/ProcessMethylDackelMbias.csv"))
+
+        pd.testing.assert_frame_equal(result_csv, ref_csv)
+
     # ------------------------------------------------------
 
     def test_process_per_read(self, tmpdir, resources_dir):

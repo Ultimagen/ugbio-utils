@@ -42,9 +42,7 @@ import json
 import logging
 import sys
 
-import pandas as pd
-
-from ugbio_methylation.methyldackel_utils import calc_distrib_per_strand, get_dict_from_dataframe
+from ugbio_methylation.methyldackel_utils import calc_distrib_per_strand, get_dict_from_dataframe, read_mbias_file
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -77,7 +75,7 @@ def run(argv: list[str] | None = None):
     try:
         # import Mbais file
         in_file_name = args.input
-        df_mbias_input = pd.read_csv(in_file_name, sep="\t")
+        df_mbias_input = read_mbias_file(in_file_name)
         df_mbias_input["PercentMethylation"] = df_mbias_input["nMethylated"] / (
             df_mbias_input["nMethylated"] + df_mbias_input["nUnmethylated"]
         )
@@ -117,9 +115,7 @@ def run(argv: list[str] | None = None):
         # ===================================================================
 
     except Exception as err:
-        exc_info = sys.exc_info()
-        logger.exception(*exc_info)
-        logger.error("Processing MethylDackel Mbias run: failed")
+        logger.exception("Processing MethylDackel Mbias run: failed")
         raise err
 
 

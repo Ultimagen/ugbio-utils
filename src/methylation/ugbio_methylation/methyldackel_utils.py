@@ -1,8 +1,14 @@
+import io
+import logging
 import re
 from collections import Counter
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+MBIAS_HEADER_FIRST_FIELD = "Strand"
 
 
 def get_dict_from_dataframe(
@@ -363,6 +369,50 @@ def calc_distrib_per_strand(data_frame: pd.DataFrame):
         df_distrib = pd.concat([df_distrib, desc], axis=0, ignore_index=True)
 
     return df_distrib
+
+
+def read_mbias_file(in_file_name: str) -> pd.DataFrame:
+    """
+    Goal: Function for reading MethylDackel mbias --noSVG table
+
+    Callers may hand us a file that mixes MethylDackel's stderr with its stdout table (the APL pipeline captures the
+    container's combined output into this file), so anything before the "Strand" header line is dropped rather than
+    letting pd.read_csv fail on the non-tabular lines.
+
+    Parameters
+    ----------
+    in_file_name: str
+        Input MethylDackel mbias table file name
+
+    Returns
+    -------
+    df_mbias_input: pd.DataFrame
+        Output is dataframe with per-position methylation counts
+
+    Raises
+    ------
+    ValueError
+        If no "Strand" header line is found in the input file
+
+    """
+    with open(in_file_name, encoding="utf-8") as file_handler:
+        lines = file_handler.readlines()
+
+    header_index = next(
+        (i for i, line in enumerate(lines) if line.split("\t", 1)[0] == MBIAS_HEADER_FIRST_FIELD),
+        None,
+    )
+    if header_index is None:
+        raise ValueError(f"No '{MBIAS_HEADER_FIRST_FIELD}' header line found in MethylDackel mbias file {in_file_name}")
+
+    if header_index > 0:
+        skipped = [line.strip() for line in lines[:header_index]]
+        logger.warning(
+            f"Skipped {header_index} non-table line(s) preceding the "
+            f"'{MBIAS_HEADER_FIRST_FIELD}' header in {in_file_name}: {skipped}"
+        )
+
+    return pd.read_csv(io.StringIO("".join(lines[header_index:])), sep="\t")
 
 
 def read_merge_context_file(in_file_name: str) -> pd.DataFrame:
