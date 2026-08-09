@@ -81,7 +81,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Generate uv.lock
-        run: uv lock
+        run: uv sync --all-extras --all-packages
 
       - name: Run Trivy to scan fs
         uses: aquasecurity/trivy-action@0.35.0
