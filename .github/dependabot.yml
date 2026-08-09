@@ -12,11 +12,12 @@ updates:
     labels:
       - "dependencies"
 
-  # # Python dependencies (UV workspace)
-  # - package-ecosystem: "uv"
-  #   directory: "/"
-  #   schedule:
-  #     interval: "weekly"
-  #   open-pull-requests-limit: 5
-  #   labels:
-  #     - "dependencies"
+  # Python dependencies (UV workspace) - scan only, no PRs
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0  # Don't open PRs, only scan
+    labels:
+      - "dependencies"
+      - "python"
