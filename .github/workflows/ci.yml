@@ -24,7 +24,7 @@ env:
   INSTALL_BIO_PATH: ./install-bio
   INSTALL_BIO_REF: main
   INSTALL_BIO_SCRIPT: install-bio.sh
-  TRIVY_VERSION: v0.69.2
+  TRIVY_VERSION: v0.73.0
 
 jobs:
   get-members:
