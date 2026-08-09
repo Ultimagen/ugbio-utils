@@ -501,23 +501,25 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Could not compute %s multi-read support QC check: %s", ctrl_type, exc)
 
-    # Detection call
-    if len(syn_reads) == 0 or n_effective == 0:
-        detected = None
-        call = "Indeterminate"
-    elif p_value <= alpha:
-        detected = True
-        call = "MRD Detected"
-    else:
-        detected = False
-        call = "MRD Not Detected"
-
     # Detection threshold from Binomial model: smallest k s.t. Binom.sf(k-1, n_effective, p_err) < alpha.
     # Returns None when no integer threshold satisfies the criterion (e.g. noise too diffuse for alpha).
     if n_effective > 0 and p_err > 0:
         detection_threshold = _binom_detection_threshold(n_effective, p_err, alpha)
     else:
         detection_threshold = None
+
+    # Detection call: require matched_reads > detection_threshold (strict).
+    # Using >= (i.e. p_value <= alpha) gives poor calibration at the boundary
+    # where VAF == threshold; strict > excludes that ambiguous boundary read count.
+    if len(syn_reads) == 0 or n_effective == 0:
+        detected = None
+        call = "Indeterminate"
+    elif detection_threshold is not None and matched_reads > detection_threshold:
+        detected = True
+        call = "MRD Detected"
+    else:
+        detected = False
+        call = "MRD Not Detected"
 
     # Sample-specific LOD: total VAF (p_err + incremental TF) at which recall >= lod_recall.
     # Stored as total VAF so it sits on the same scale as matched_ctdna_vaf and the
