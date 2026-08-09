@@ -18,6 +18,3 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 0  # Don't open PRs, only scan
-    labels:
-      - "dependencies"
-      - "python"
