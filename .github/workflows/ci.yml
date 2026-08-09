@@ -92,7 +92,7 @@ jobs:
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
           scanners: 'vuln,secret'
-          version: v0.73.0
+          version: ${{ env.TRIVY_VERSION }}
 
   ugbio-utils-CI:
     runs-on: build-docker-4
