@@ -1179,6 +1179,10 @@ def render_analysis_report(  # noqa: PLR0913
     # Format values for template
     binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
     noise_rate_str = format_scientific(detection.noise_rate) if detection.noise_rate > 0 else "0"
+    # T = K/P: supporting reads corrected for SNVQ recall → total signal estimate
+    total_signal_t = detection.matched_supporting_reads / denom_ratio if denom_ratio > 0 else 0.0
+    # N = total coverage at signature loci (back-computed from corrected_coverage / P)
+    total_coverage_n = detection.corrected_coverage / denom_ratio if denom_ratio > 0 else 0.0
 
     context = {
         "report_title": "MRD Analysis Report",
@@ -1189,6 +1193,9 @@ def render_analysis_report(  # noqa: PLR0913
         "binom_p_str": binom_p_str,
         "noise_rate_str": noise_rate_str,
         "vaf_str": format_scientific(detection.matched_ctdna_vaf) if detection.matched_ctdna_vaf > 0 else "0",
+        "total_signal_t": total_signal_t,
+        "total_coverage_n": total_coverage_n,
+        "snvq_threshold": _snvq_thr,
         "lod_str": format_scientific(detection.sample_specific_lod) if detection.sample_specific_lod else "N/A",
         "signal_noise_img": patient_controls_img,
         "sbs96_plots": sbs96_plots,
@@ -1525,6 +1532,8 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
     # ── Format values ──
     binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
     noise_rate_str = format_scientific(detection.noise_rate) if detection.noise_rate > 0 else "0"
+    total_signal_t = detection.matched_supporting_reads / denom_ratio if denom_ratio > 0 else 0.0
+    total_coverage_n = detection.corrected_coverage / denom_ratio if denom_ratio > 0 else 0.0
 
     context = {
         "report_title": "MRD QC Report",
@@ -1535,6 +1544,9 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
         "binom_p_str": binom_p_str,
         "noise_rate_str": noise_rate_str,
         "vaf_str": format_scientific(detection.matched_ctdna_vaf) if detection.matched_ctdna_vaf > 0 else "0",
+        "total_signal_t": total_signal_t,
+        "total_coverage_n": total_coverage_n,
+        "snvq_threshold": _snvq_thr,
         "lod_str": format_scientific(detection.sample_specific_lod) if detection.sample_specific_lod else "N/A",
         "denom_ratio": denom_ratio,
         "signal_noise_img": patient_controls_img,

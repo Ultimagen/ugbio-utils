@@ -6,11 +6,17 @@ Implements the MRD detection procedure:
 - Detection call (MRD Detected / Not Detected / Indeterminate)
 - Personal LOD estimation via analytical Binomial model
 
-The test statistic is the count of supporting reads passing quality
-filters (SNVQ >= 60, MAPQ >= 60, filt > 0) — the same metric already
-computed by the existing pipeline. The noise rate (p_err) is estimated
-from the db_control synthetic signatures via MLE; a Jeffreys-prior floor is applied
-only when zero background reads are observed to avoid a degenerate null distribution.
+ctDNA VAF estimation
+--------------------
+  N = total coverage at signature loci (signature_size × mean_coverage)
+  K = supporting reads passing the SNVQ quality threshold
+  P = SNVQ recall: fraction of true-positive reads passing the threshold
+  T = total signal = K / P  (K corrected for recall)
+  ctDNA VAF = T / N
+
+The Binomial test uses n_effective = N × P (= corrected_coverage) as the trial count
+and K as the observed count. The noise rate p_err is estimated from db_control synthetic
+signatures via MLE; a Jeffreys-prior floor is applied when zero background reads are observed.
 """
 
 from dataclasses import dataclass, field
@@ -73,7 +79,7 @@ def _binom_detection_threshold(n: int, p_err: float, alpha: float) -> int | None
     Parameters
     ----------
     n : int
-        Effective number of trials (signature_size × mean_coverage × denom_ratio).
+        Effective Binomial trial count (N × P = total_coverage × SNVQ_recall = corrected_coverage).
     p_err : float
         Per-locus background noise rate (MLE from db_control signatures, or Jeffreys-prior floor
         when zero background reads were observed).
@@ -104,8 +110,8 @@ class DetectionResult:
     p_value: float
 
     # Observed signal
-    matched_supporting_reads: int
-    matched_ctdna_vaf: float
+    matched_supporting_reads: int  # K: supporting reads passing SNVQ threshold
+    matched_ctdna_vaf: float  # T/N where T = K/P (total signal) and N = total coverage
 
     # Null distribution summary
     null_median_reads: float
@@ -121,13 +127,13 @@ class DetectionResult:
 
     # Assay metrics
     signature_size: int  # number of loci in filtered signature
-    mean_coverage: float  # mean coverage at signature loci
-    corrected_coverage: float  # total corrected coverage
+    mean_coverage: float  # mean coverage at signature loci; N = signature_size × mean_coverage
+    corrected_coverage: float  # N × P = total_coverage × SNVQ_recall (Binomial trial count)
     detection_threshold: int | None  # minimum reads for p < alpha from fitted null; None when no threshold exists
 
     # Binomial model fields
     noise_rate: float  # background error rate from db_control (p_err)
-    n_effective: int  # N = sig_size × mean_cov × denom_ratio for Binomial
+    n_effective: int  # = corrected_coverage = N × P, used as Binomial n
     jeffreys_prior_applied: bool  # True when no db_control reads observed (p_err floor via prior)
 
     # QC checks (shown as pass/fail checkboxes in the report)
@@ -166,9 +172,9 @@ def compute_sample_specific_lod(  # noqa: PLR0911
     Parameters
     ----------
     n : int
-        Effective number of Binomial trials.  Callers should pass the
-        ``corrected_coverage`` value already computed by
-        ``get_tf_from_filtered_data`` (= ceil(sum(coverage) * denom_ratio))
+        Effective Binomial trial count (N × P = total_coverage × SNVQ_recall = corrected_coverage).
+        Callers should pass the ``corrected_coverage`` value already computed by
+        ``get_tf_from_filtered_data`` (= ceil(sum(coverage) * SNVQ_recall))
         so that the LOD and the reported ctDNA VAF share exactly the same
         denominator.
     p_err : float
@@ -250,9 +256,9 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     df_tf : pd.DataFrame
         Tumor fraction dataframe as produced by get_tf_from_filtered_data.
         Index: (signature_type, signature).
-        Columns: supporting_reads, coverage, corrected_coverage, ctdna_vaf.
+        Columns: supporting_reads (K), coverage (N raw), corrected_coverage (N×P), ctdna_vaf (T/N).
         The ``corrected_coverage`` column is the single authoritative Binomial
-        trial count (= ceil(sum(coverage) * denom_ratio)) and is used directly
+        trial count (= ceil(N × P)) and is used directly
         for the p-value, detection threshold, and LOD calculations so that all
         three share exactly the same denominator as the reported ctDNA VAF.
     df_signatures_filt : pd.DataFrame

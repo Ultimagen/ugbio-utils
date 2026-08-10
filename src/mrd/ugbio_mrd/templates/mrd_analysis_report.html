@@ -124,7 +124,7 @@
   /* ── Metrics grid ── */
   .metrics-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 12px;
   }
   .metric-card {
@@ -251,6 +251,7 @@
           <div class="stat">
             <span class="stat-label">ctDNA VAF</span>
             <span class="stat-value">{{ vaf_str }}</span>
+            <span class="stat-sub">= Total Signal / Total Coverage</span>
           </div>
           <div class="stat">
             <span class="stat-label">p-value (Binomial)</span>
@@ -258,7 +259,6 @@
             <span class="stat-sub">Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }})</span>
           </div>
           <div class="stat">
-
             <span class="stat-label">Supporting Reads</span>
             <span class="stat-value">{{ "{:,}".format(detection.matched_supporting_reads) }}</span>
           </div>
@@ -308,14 +308,22 @@
           <div class="sub">at signature loci</div>
         </div>
         <div class="metric-card">
-          <div class="label">Corrected Coverage</div>
-          <div class="value">{{ "{:,.0f}".format(detection.corrected_coverage) }}</div>
-          <div class="sub">effective depth &times; loci</div>
+          <div class="label">Total Coverage</div>
+          <div class="value">{{ "{:,.0f}".format(total_coverage_n) }}</div>
+          <div class="sub">reads covering signature</div>
         </div>
         <div class="metric-card">
-          <div class="label">Coverage Correction Ratio</div>
+          <div class="label">SNVQ{% if snvq_threshold %}{{ snvq_threshold|int }}{% endif %} Recall</div>
           <div class="value">{{ "%.2f"|format(denom_ratio) }}</div>
-          <div class="sub">corrected / original coverage</div>
+          <div class="sub">TP fraction passing SNVQ{% if snvq_threshold %} &ge; {{ snvq_threshold|int }}{% endif %}</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Total Signal</div>
+          <div class="value">{{ "%.1f"|format(total_signal_t) }}</div>
+          <div class="sub" style="display:flex; flex-direction:column; align-items:center; line-height:1.4; margin-top:4px;">
+            <span>supporting reads</span>
+            <span style="border-top:1px solid currentColor; padding-top:2px; width:100%; text-align:center;">SNVQ recall</span>
+          </div>
         </div>
       </div>
     </div>

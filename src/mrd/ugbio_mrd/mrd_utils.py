@@ -1208,7 +1208,15 @@ def get_tf_from_filtered_data(
     excluded_loci: pd.Index | None = None,
 ):
     """
-    Calculate tumor fraction from filtered dataframes.
+    Calculate ctDNA VAF from filtered featuremap and signature dataframes.
+
+    VAF formula:  VAF = T / N  where T = K / P
+      N = total coverage at signature loci (sum of per-locus coverage)
+      K = supporting reads (rows in df_features_in after read-quality filter)
+      P = SNVQ recall (denom_ratio: fraction of TP reads passing the quality threshold)
+      T = total signal = K / P
+
+    In practice: corrected_coverage = ceil(N × P) and ctdna_vaf = K / corrected_coverage.
 
     Parameters
     ----------
@@ -1273,7 +1281,16 @@ def get_tf_from_filtered_data(
 
 def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadata_json: str, read_filter_query: str):
     """
-    Calculate the ratio of filtered to total reads from the single_read_snv training dataframe
+    Compute P (SNVQ recall): the fraction of true-positive reads passing the read quality filter.
+
+    P = filt_ratio × read_filter_non_filt, where:
+      filt_ratio           = fraction of TPs surviving the training region filter
+      read_filter_non_filt = fraction of TPs passing the SNVQ threshold (read_filter_query)
+
+    P is used as the denominator correction so that:
+      corrected_coverage = ceil(N × P)
+      ctDNA VAF = K / corrected_coverage = (K/P) / N = T / N
+
     Parameters
     ----------
     featuremap_df_file: str
@@ -1286,7 +1303,7 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
     Returns
     -------
     denom_ratio: float
-        ratio of filtered to total reads
+        P = SNVQ recall (combined fraction of TP reads passing region + quality filters)
     """
     # Read parquet (only required columns) and apply read filter query to true positives
     # Get column names from parquet schema without reading data
