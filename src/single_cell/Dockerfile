@@ -1,4 +1,4 @@
-FROM python:3.11-bookworm AS build
+FROM python:3.14-bookworm AS build
 
 ARG OUT_DIR=/tmp/ugbio
 ARG MODULE_DIR=single_cell
@@ -19,7 +19,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 RUN pip install ${OUT_DIR}/*.whl
 
 ##################################################################
-FROM python:3.11-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 ARG USERNAME=app
 ARG USER_UID=1000
