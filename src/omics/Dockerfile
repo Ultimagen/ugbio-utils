@@ -1,5 +1,5 @@
 ARG OUT_DIR=/tmp/ugbio
-FROM python:3.11-bookworm AS build
+FROM python:3.14-bookworm AS build
 
 ARG OUT_DIR
 ARG MODULE_DIR=omics
@@ -21,7 +21,7 @@ RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
 RUN pip install pytest
 
 ##################################################################
-FROM python:3.11-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
