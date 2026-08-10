@@ -40,7 +40,7 @@ RUN git clone https://github.com/Ultimagen/MethylDackel.git && \
     make install prefix=/app/bin/
 
 ##################################################################
-FROM python:3.11-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 ARG DEBIAN_FRONTEND=noninteractive
 
