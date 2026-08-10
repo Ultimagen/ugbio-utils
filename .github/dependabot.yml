@@ -11,15 +11,10 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
-      - "docker"
-      - "security"
 
-  # Python dependencies (UV workspace)
+  # Python dependencies (UV workspace) - scan only, no PRs
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "python"
+    open-pull-requests-limit: 0  # Don't open PRs, only scan

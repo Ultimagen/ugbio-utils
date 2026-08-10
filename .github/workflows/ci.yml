@@ -24,7 +24,7 @@ env:
   INSTALL_BIO_PATH: ./install-bio
   INSTALL_BIO_REF: main
   INSTALL_BIO_SCRIPT: install-bio.sh
-  TRIVY_VERSION: v0.69.2
+  TRIVY_VERSION: v0.73.0
 
 jobs:
   get-members:
@@ -74,6 +74,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Generate uv.lock
+        run: uv lock
 
       - name: Run Trivy to scan fs
         uses: aquasecurity/trivy-action@0.35.0
@@ -83,6 +91,8 @@ jobs:
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
+          scanners: 'vuln,secret'
+          version: ${{ env.TRIVY_VERSION }}
 
   ugbio-utils-CI:
     runs-on: build-docker-4
@@ -106,7 +116,7 @@ jobs:
         aws-role-name: ${{ env.AWS_ROLE_NAME }}
         ugbio_base_image: ${{ env.UGBIO_BASE_IMAGE_NAME }}
         ugbio_base_build_image: ${{ env.UGBIO_BASE_BUILD_IMAGE_NAME }}
-        github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+        github-token: ${{ secrets.DEPENDABOT_GITHUB_TOKEN || secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
   ugbio-utils-bioinfo-CI:
     runs-on: build-docker-4
@@ -124,7 +134,7 @@ jobs:
         with:
           repository: Ultimagen/install-bio
           ref: ${{ env.INSTALL_BIO_REF }}
-          token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          token: ${{ secrets.DEPENDABOT_GITHUB_TOKEN || secrets.GH_PERSONAL_ACCESS_TOKEN }}
           fetch-depth: 0
           path: ${{ env.INSTALL_BIO_PATH }}
 
