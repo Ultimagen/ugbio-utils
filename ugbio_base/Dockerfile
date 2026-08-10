@@ -1,7 +1,7 @@
 # =============================================================================
 # Stage 1: Build bioinformatics tools from source
 # =============================================================================
-FROM python:3.11-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG BCFTOOLS_VERSION=1.20
@@ -71,7 +71,7 @@ RUN git clone https://github.com/bedops/bedops.git && \
 # =============================================================================
 # Stage 2: Runtime image — only binaries and runtime shared libraries
 # =============================================================================
-FROM python:3.11-slim-bookworm AS ugbio-base
+FROM python:3.14-slim-bookworm AS ugbio-base
 
 ARG USERNAME=app
 ARG USER_UID=1000
