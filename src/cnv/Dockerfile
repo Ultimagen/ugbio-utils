@@ -11,7 +11,7 @@ RUN apt-get update && \
   && \
   rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
-FROM python:3.11-bookworm AS build
+FROM python:3.14-bookworm AS build
 
 ARG OUT_DIR
 ARG MODULE_DIR=cnv
