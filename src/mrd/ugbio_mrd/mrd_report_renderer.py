@@ -440,7 +440,7 @@ def render_sbs_vaf_combined(
     return sbs96_img, sbs6_vaf_img
 
 
-def render_intersection_snvq_combined(  # noqa: PLR0912, C901
+def render_intersection_snvq_combined(  # noqa: PLR0912, PLR0915, C901
     df_features_filt: pd.DataFrame,
     snvq_threshold: float | None = None,
     n_db_ctrl_sigs: int | None = None,
@@ -667,7 +667,7 @@ def render_lq_fraction_histogram(  # noqa: PLR0911, PLR0912, C901
     return img
 
 
-def render_read_length_histogram(  # noqa: C901
+def render_read_length_histogram(  # noqa: PLR0915, C901
     df_features_filt: pd.DataFrame,
     n_db_ctrl_sigs: int | None = None,
 ) -> str:
@@ -1162,7 +1162,11 @@ def render_analysis_report(  # noqa: PLR0913
     # df_features_filt restricted to final signature loci (n == supporting reads)
     _df_rl = _restrict_to_sig_loci(df_features_filt, df_signatures_filt) if df_features_filt is not None else None
     _df_snvq = _df_rl  # same filtered data; bars are all above threshold by definition
-    read_length_img = render_read_length_histogram(_df_rl, n_db_ctrl_sigs=_n_db) if _df_rl is not None and not _df_rl.empty else ""
+    read_length_img = (
+        render_read_length_histogram(_df_rl, n_db_ctrl_sigs=_n_db)
+        if _df_rl is not None and not _df_rl.empty
+        else ""
+    )
 
     # SNVQ distribution — same filtered data, no threshold split needed
     intersection_snvq_img = (
@@ -1220,7 +1224,7 @@ def render_analysis_report(  # noqa: PLR0913
     return template.render(**context)
 
 
-def render_qc_report(  # noqa: PLR0913, PLR0915, C901
+def render_qc_report(  # noqa: PLR0912, PLR0913, PLR0915, C901
     detection: DetectionResult,
     detection_unfilt: DetectionResult,
     detection_unfilt2: DetectionResult,

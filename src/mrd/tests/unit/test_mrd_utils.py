@@ -580,7 +580,10 @@ def _make_ctrl_filter_test_data():
         ("syn1", "db_control", [100, 200]),
     ]:
         for pos in positions:
-            sig_entries.append({"chrom": "chr1", "pos": pos, "signature": sig, "signature_type": sig_type, "coverage": 1000.0})
+            sig_entries.append(
+                {"chrom": "chr1", "pos": pos, "signature": sig,
+                 "signature_type": sig_type, "coverage": 1000.0}
+            )
     df_signatures_filt = pd.DataFrame(sig_entries).set_index(["chrom", "pos"])
     return df_features_filt, df_tf, df_signatures_filt
 
@@ -650,10 +653,20 @@ def test_apply_multi_read_locus_filter_removes_outlier_db_control_loci():
         },
         index=index,
     )
-    sig_entries = [{"chrom": "chr1", "pos": p, "signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for p in [100, 200, 300]]
+    sig_entries = [
+        {"chrom": "chr1", "pos": p, "signature": "sig1",
+         "signature_type": "matched", "coverage": 1000.0}
+        for p in [100, 200, 300]
+    ]
     for i in range(n_background):
-        sig_entries.append({"chrom": f"chr{i + 2}", "pos": i, "signature": "syn0", "signature_type": "db_control", "coverage": 1000.0})
-    sig_entries.append({"chrom": "chr1", "pos": 999, "signature": "syn0", "signature_type": "db_control", "coverage": 1000.0})
+        sig_entries.append(
+            {"chrom": f"chr{i + 2}", "pos": i, "signature": "syn0",
+             "signature_type": "db_control", "coverage": 1000.0}
+        )
+    sig_entries.append(
+        {"chrom": "chr1", "pos": 999, "signature": "syn0",
+         "signature_type": "db_control", "coverage": 1000.0}
+    )
     df_signatures_filt = pd.DataFrame(sig_entries).set_index(["chrom", "pos"])
 
     df_out, info = apply_multi_read_locus_filter(df_features, df_tf, df_signatures_filt, 0.01)
@@ -687,7 +700,11 @@ def test_apply_multi_read_locus_filter_never_removes_single_read_loci():
     )
     # 1000 signature loci → Bonferroni N=1000; features only cover 3 of them
     df_signatures_filt = pd.DataFrame(
-        [{"chrom": "chr1", "pos": i, "signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for i in range(1000)]
+        [
+            {"chrom": "chr1", "pos": i, "signature": "sig1",
+             "signature_type": "matched", "coverage": 1000.0}
+            for i in range(1000)
+        ]
     ).set_index(["chrom", "pos"])
 
     df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.05)
