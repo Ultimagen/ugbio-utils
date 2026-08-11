@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 # Install dependencies
 # Note: libdeflate-dev, liblzma-dev, libbz2-dev are required by htslib for compression support
