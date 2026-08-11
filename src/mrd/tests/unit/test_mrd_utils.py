@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 from ugbio_mrd.mrd_utils import (
+    _compute_motif_weighted_recall,
     calc_tumor_fraction_denominator_ratio,
     generate_synthetic_signatures,
     read_intersection_dataframes,
@@ -191,24 +192,24 @@ def test_calc_tumor_fraction_denominator_ratio(tmpdir, resources_dir):
     read_filter_query = "filt>0 and snvq>60"
 
     # Run the function
-    denom_ratio, filt_ratio, read_filter_non_filt = calc_tumor_fraction_denominator_ratio(
+    snvq_recall, filt_ratio, read_filter_non_filt = calc_tumor_fraction_denominator_ratio(
         featuremap_df_file=featuremap_file,
         srsnv_metadata_json=metadata_file,
         read_filter_query=read_filter_query,
     )
 
     # Verify return values are floats
-    assert isinstance(denom_ratio, float | np.floating)
+    assert isinstance(snvq_recall, float | np.floating)
     assert isinstance(filt_ratio, float | np.floating)
     assert isinstance(read_filter_non_filt, float | np.floating)
 
     # Verify values
     assert np.isclose(filt_ratio, 0.7012110035188417)
     assert np.isclose(read_filter_non_filt, 0.658410138248848)
-    assert np.isclose(denom_ratio, 0.461684433768454)
+    assert np.isclose(snvq_recall, 0.461684433768454)
 
-    # Verify the calculation: denom_ratio = filt_ratio * read_filter_non_filt
-    assert np.isclose(denom_ratio, filt_ratio * read_filter_non_filt)
+    # Verify the calculation: snvq_recall = filt_ratio * read_filter_non_filt
+    assert np.isclose(snvq_recall, filt_ratio * read_filter_non_filt)
 
 
 def test_calc_tumor_fraction_denominator_ratio_rows_metadata(tmpdir, resources_dir):
@@ -228,19 +229,19 @@ def test_calc_tumor_fraction_denominator_ratio_rows_metadata(tmpdir, resources_d
     with open(metadata_rows_file, "w") as f:
         json.dump(metadata, f)
 
-    denom_ratio, filt_ratio, read_filter_non_filt = calc_tumor_fraction_denominator_ratio(
+    snvq_recall, filt_ratio, read_filter_non_filt = calc_tumor_fraction_denominator_ratio(
         featuremap_df_file=featuremap_file,
         srsnv_metadata_json=str(metadata_rows_file),
         read_filter_query=read_filter_query,
     )
 
-    assert isinstance(denom_ratio, float | np.floating)
+    assert isinstance(snvq_recall, float | np.floating)
     assert isinstance(filt_ratio, float | np.floating)
     assert isinstance(read_filter_non_filt, float | np.floating)
 
     assert np.isclose(filt_ratio, 0.7012110035188417)
     assert np.isclose(read_filter_non_filt, 0.658410138248848)
-    assert np.isclose(denom_ratio, 0.461684433768454)
+    assert np.isclose(snvq_recall, 0.461684433768454)
 
 
 def test_read_and_filter_features_parquet_noise_filter(tmp_path):
@@ -718,3 +719,79 @@ def test_apply_multi_read_filter_all_loci_vaf_estimation():
     remaining = df_out.index.get_level_values("pos").tolist()
     assert 100 not in remaining
     assert 200 in remaining and 300 in remaining
+
+
+# ── Motif-weighted recall ─────────────────────────────────────────────────────
+
+
+def test_compute_motif_weighted_recall_returns_valid_value(resources_dir):
+    """Motif-weighted recall must be in [0, 1] for a VCF with X_LM/X_RM."""
+    featuremap_file = pjoin(resources_dir, "416119_L7402.featuremap_df.10k.parquet")
+    signature_vcf = pjoin(resources_dir, "mutect_mrd_signature_test.vcf.gz")
+    read_filter_query = "filt>0 and snvq>60"
+
+    result = _compute_motif_weighted_recall(featuremap_file, signature_vcf, read_filter_query)
+
+    assert result is not None
+    assert 0.0 <= result <= 1.0
+
+
+def test_compute_motif_weighted_recall_differs_from_unweighted(resources_dir):
+    """Weighted recall should differ from the flat unweighted estimate."""
+    import pandas as pd
+
+    featuremap_file = pjoin(resources_dir, "416119_L7402.featuremap_df.10k.parquet")
+    signature_vcf = pjoin(resources_dir, "mutect_mrd_signature_test.vcf.gz")
+    read_filter_query = "filt>0 and snvq>60"
+
+    weighted = _compute_motif_weighted_recall(featuremap_file, signature_vcf, read_filter_query)
+
+    df_recall = (
+        pd.read_parquet(featuremap_file, engine="fastparquet", columns=["label", "SNVQ", "FILT"])
+        .rename(columns=lambda x: x.lower())
+        .assign(filt=1)
+        .query("label")
+        .eval(read_filter_query)
+    )
+    unweighted = float(df_recall.mean())
+
+    assert weighted is not None
+    # Sanity: not wildly different (both are valid recall fractions)
+    assert abs(weighted - unweighted) < 0.5
+    assert weighted != pytest.approx(unweighted, abs=0)
+
+
+def test_compute_motif_weighted_recall_fallback_without_xlm(resources_dir):
+    """Returns None when the signature VCF lacks X_LM/X_RM annotations."""
+    featuremap_file = pjoin(resources_dir, "416119_L7402.featuremap_df.10k.parquet")
+    signature_vcf = pjoin(resources_dir, "150382-BC04.filtered_signature.chr22_12693463.vcf.gz")
+    read_filter_query = "filt>0 and snvq>60"
+
+    result = _compute_motif_weighted_recall(featuremap_file, signature_vcf, read_filter_query)
+
+    assert result is None
+
+
+def test_calc_tumor_fraction_denominator_ratio_with_signature(resources_dir):
+    """With a matched signature VCF, snvq_recall uses motif-weighted recall."""
+    featuremap_file = pjoin(resources_dir, "416119_L7402.featuremap_df.10k.parquet")
+    metadata_file = pjoin(resources_dir, "416119_L7402.srsnv_metadata.json")
+    signature_vcf = pjoin(resources_dir, "mutect_mrd_signature_test.vcf.gz")
+    read_filter_query = "filt>0 and snvq>60"
+
+    snvq_recall_weighted, filt_ratio_w, rfnf_weighted = calc_tumor_fraction_denominator_ratio(
+        featuremap_df_file=featuremap_file,
+        srsnv_metadata_json=metadata_file,
+        read_filter_query=read_filter_query,
+        matched_signature_vcf=signature_vcf,
+    )
+    snvq_recall_flat, filt_ratio_flat, rfnf_flat = calc_tumor_fraction_denominator_ratio(
+        featuremap_df_file=featuremap_file,
+        srsnv_metadata_json=metadata_file,
+        read_filter_query=read_filter_query,
+    )
+
+    assert np.isclose(filt_ratio_w, filt_ratio_flat), "filt_ratio must not change"
+    assert np.isclose(snvq_recall_weighted, filt_ratio_w * rfnf_weighted)
+    # Weighted recall may differ from flat; snvq_recall reflects that difference
+    assert snvq_recall_weighted != pytest.approx(snvq_recall_flat, abs=0)

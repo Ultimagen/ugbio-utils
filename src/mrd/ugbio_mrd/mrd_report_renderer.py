@@ -493,7 +493,7 @@ def render_intersection_snvq_combined(  # noqa: PLR0912, C901
 
     # dark colour, light colour, KDE colour, n_norm, label
     _series = [
-        (db_ctrl, "#3498db", "#8ac6ee", "#1a5276", n_db_ctrl_sigs, f"Synthetic controls \u00f7{n_db_ctrl_sigs}"),
+        (db_ctrl, "#3498db", "#8ac6ee", "#1a5276", n_db_ctrl_sigs, "Synthetic controls average"),
         (cohort, "#9b59b6", "#c8a5dd", "#6c3483", 1, "Cohort control"),
         (matched, "#c0392b", "#e8736a", "#7b241c", 1, "Patient signature"),
     ]
@@ -719,7 +719,7 @@ def render_read_length_histogram(  # noqa: C901
             alpha=0.55,
             edgecolor="white",
             linewidth=0.5,
-            label=f"Synthetic controls \u00f7{n_db_ctrl_sigs} (n={len(db_ctrl):,})",
+            label=f"Synthetic controls average (n={len(db_ctrl):,})",
         )
         if len(db_ctrl) >= 2:  # noqa: PLR2004
             try:
@@ -829,7 +829,7 @@ def render_intersection_af_combined(  # noqa: C901
     bin_width = 1.0 / 50  # 0.02 per bin
 
     for af_data, n_norm, color, kde_color, label_prefix, n_reads_val in [
-        (db_ctrl_af, n_db_ctrl_sigs, "#3498db", "#1a5276", f"Synthetic controls \u00f7{n_db_ctrl_sigs}", _n_db_reads),
+        (db_ctrl_af, n_db_ctrl_sigs, "#3498db", "#1a5276", "Synthetic controls average", _n_db_reads),
         (cohort_af, 1, "#9b59b6", "#6c3483", "Cohort control", _n_cohort_reads),
     ]:
         if len(af_data) > 0:
@@ -1054,7 +1054,7 @@ def render_analysis_report(  # noqa: PLR0913
     basename: str,
     signature_filter_query: str,
     read_filter_query: str,
-    denom_ratio: float,
+    snvq_recall: float,
     filt_ratio: float,
     plot_sbs_fn,
     plot_af_fn,
@@ -1089,8 +1089,8 @@ def render_analysis_report(  # noqa: PLR0913
         The signature filter query applied.
     read_filter_query : str
         The read filter query applied.
-    denom_ratio : float
-        Denominator correction ratio.
+    snvq_recall : float
+        SNVQ recall at threshold (P = fraction of TPs passing the read filter).
     filt_ratio : float
         Filtering ratio.
     plot_sbs_fn : callable
@@ -1180,9 +1180,9 @@ def render_analysis_report(  # noqa: PLR0913
     binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
     noise_rate_str = format_scientific(detection.noise_rate) if detection.noise_rate > 0 else "0"
     # T = K/P: supporting reads corrected for SNVQ recall → total signal estimate
-    total_signal_t = detection.matched_supporting_reads / denom_ratio if denom_ratio > 0 else 0.0
+    total_signal_t = detection.matched_supporting_reads / snvq_recall if snvq_recall > 0 else 0.0
     # N = total coverage at signature loci (back-computed from corrected_coverage / P)
-    total_coverage_n = detection.corrected_coverage / denom_ratio if denom_ratio > 0 else 0.0
+    total_coverage_n = detection.corrected_coverage / snvq_recall if snvq_recall > 0 else 0.0
 
     context = {
         "report_title": "MRD Analysis Report",
@@ -1208,7 +1208,7 @@ def render_analysis_report(  # noqa: PLR0913
         "thresh_noise_lq_reads": thresh_noise_lq_reads,
         "signature_filter_query": signature_filter_query,
         "read_filter_query": read_filter_query,
-        "denom_ratio": denom_ratio,
+        "snvq_recall": snvq_recall,
         "filt_ratio": filt_ratio,
         "applied_filters": applied_filters or {},
         "inputs_info": inputs_info or {},
@@ -1236,7 +1236,7 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
     basename: str,
     signature_filter_query: str,
     read_filter_query: str,
-    denom_ratio: float,
+    snvq_recall: float,
     filt_ratio: float,
     plot_sbs_fn,
     plot_af_fn,
@@ -1276,8 +1276,8 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
         Sample basename.
     signature_filter_query, read_filter_query : str
         Filter queries.
-    denom_ratio, filt_ratio : float
-        Ratio values.
+    snvq_recall, filt_ratio : float
+        Recall and filtering ratio values.
     plot_sbs_fn : callable
         SBS profile plotting function.
     plot_af_fn : callable
@@ -1532,8 +1532,8 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
     # ── Format values ──
     binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
     noise_rate_str = format_scientific(detection.noise_rate) if detection.noise_rate > 0 else "0"
-    total_signal_t = detection.matched_supporting_reads / denom_ratio if denom_ratio > 0 else 0.0
-    total_coverage_n = detection.corrected_coverage / denom_ratio if denom_ratio > 0 else 0.0
+    total_signal_t = detection.matched_supporting_reads / snvq_recall if snvq_recall > 0 else 0.0
+    total_coverage_n = detection.corrected_coverage / snvq_recall if snvq_recall > 0 else 0.0
 
     context = {
         "report_title": "MRD QC Report",
@@ -1548,7 +1548,7 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
         "total_coverage_n": total_coverage_n,
         "snvq_threshold": _snvq_thr,
         "lod_str": format_scientific(detection.sample_specific_lod) if detection.sample_specific_lod else "N/A",
-        "denom_ratio": denom_ratio,
+        "snvq_recall": snvq_recall,
         "signal_noise_img": patient_controls_img,
         "sbs96_plots": sbs96_plots,
         "sbs6_vaf_plots": sbs6_vaf_plots,

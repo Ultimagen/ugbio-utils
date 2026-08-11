@@ -327,16 +327,16 @@
           <div class="sub">reads covering signature</div>
         </div>
         <div class="metric-card">
-          <div class="label">SNVQ{% if snvq_threshold %}{{ snvq_threshold|int }}{% endif %} Recall</div>
-          <div class="value">{{ "%.2f"|format(denom_ratio) }}</div>
-          <div class="sub">TP fraction passing SNVQ{% if snvq_threshold %} &ge; {{ snvq_threshold|int }}{% endif %}</div>
+          <div class="label">PASS-FILTER RATE</div>
+          <div class="value">{{ "%.2f"|format(snvq_recall) }}</div>
+          <div class="sub">Estimated fraction of true events passing read filters</div>
         </div>
         <div class="metric-card">
           <div class="label">Total Signal</div>
           <div class="value">{{ "%.1f"|format(total_signal_t) }}</div>
           <div class="sub" style="display:flex; flex-direction:column; align-items:center; line-height:1.4; margin-top:4px;">
             <span>supporting reads</span>
-            <span style="border-top:1px solid currentColor; padding-top:2px; width:100%; text-align:center;">SNVQ recall</span>
+            <span style="border-top:1px solid currentColor; padding-top:2px; width:100%; text-align:center;">pass-filter rate</span>
           </div>
         </div>
       </div>
