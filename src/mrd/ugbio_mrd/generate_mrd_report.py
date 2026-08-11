@@ -476,13 +476,17 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             thresh_multi_read_pvalue = mrd_report_inputs.thresh_multi_read_pvalue_high_tf
             logger.info(
                 "Multi-read filter: high-TF regime (TF=%.2e > threshold=%.2e) → p=%.4f",
-                _initial_tf, mrd_report_inputs.multi_read_high_tf_threshold, thresh_multi_read_pvalue or 0,
+                _initial_tf,
+                mrd_report_inputs.multi_read_high_tf_threshold,
+                thresh_multi_read_pvalue or 0,
             )
         else:
             thresh_multi_read_pvalue = mrd_report_inputs.thresh_multi_read_pvalue_low_tf
             logger.info(
                 "Multi-read filter: low-TF regime (TF=%.2e ≤ threshold=%.2e) → p=%.4f",
-                _initial_tf, mrd_report_inputs.multi_read_high_tf_threshold, thresh_multi_read_pvalue or 0,
+                _initial_tf,
+                mrd_report_inputs.multi_read_high_tf_threshold,
+                thresh_multi_read_pvalue or 0,
             )
     if thresh_multi_read_pvalue is not None:
         df_features_before_multi = df_features_filt
@@ -516,10 +520,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             # Recompute excluded_per_sig = noise-filter exclusions + all multi-read exclusions so far
             excluded_per_sig = {k: v.copy() for k, v in _excluded_per_sig_noise.items()}
             for _sig_name in df_features_before_multi["signature"].unique():
-                _before_idx = (
-                    df_features_before_multi[df_features_before_multi["signature"] == _sig_name]
-                    .index.unique()
-                )
+                _before_idx = df_features_before_multi[
+                    df_features_before_multi["signature"] == _sig_name
+                ].index.unique()
                 _after_idx = df_features_filt[df_features_filt["signature"] == _sig_name].index.unique()
                 _excl = _before_idx.difference(_after_idx)
                 if len(_excl) > 0:
@@ -531,10 +534,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         # Per-type multi-read excluded loci (for the LQ-fraction histogram) — full set
         multi_read_excluded_per_type = {}
         for _sig_type in ("matched", "control", "db_control"):
-            _before_idx = (
-                df_features_before_multi[df_features_before_multi["signature_type"] == _sig_type]
-                .index.unique()
-            )
+            _before_idx = df_features_before_multi[
+                df_features_before_multi["signature_type"] == _sig_type
+            ].index.unique()
             _after_idx = df_features_filt[df_features_filt["signature_type"] == _sig_type].index.unique()
             _excl = _before_idx.difference(_after_idx)
             if len(_excl) > 0:

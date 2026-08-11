@@ -509,25 +509,51 @@ def render_intersection_snvq_combined(  # noqa: PLR0912, PLR0915, C901
             pct = len(above) / n_total * 100 if n_total > 0 else 0.0
             label = f"{label_base} (n={n_total:,}, {pct:.0f}% pass)"
             if len(below) > 0:
-                ax.hist(below, bins=bins, weights=np.ones(len(below)) / n_norm,
-                        color=light_col, alpha=0.65, edgecolor="white", linewidth=0.5)
+                ax.hist(
+                    below,
+                    bins=bins,
+                    weights=np.ones(len(below)) / n_norm,
+                    color=light_col,
+                    alpha=0.65,
+                    edgecolor="white",
+                    linewidth=0.5,
+                )
             if len(above) > 0:
-                ax.hist(above, bins=bins, weights=np.ones(len(above)) / n_norm,
-                        color=dark_col, alpha=0.75, edgecolor="white", linewidth=0.5, label=label)
+                ax.hist(
+                    above,
+                    bins=bins,
+                    weights=np.ones(len(above)) / n_norm,
+                    color=dark_col,
+                    alpha=0.75,
+                    edgecolor="white",
+                    linewidth=0.5,
+                    label=label,
+                )
             else:
                 ax.plot([], [], color=light_col, linewidth=8, alpha=0.65, label=label)
         else:
             alpha = 0.7 if label_base == "Patient signature" else 0.55
-            ax.hist(data, bins=bins, weights=w, color=dark_col, alpha=alpha,
-                    edgecolor="white", linewidth=0.5, label=f"{label_base} (n={len(data):,})")
+            ax.hist(
+                data,
+                bins=bins,
+                weights=w,
+                color=dark_col,
+                alpha=alpha,
+                edgecolor="white",
+                linewidth=0.5,
+                label=f"{label_base} (n={len(data):,})",
+            )
         # KDE line scaled to count axis (bin_width = 1).
         if len(data) >= 2:  # noqa: PLR2004
             try:
                 kde = gaussian_kde(data, bw_method=0.3)
                 x_kde = np.linspace(40, min(100, b_max - 0.5), 500)
                 ax.plot(
-                    x_kde, kde(x_kde) * n_eff,
-                    color=kde_col, linewidth=1.2, zorder=5,
+                    x_kde,
+                    kde(x_kde) * n_eff,
+                    color=kde_col,
+                    linewidth=1.2,
+                    zorder=5,
                     path_effects=[
                         patheffects.withStroke(linewidth=2.5, foreground="white"),
                         patheffects.Normal(),
@@ -725,9 +751,14 @@ def render_read_length_histogram(  # noqa: PLR0915, C901
             try:
                 kde = gaussian_kde(db_ctrl.clip(upper=x_max), bw_method=0.15)
                 x_kde = np.linspace(x_min, x_max, 1000)
-                ax.plot(x_kde, kde(x_kde) * n_eff_db * 2, color="#1a5276", linewidth=1.2, zorder=4,
-                        path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"),
-                                      patheffects.Normal()])
+                ax.plot(
+                    x_kde,
+                    kde(x_kde) * n_eff_db * 2,
+                    color="#1a5276",
+                    linewidth=1.2,
+                    zorder=4,
+                    path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"), patheffects.Normal()],
+                )
             except Exception as e:  # noqa: BLE001
                 logger.debug("KDE line skipped (rl db_ctrl): %s", e)
     if len(cohort) > 0:
@@ -744,9 +775,14 @@ def render_read_length_histogram(  # noqa: PLR0915, C901
             try:
                 kde = gaussian_kde(cohort.clip(upper=x_max), bw_method=0.15)
                 x_kde = np.linspace(x_min, x_max, 1000)
-                ax.plot(x_kde, kde(x_kde) * len(cohort) * 2, color="#6c3483", linewidth=1.2, zorder=4,
-                        path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"),
-                                      patheffects.Normal()])
+                ax.plot(
+                    x_kde,
+                    kde(x_kde) * len(cohort) * 2,
+                    color="#6c3483",
+                    linewidth=1.2,
+                    zorder=4,
+                    path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"), patheffects.Normal()],
+                )
             except Exception as e:  # noqa: BLE001
                 logger.debug("KDE line skipped (rl cohort): %s", e)
     if len(matched) > 0:
@@ -763,9 +799,14 @@ def render_read_length_histogram(  # noqa: PLR0915, C901
             try:
                 kde = gaussian_kde(matched.clip(upper=x_max), bw_method=0.15)
                 x_kde = np.linspace(x_min, x_max, 1000)
-                ax.plot(x_kde, kde(x_kde) * len(matched) * 2, color="#7b241c", linewidth=1.2, zorder=4,
-                        path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"),
-                                      patheffects.Normal()])
+                ax.plot(
+                    x_kde,
+                    kde(x_kde) * len(matched) * 2,
+                    color="#7b241c",
+                    linewidth=1.2,
+                    zorder=4,
+                    path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"), patheffects.Normal()],
+                )
             except Exception as e:  # noqa: BLE001
                 logger.debug("KDE line skipped (rl matched): %s", e)
 
@@ -849,8 +890,11 @@ def render_intersection_af_combined(  # noqa: C901
                     kde = gaussian_kde(af_data, bw_method=0.3)
                     x_kde = np.linspace(0, 1, 500)
                     ax.plot(
-                        x_kde, kde(x_kde) * (len(af_data) / n_norm) * bin_width,
-                        color=kde_color, linewidth=1.2, zorder=4,
+                        x_kde,
+                        kde(x_kde) * (len(af_data) / n_norm) * bin_width,
+                        color=kde_color,
+                        linewidth=1.2,
+                        zorder=4,
                         path_effects=[
                             patheffects.withStroke(linewidth=2.5, foreground="white"),
                             patheffects.Normal(),
@@ -875,8 +919,11 @@ def render_intersection_af_combined(  # noqa: C901
                 kde = gaussian_kde(matched_af, bw_method=0.3)
                 x_kde = np.linspace(0, 1, 500)
                 ax.plot(
-                    x_kde, kde(x_kde) * len(matched_af) * bin_width,
-                    color="#7b241c", linewidth=1.2, zorder=4,
+                    x_kde,
+                    kde(x_kde) * len(matched_af) * bin_width,
+                    color="#7b241c",
+                    linewidth=1.2,
+                    zorder=4,
                     path_effects=[
                         patheffects.withStroke(linewidth=2.5, foreground="white"),
                         patheffects.Normal(),
@@ -1130,10 +1177,15 @@ def render_analysis_report(  # noqa: PLR0913
 
     # Intersection AF — single combined plot
     _n_db = (
-        df_features.query("signature_type == 'db_control'")["signature"].nunique()
-        if df_features is not None and "signature" in df_features.columns
+        (
+            df_features.query("signature_type == 'db_control'")["signature"].nunique()
+            if df_features is not None and "signature" in df_features.columns
+            else 1
+        )
+        or 1
+        if df_features is not None
         else 1
-    ) or 1 if df_features is not None else 1
+    )
     intersection_af_img = render_intersection_af_combined(
         df_supporting_reads_per_locus, df_signatures_filt, n_db_ctrl_sigs=_n_db
     )
@@ -1154,18 +1206,21 @@ def render_analysis_report(  # noqa: PLR0913
 
     # Read length histogram — restrict to final signature loci so n matches supporting reads.
     _n_db = (
-        df_features.query("signature_type == 'db_control'")["signature"].nunique()
-        if df_features is not None and "signature" in df_features.columns
+        (
+            df_features.query("signature_type == 'db_control'")["signature"].nunique()
+            if df_features is not None and "signature" in df_features.columns
+            else 1
+        )
+        or 1
+        if df_features is not None
         else 1
-    ) or 1 if df_features is not None else 1
+    )
     _snvq_thr = _snvq_threshold_from_query(read_filter_query)
     # df_features_filt restricted to final signature loci (n == supporting reads)
     _df_rl = _restrict_to_sig_loci(df_features_filt, df_signatures_filt) if df_features_filt is not None else None
     _df_snvq = _df_rl  # same filtered data; bars are all above threshold by definition
     read_length_img = (
-        render_read_length_histogram(_df_rl, n_db_ctrl_sigs=_n_db)
-        if _df_rl is not None and not _df_rl.empty
-        else ""
+        render_read_length_histogram(_df_rl, n_db_ctrl_sigs=_n_db) if _df_rl is not None and not _df_rl.empty else ""
     )
 
     # SNVQ distribution — same filtered data, no threshold split needed
@@ -1474,10 +1529,14 @@ def render_qc_report(  # noqa: PLR0912, PLR0913, PLR0915, C901
     if df_features_no_snvq_filt is not None:
         _df_unfilt_reads = _restrict_to_sig_loci(df_features_no_snvq_filt, df_signatures_filt)
     else:
-        _df_unfilt_reads = _restrict_to_sig_loci(
-            df_features.query(_no_snvq_q) if (_no_snvq_q and df_features is not None) else df_features,
-            df_signatures_filt,
-        ) if df_features is not None else None
+        _df_unfilt_reads = (
+            _restrict_to_sig_loci(
+                df_features.query(_no_snvq_q) if (_no_snvq_q and df_features is not None) else df_features,
+                df_signatures_filt,
+            )
+            if df_features is not None
+            else None
+        )
     snvq_unfilt_reads_img = (
         render_intersection_snvq_combined(_df_unfilt_reads, snvq_threshold=_snvq_thr, n_db_ctrl_sigs=_n_db_ctrl_sigs)
         if _df_unfilt_reads is not None and not _df_unfilt_reads.empty

@@ -1477,9 +1477,7 @@ def calc_tumor_fraction_denominator_ratio(
     if matched_signature_vcf:
         motif_weighted = _compute_motif_weighted_recall(featuremap_df_file, matched_signature_vcf, read_filter_query)
         if motif_weighted is not None:
-            logger.info(
-                "Motif-weighted recall: %.4f (unweighted: %.4f)", motif_weighted, read_filter_non_filt
-            )
+            logger.info("Motif-weighted recall: %.4f (unweighted: %.4f)", motif_weighted, read_filter_non_filt)
             read_filter_non_filt = motif_weighted
 
     snvq_recall = filt_ratio * read_filter_non_filt
