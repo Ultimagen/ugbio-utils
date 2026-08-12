@@ -120,13 +120,15 @@ def _snvq_threshold_from_query(read_filter_query: str) -> float | None:
     """Extract the SNVQ threshold value from a read-filter query string."""
     import re  # noqa: PLC0415
 
-    m = re.search(r"snvq\s*>\s*(\d+(?:\.\d+)?)", read_filter_query, re.IGNORECASE)
+    m = re.search(r"snvq\s*>=?\s*(\d+(?:\.\d+)?)", read_filter_query, re.IGNORECASE)
     return float(m.group(1)) if m else None
 
 
 def _drop_snvq_from_query(read_filter_query: str) -> str:
     """Return read_filter_query with the snvq clause removed."""
-    parts = [p.strip() for p in read_filter_query.split(" and ") if "snvq" not in p.lower()]
+    import re  # noqa: PLC0415
+
+    parts = [p.strip() for p in re.split(r"\s+and\s+", read_filter_query, flags=re.IGNORECASE) if "snvq" not in p.lower()]
     return " and ".join(parts)
 
 
