@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from os.path import join as pjoin
@@ -428,7 +429,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     # Pre-compute snvq_recall for the No-SNVQ-Filter secondary analysis.
     # More reads pass without the SNVQ threshold, so the corrected coverage is larger.
     _no_snvq_q_pre = " and ".join(
-        p.strip() for p in read_filter_query.split(" and ") if "snvq" not in p.lower()
+        p.strip() for p in re.split(r"\s+and\s+", read_filter_query, flags=re.IGNORECASE) if "snvq" not in p.lower()
     )
     if _no_snvq_q_pre and _no_snvq_q_pre != read_filter_query:
         try:
@@ -900,7 +901,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
 
     # Secondary analysis 2: No SNVQ Filter — derive from the already-loaded df_features.
     # Apply per-read filter (filt>0 + mapq>=60), then re-compute locus filters from scratch.
-    _no_snvq_q = " and ".join(p.strip() for p in read_filter_query.split(" and ") if "snvq" not in p.lower())
+    _no_snvq_q = " and ".join(
+        p.strip() for p in re.split(r"\s+and\s+", read_filter_query, flags=re.IGNORECASE) if "snvq" not in p.lower()
+    )
     df_features_no_snvq_filt = df_features.query(_no_snvq_q) if _no_snvq_q else df_features.copy()
 
     # Re-apply LQ-reads locus filter: loci where LQ fraction (based on _no_snvq_q failures)
