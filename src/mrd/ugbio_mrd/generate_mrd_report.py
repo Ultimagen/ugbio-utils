@@ -841,6 +841,8 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         # isolates only the noisy-loci filter's impact (both paths have multi-read applied).
         if thresh_multi_read_pvalue is not None:
             # Iterative multi-read filter for the no-noise QC path
+            _df_no_noise_before_multi = df_features_filt_no_noise
+            _excluded_no_noise: dict = {}
             while True:
                 df_features_filt_no_noise_new, _ = mrd.apply_multi_read_locus_filter(
                     df_features_filt_no_noise,
@@ -851,12 +853,26 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
                 if len(df_features_filt_no_noise_new) == len(df_features_filt_no_noise):
                     break
                 df_features_filt_no_noise = df_features_filt_no_noise_new
+                for _sig_name in _df_no_noise_before_multi["signature"].unique():
+                    _before = _df_no_noise_before_multi[
+                        _df_no_noise_before_multi["signature"] == _sig_name
+                    ].index.unique()
+                    _after = df_features_filt_no_noise[
+                        df_features_filt_no_noise["signature"] == _sig_name
+                    ].index.unique()
+                    _excl = _before.difference(_after)
+                    if len(_excl) > 0:
+                        if _sig_name in _excluded_no_noise:
+                            _excluded_no_noise[_sig_name] = _excluded_no_noise[_sig_name].union(_excl)
+                        else:
+                            _excluded_no_noise[_sig_name] = _excl
                 df_tf_no_noise, _ = mrd.get_tf_from_filtered_data(
                     df_features_filt_no_noise,
                     df_signatures_filt,
                     plot_results=False,
                     title="Filtered reads (no noisy loci filter, with iterative multi-read filter)",
                     snvq_recall=snvq_recall,
+                    excluded_loci=_excluded_no_noise,
                 )
         detection_no_noise = run_detection_analysis(
             df_tf=df_tf_no_noise,
