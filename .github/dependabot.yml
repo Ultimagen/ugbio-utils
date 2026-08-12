@@ -9,7 +9,7 @@ updates:
     schedule:
       interval: "weekly"
     # Disables regular version updates completely
-    open-pull-requests-limit: 0 
+    open-pull-requests-limit: 0
     labels:
       - "dependencies"
 
@@ -19,4 +19,4 @@ updates:
     schedule:
       interval: "weekly"
     # Disables regular version updates completely
-    open-pull-requests-limit: 0 
+    open-pull-requests-limit: 0
