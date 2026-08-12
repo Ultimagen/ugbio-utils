@@ -1028,9 +1028,11 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         "max_reads_per_locus_db_control": 1,
     }
 
-    # --- mean_coverage from the matched signature (coverage proxy for all types) ---
+    # --- mean_coverage from the matched signature; fall back to all signatures when absent ---
     if "signature_type" in df_signatures_filt.columns:
         matched_sig_df = df_signatures_filt[df_signatures_filt["signature_type"] == "matched"]
+        if len(matched_sig_df) == 0:
+            matched_sig_df = df_signatures_filt
     else:
         matched_sig_df = df_signatures_filt
     signature_size = len(matched_sig_df)
@@ -1045,12 +1047,11 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
             matched_data["ctdna_vaf"].iloc[0] if isinstance(matched_data, pd.DataFrame) else matched_data["ctdna_vaf"]
         )
     except KeyError:
-        logger.warning("apply_multi_read_locus_filter: no matched TF estimate found — skipping filter")
-        return df_features_filt, filter_info
+        logger.debug("apply_multi_read_locus_filter: no matched TF — controls still filtered per-signature")
+        matched_vaf = 0.0
 
     if matched_vaf <= 0:
-        logger.debug("apply_multi_read_locus_filter: matched_vaf <= 0 — skipping filter")
-        return df_features_filt, filter_info
+        logger.debug("apply_multi_read_locus_filter: matched_vaf <= 0 — controls still filtered per-signature")
 
     if signature_size == 0 or mean_coverage <= 0:
         logger.debug(
@@ -1151,11 +1152,13 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
                 logger.debug("apply_multi_read_locus_filter: no matched outlier loci (min Bonferroni p=%.4f)", min_bonf)
             continue
 
-        # Remove ALL rows of this sig_type at the outlier loci
-        is_type_row = df_features_filt_out["signature_type"] == sig_type
+        # Remove ALL rows of this specific signature at the outlier loci
+        is_sig_row = (df_features_filt_out["signature_type"] == sig_type) & (
+            df_features_filt_out["signature"] == sig_name
+        )
         is_outlier_locus = df_features_filt_out.index.isin(outlier_loci)
         n_before = len(df_features_filt_out)
-        df_features_filt_out = df_features_filt_out[~(is_type_row & is_outlier_locus)]
+        df_features_filt_out = df_features_filt_out[~(is_sig_row & is_outlier_locus)]
         n_reads_removed = n_before - len(df_features_filt_out)
         logger.info(
             "apply_multi_read_locus_filter: removed %d %s/%s loci (%d reads); λ=%.4f, min Bonferroni p=%.4e",
@@ -1279,125 +1282,17 @@ def get_tf_from_filtered_data(
     return (df_tf, df_supporting_reads_per_locus)
 
 
-def _compute_motif_weighted_recall(
-    featuremap_df_file: str,
-    matched_signature_vcf: str,
-    read_filter_query: str,
-    min_tp_per_motif: int = 5,
-) -> float | None:
-    """
-    Compute read-filter recall weighted by the signature trinucleotide motif distribution.
-
-    For each trinucleotide substitution context present in the matched signature, the
-    recall (fraction of TP reads passing ``read_filter_query``) is computed from the
-    featuremap training dataframe and then averaged using the signature motif frequencies
-    as weights.  Out-of-fold (test-set) TP rows are preferred when ``fold_id`` is
-    available; motifs with fewer than ``min_tp_per_motif`` TPs fall back to the global
-    (unweighted) recall to avoid noisy per-motif estimates.
-
-    Parameters
-    ----------
-    featuremap_df_file : str
-        Parquet featuremap training dataframe path (must contain ``REF``, ``ALT``,
-        ``X_PREV1``, ``X_NEXT1``, ``label``, and the columns referenced by
-        ``read_filter_query``).
-    matched_signature_vcf : str
-        Patient-matched signature VCF with ``X_LM`` / ``X_RM`` INFO annotations.
-    read_filter_query : str
-        Read-filter expression used in detection (e.g. ``"filt>0 and snvq>60 and mapq>=60"``).
-    min_tp_per_motif : int
-        Minimum TP count per motif; sparse motifs use global recall as fallback.
-
-    Returns
-    -------
-    float | None
-        Weighted recall, or ``None`` when unavailable (caller should fall back to
-        the unweighted per-dataset recall).
-    """
-    parquet_file = fastparquet.ParquetFile(featuremap_df_file)
-    parquet_columns = set(parquet_file.columns)
-    query_lower = read_filter_query.lower()
-
-    needed = {"REF", "ALT", "X_PREV1", "X_NEXT1", LABEL_COL} & parquet_columns
-    if "fold_id" in parquet_columns:
-        needed.add("fold_id")
-    filter_cols = {col for col in parquet_columns if col.lower() in query_lower}
-    columns_to_read = list(needed | filter_cols)
-
-    df_train = (
-        pd.read_parquet(featuremap_df_file, engine="fastparquet", columns=columns_to_read)
-        .rename(columns=lambda x: x.lower())
-        .assign(filt=1)  # training data always passes the filt flag
-    )
-
-    # Prefer out-of-fold (test-set) TPs to avoid bias from model training
-    if "fold_id" in df_train.columns and df_train["fold_id"].notna().any():
-        tp_df = df_train[df_train[LABEL_COL] & df_train["fold_id"].notna()].copy()
-    else:
-        tp_df = df_train[df_train[LABEL_COL]].copy()
-
-    if tp_df.empty:
-        logger.warning("No TP rows found in featuremap for motif-weighted recall")
-        return None
-
-    # Build trinucleotide substitution key: matches get_trinuc_substitution_dist format
-    # Cast to str to handle Categorical columns in some parquet files
-    prev1 = tp_df["x_prev1"].astype(str)
-    ref = tp_df["ref"].astype(str)
-    next1 = tp_df["x_next1"].astype(str)
-    alt = tp_df["alt"].astype(str)
-    tp_df["motif"] = prev1 + ref + next1 + ">" + prev1 + alt + next1
-    tp_df["passes"] = tp_df.eval(read_filter_query)
-    motif_stats = tp_df.groupby("motif")["passes"].agg(n_passing="sum", n_tp="count")
-    global_recall = float(tp_df["passes"].mean())
-
-    try:
-        sig_trinuc = get_trinuc_substitution_dist(matched_signature_vcf)
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "Could not extract trinucleotide distribution from %s; falling back to unweighted recall",
-            matched_signature_vcf,
-        )
-        return None
-
-    sig_total = sum(sig_trinuc.values())
-    if sig_total == 0:
-        logger.warning("Signature VCF has zero trinucleotide counts; falling back to unweighted recall")
-        return None
-
-    weighted_sum = 0.0
-    weight_sum = 0.0
-    for motif, count in sig_trinuc.items():
-        if count == 0:
-            continue
-        weight = count / sig_total
-        if motif in motif_stats.index and motif_stats.loc[motif, "n_tp"] >= min_tp_per_motif:
-            motif_recall = float(motif_stats.loc[motif, "n_passing"]) / float(motif_stats.loc[motif, "n_tp"])
-        else:
-            motif_recall = global_recall
-        weighted_sum += weight * motif_recall
-        weight_sum += weight
-
-    if weight_sum == 0:
-        logger.warning("No overlapping motifs between signature and featuremap; falling back to unweighted recall")
-        return None
-
-    return weighted_sum / weight_sum
-
-
 def calc_tumor_fraction_denominator_ratio(
     featuremap_df_file: str,
     srsnv_metadata_json: str,
     read_filter_query: str,
-    matched_signature_vcf: str | None = None,
 ):
     """
     Compute P (SNVQ recall): the fraction of true-positive reads passing the read quality filter.
 
     P = filt_ratio × read_filter_non_filt, where:
       filt_ratio           = fraction of TPs surviving the training region filter
-      read_filter_non_filt = fraction of TPs passing the SNVQ threshold (read_filter_query),
-                             optionally weighted by the signature trinucleotide motif distribution
+      read_filter_non_filt = fraction of TPs passing the SNVQ threshold (read_filter_query)
 
     P is used as the denominator correction so that:
       corrected_coverage = ceil(N × P)
@@ -1412,10 +1307,6 @@ def calc_tumor_fraction_denominator_ratio(
         counts in either a "funnel" or "rows" field
     read_filter_query: str
         query to filter the dataframe
-    matched_signature_vcf: str | None
-        optional path to the patient-matched signature VCF; when provided and the
-        VCF carries ``X_LM``/``X_RM`` annotations, the read-filter recall is
-        weighted by the signature trinucleotide motif distribution.
     Returns
     -------
     snvq_recall: float
@@ -1472,13 +1363,6 @@ def calc_tumor_fraction_denominator_ratio(
     filt_denom = region_filters.iloc[-1][filtering_count_column]  # last genomic region step
     filt_numer = tp_filtering.iloc[-1][filtering_count_column]  # final number of true positives (before downsampling)
     filt_ratio = filt_numer / filt_denom
-
-    # Replace unweighted recall with motif-weighted estimate when signature VCF is available
-    if matched_signature_vcf:
-        motif_weighted = _compute_motif_weighted_recall(featuremap_df_file, matched_signature_vcf, read_filter_query)
-        if motif_weighted is not None:
-            logger.info("Motif-weighted recall: %.4f (unweighted: %.4f)", motif_weighted, read_filter_non_filt)
-            read_filter_non_filt = motif_weighted
 
     snvq_recall = filt_ratio * read_filter_non_filt
     return snvq_recall, filt_ratio, read_filter_non_filt

@@ -454,8 +454,8 @@
             {% if row.desc %}<div style="font-weight:normal; font-size:0.85em; color:#666;">{{ row.desc }}</div>{% endif %}
           </td>
           <td style="text-align:right; font-family:monospace;">{{ "{:,}".format(row.count) }}</td>
-          <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_funnel) if row.pct_funnel is not none else "" }}</td>
-          <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_pass) if row.pct_pass is not none else "" }}</td>
+          <td style="text-align:right; font-family:monospace;">{{ "%.2f%%"|format(row.pct_funnel) if row.pct_funnel is not none else "" }}</td>
+          <td style="text-align:right; font-family:monospace;">{{ "%.2f%%"|format(row.pct_pass) if row.pct_pass is not none else "" }}</td>
         </tr>
         {% endfor %}
       </table>
@@ -475,10 +475,10 @@
             {% if row.desc %}<div style="font-weight:normal; font-size:0.85em; color:#666;">{{ row.desc }}</div>{% endif %}
           </td>
           <td style="text-align:right; font-family:monospace;">{{ "{:,}".format(row.count) }}</td>
-          <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_funnel) if row.pct_funnel is not none else "" }}</td>
-          <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_pass) if row.pct_pass is not none else "" }}</td>
+          <td style="text-align:right; font-family:monospace;">{{ "%.2f%%"|format(row.pct_funnel) if row.pct_funnel is not none else "" }}</td>
+          <td style="text-align:right; font-family:monospace;">{{ "%.2f%%"|format(row.pct_pass) if row.pct_pass is not none else "" }}</td>
           <td style="text-align:right; font-family:monospace;">{{ "{:,}".format(row.loci_count) if row.loci_count is not none else "" }}</td>
-          <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_funnel_loci) if row.pct_funnel_loci is not none else "" }}</td>
+          <td style="text-align:right; font-family:monospace;">{{ "%.2f%%"|format(row.pct_funnel_loci) if row.pct_funnel_loci is not none else "" }}</td>
           <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_pass_loci) if row.pct_pass_loci is not none else "" }}</td>
         </tr>
         {% endfor %}

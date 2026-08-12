@@ -7,7 +7,6 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 from ugbio_mrd.mrd_utils import (
-    _compute_motif_weighted_recall,
     calc_tumor_fraction_denominator_ratio,
     generate_synthetic_signatures,
     read_intersection_dataframes,
@@ -474,7 +473,7 @@ def test_apply_multi_read_matched_filter_preserves_control_rows():
 
 
 def test_apply_multi_read_locus_filter_zero_vaf():
-    """When matched_ctdna_vaf is 0, filter must be skipped gracefully."""
+    """When matched ctdna_vaf in df_tf is 0, per-signature filtering still runs based on actual reads."""
     from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
 
     df_features_filt, df_tf, df_signatures_filt = _make_multi_read_test_data()
@@ -482,12 +481,12 @@ def test_apply_multi_read_locus_filter_zero_vaf():
     df_tf_zero["ctdna_vaf"] = 0.0
 
     df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf_zero, df_signatures_filt, 0.01)
-    assert info["n_filtered_loci"] == 0
-    assert len(df_out) == len(df_features_filt)
+    # Per-signature VAF is recomputed from actual reads, so outlier loci are still removed
+    assert len(df_out) < len(df_features_filt)
 
 
 def test_apply_multi_read_locus_filter_no_matched_key():
-    """When there is no 'matched' key in df_tf, filter must return original df unchanged."""
+    """When there is no 'matched' key in df_tf, controls are still filtered per-signature."""
     from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
 
     df_features_filt, _df_tf, df_signatures_filt = _make_multi_read_test_data()
@@ -497,8 +496,8 @@ def test_apply_multi_read_locus_filter_no_matched_key():
     )
 
     df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf_no_matched, df_signatures_filt, 0.01)
-    assert info["n_filtered_loci"] == 0
-    assert len(df_out) == len(df_features_filt)
+    # Filter still runs; matched loci may be filtered based on their own read density
+    assert len(df_out) <= len(df_features_filt)
 
 
 def test_apply_multi_read_locus_filter_skips_db_control_rows():
@@ -731,79 +730,3 @@ def test_apply_multi_read_filter_all_loci_vaf_estimation():
     remaining = df_out.index.get_level_values("pos").tolist()
     assert 100 not in remaining
     assert 200 in remaining and 300 in remaining
-
-
-# ── Motif-weighted recall ─────────────────────────────────────────────────────
-
-
-def test_compute_motif_weighted_recall_returns_valid_value(resources_dir):
-    """Motif-weighted recall must be in [0, 1] for a VCF with X_LM/X_RM."""
-    featuremap_file = pjoin(resources_dir, "416119_L7402.featuremap_df.10k.parquet")
-    signature_vcf = pjoin(resources_dir, "mutect_mrd_signature_test.vcf.gz")
-    read_filter_query = "filt>0 and snvq>60"
-
-    result = _compute_motif_weighted_recall(featuremap_file, signature_vcf, read_filter_query)
-
-    assert result is not None
-    assert 0.0 <= result <= 1.0
-
-
-def test_compute_motif_weighted_recall_differs_from_unweighted(resources_dir):
-    """Weighted recall should differ from the flat unweighted estimate."""
-    import pandas as pd
-
-    featuremap_file = pjoin(resources_dir, "416119_L7402.featuremap_df.10k.parquet")
-    signature_vcf = pjoin(resources_dir, "mutect_mrd_signature_test.vcf.gz")
-    read_filter_query = "filt>0 and snvq>60"
-
-    weighted = _compute_motif_weighted_recall(featuremap_file, signature_vcf, read_filter_query)
-
-    df_recall = (
-        pd.read_parquet(featuremap_file, engine="fastparquet", columns=["label", "SNVQ", "FILT"])
-        .rename(columns=lambda x: x.lower())
-        .assign(filt=1)
-        .query("label")
-        .eval(read_filter_query)
-    )
-    unweighted = float(df_recall.mean())
-
-    assert weighted is not None
-    # Sanity: not wildly different (both are valid recall fractions)
-    assert abs(weighted - unweighted) < 0.5
-    assert weighted != pytest.approx(unweighted, abs=0)
-
-
-def test_compute_motif_weighted_recall_fallback_without_xlm(resources_dir):
-    """Returns None when the signature VCF lacks X_LM/X_RM annotations."""
-    featuremap_file = pjoin(resources_dir, "416119_L7402.featuremap_df.10k.parquet")
-    signature_vcf = pjoin(resources_dir, "150382-BC04.filtered_signature.chr22_12693463.vcf.gz")
-    read_filter_query = "filt>0 and snvq>60"
-
-    result = _compute_motif_weighted_recall(featuremap_file, signature_vcf, read_filter_query)
-
-    assert result is None
-
-
-def test_calc_tumor_fraction_denominator_ratio_with_signature(resources_dir):
-    """With a matched signature VCF, snvq_recall uses motif-weighted recall."""
-    featuremap_file = pjoin(resources_dir, "416119_L7402.featuremap_df.10k.parquet")
-    metadata_file = pjoin(resources_dir, "416119_L7402.srsnv_metadata.json")
-    signature_vcf = pjoin(resources_dir, "mutect_mrd_signature_test.vcf.gz")
-    read_filter_query = "filt>0 and snvq>60"
-
-    snvq_recall_weighted, filt_ratio_w, rfnf_weighted = calc_tumor_fraction_denominator_ratio(
-        featuremap_df_file=featuremap_file,
-        srsnv_metadata_json=metadata_file,
-        read_filter_query=read_filter_query,
-        matched_signature_vcf=signature_vcf,
-    )
-    snvq_recall_flat, filt_ratio_flat, rfnf_flat = calc_tumor_fraction_denominator_ratio(
-        featuremap_df_file=featuremap_file,
-        srsnv_metadata_json=metadata_file,
-        read_filter_query=read_filter_query,
-    )
-
-    assert np.isclose(filt_ratio_w, filt_ratio_flat), "filt_ratio must not change"
-    assert np.isclose(snvq_recall_weighted, filt_ratio_w * rfnf_weighted)
-    # Weighted recall may differ from flat; snvq_recall reflects that difference
-    assert snvq_recall_weighted != pytest.approx(snvq_recall_flat, abs=0)

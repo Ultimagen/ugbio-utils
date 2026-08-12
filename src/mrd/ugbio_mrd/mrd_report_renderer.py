@@ -476,6 +476,11 @@ def render_intersection_snvq_combined(  # noqa: PLR0912, PLR0915, C901
             if "signature" in df_features_filt.columns
             else 1
         ) or 1
+    n_cohort_sigs = (
+        df_features_filt.query("signature_type == 'control'")["signature"].nunique()
+        if "signature" in df_features_filt.columns
+        else 1
+    ) or 1
 
     # Only show SNVQ >= 40.
     matched = matched[matched >= 40]  # noqa: PLR2004
@@ -494,7 +499,7 @@ def render_intersection_snvq_combined(  # noqa: PLR0912, PLR0915, C901
     # dark colour, light colour, KDE colour, n_norm, label
     _series = [
         (db_ctrl, "#3498db", "#8ac6ee", "#1a5276", n_db_ctrl_sigs, "Synthetic controls average"),
-        (cohort, "#9b59b6", "#c8a5dd", "#6c3483", 1, "Cohort control"),
+        (cohort, "#9b59b6", "#c8a5dd", "#6c3483", n_cohort_sigs, "Cohort controls average"),
         (matched, "#c0392b", "#e8736a", "#7b241c", 1, "Patient signature"),
     ]
     for data, dark_col, light_col, kde_col, n_norm, label_base in _series:
@@ -725,6 +730,11 @@ def render_read_length_histogram(  # noqa: PLR0915, C901
             if "signature" in df_features_filt.columns
             else 1
         ) or 1
+    n_cohort_sigs = (
+        df_features_filt.query("signature_type == 'control'")["signature"].nunique()
+        if "signature" in df_features_filt.columns
+        else 1
+    ) or 1
 
     all_lengths = pd.concat([s for s in [matched, cohort, db_ctrl] if len(s) > 0])
     x_min = max(0, int(all_lengths.min()) - 5)
@@ -762,14 +772,16 @@ def render_read_length_histogram(  # noqa: PLR0915, C901
             except Exception as e:  # noqa: BLE001
                 logger.debug("KDE line skipped (rl db_ctrl): %s", e)
     if len(cohort) > 0:
+        n_eff_cohort = len(cohort) / n_cohort_sigs
         ax.hist(
             cohort.clip(upper=x_max),
             bins=bins,
+            weights=np.ones(len(cohort)) / n_cohort_sigs,
             color="#9b59b6",
             alpha=0.55,
             edgecolor="white",
             linewidth=0.5,
-            label=f"Cohort control (n={len(cohort):,})",
+            label=f"Cohort controls average (n={len(cohort):,})",
         )
         if len(cohort) >= 2:  # noqa: PLR2004
             try:
@@ -777,7 +789,7 @@ def render_read_length_histogram(  # noqa: PLR0915, C901
                 x_kde = np.linspace(x_min, x_max, 1000)
                 ax.plot(
                     x_kde,
-                    kde(x_kde) * len(cohort) * 2,
+                    kde(x_kde) * n_eff_cohort * 2,
                     color="#6c3483",
                     linewidth=1.2,
                     zorder=4,
@@ -851,6 +863,11 @@ def render_intersection_af_combined(  # noqa: C901
             if "signature" in df_supporting_reads_per_locus.columns
             else 1
         ) or 1
+    n_cohort_sigs = (
+        df_supporting_reads_per_locus.query("signature_type == 'control'")["signature"].nunique()
+        if "signature" in df_supporting_reads_per_locus.columns
+        else 1
+    ) or 1
 
     # Compute read-based n values from supporting_reads column (consistent with RL histogram).
     def _n_reads(sig_type: str) -> int | None:
@@ -871,7 +888,7 @@ def render_intersection_af_combined(  # noqa: C901
 
     for af_data, n_norm, color, kde_color, label_prefix, n_reads_val in [
         (db_ctrl_af, n_db_ctrl_sigs, "#3498db", "#1a5276", "Synthetic controls average", _n_db_reads),
-        (cohort_af, 1, "#9b59b6", "#6c3483", "Cohort control", _n_cohort_reads),
+        (cohort_af, n_cohort_sigs, "#9b59b6", "#6c3483", "Cohort controls average", _n_cohort_reads),
     ]:
         if len(af_data) > 0:
             _n_label = n_reads_val if n_reads_val is not None else len(af_data)
@@ -981,17 +998,34 @@ def render_supporting_reads_histogram(  # noqa: C901, PLR0912, PLR0915
     cohort = _max_per_locus(df_supporting_reads_per_locus, "control")
     db_ctrl = _max_per_locus(df_supporting_reads_per_locus, "db_control")
 
-    # Multi-read excluded matched loci (pre-filter but not post-filter)
+    # Multi-read excluded loci (pre-filter but not post-filter) for matched, cohort, and db_control
     multi_excl = pd.Series(dtype=int)
+    multi_excl_cohort = pd.Series(dtype=int)
+    multi_excl_db_ctrl = pd.Series(dtype=int)
     if df_supporting_pre_multi_read is not None and not df_supporting_pre_multi_read.empty:
         pre_matched = _max_per_locus(df_supporting_pre_multi_read, "matched")
         if len(pre_matched) > 0:
             multi_excl = pre_matched[~pre_matched.index.isin(matched.index)]
+        pre_cohort = _max_per_locus(df_supporting_pre_multi_read, "control")
+        if len(pre_cohort) > 0:
+            multi_excl_cohort = pre_cohort[~pre_cohort.index.isin(cohort.index)]
+        pre_db_ctrl = _max_per_locus(df_supporting_pre_multi_read, "db_control")
+        if len(pre_db_ctrl) > 0:
+            multi_excl_db_ctrl = pre_db_ctrl[~pre_db_ctrl.index.isin(db_ctrl.index)]
 
-    if len(matched) == 0 and len(cohort) == 0 and len(db_ctrl) == 0 and len(multi_excl) == 0:
+    if (
+        len(matched) == 0
+        and len(cohort) == 0
+        and len(db_ctrl) == 0
+        and len(multi_excl) == 0
+        and len(multi_excl_cohort) == 0
+        and len(multi_excl_db_ctrl) == 0
+    ):
         return ""
 
-    all_reads = pd.concat([s for s in [matched, cohort, db_ctrl, multi_excl] if len(s) > 0])
+    all_reads = pd.concat(
+        [s for s in [matched, cohort, db_ctrl, multi_excl, multi_excl_cohort, multi_excl_db_ctrl] if len(s) > 0]
+    )
     max_val = int(all_reads.max())
     max_total_bars = 20  # total bars shown
     always_individual = 2  # bins 1 and 2 are always their own bars
@@ -1022,11 +1056,13 @@ def render_supporting_reads_histogram(  # noqa: C901, PLR0912, PLR0915
 
     n_matched_zero = max(0, signature_size - len(matched) - len(multi_excl))
 
-    # Build list of active groups (back to front): db_ctrl, cohort, multi_excl, matched
+    # Build list of active groups (back to front): db_ctrl, db_ctrl filtered, cohort, cohort filtered, matched filtered, matched
     active_groups = []
     for data, sig_size, color, text_color, alpha, label_prefix in [
         (db_ctrl, db_control_signature_size, "#3498db", "#1a5276", 0.55, "Synthetic controls"),
+        (multi_excl_db_ctrl, db_control_signature_size, "#aed6f1", "#1a5276", 0.4, "Synthetic controls multi-read filtered"),
         (cohort, cohort_signature_size, "#9b59b6", "#6c3483", 0.55, "Cohort control"),
+        (multi_excl_cohort, cohort_signature_size, "#d7bde2", "#6c3483", 0.4, "Cohort multi-read filtered"),
         (multi_excl, signature_size, "#f0a090", "#c0392b", 0.4, "Patient multi-read filtered"),
         (matched, signature_size, "#c0392b", "#7b241c", 0.6, "Patient signature"),
     ]:
@@ -1035,7 +1071,7 @@ def render_supporting_reads_histogram(  # noqa: C901, PLR0912, PLR0915
             active_groups.append((data, norm, color, text_color, alpha, label_prefix, len(data)))
 
     n_active = len(active_groups)
-    bar_width = {1: 0.55, 2: 0.38, 3: 0.28, 4: 0.22}.get(n_active, 0.20)
+    bar_width = {1: 0.55, 2: 0.38, 3: 0.28, 4: 0.22, 5: 0.18, 6: 0.15}.get(n_active, 0.13)
     offsets = np.linspace(-(n_active - 1) / 2 * bar_width, (n_active - 1) / 2 * bar_width, n_active)
 
     n_bars = len(bin_labels)
