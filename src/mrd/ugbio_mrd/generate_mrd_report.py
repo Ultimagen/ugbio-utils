@@ -914,26 +914,33 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         _n_total_ns = df_features.groupby(level=["chrom", "pos"]).size()
         _lq_frac_ns = (_n_total_ns - _n_hq_ns) / _n_total_ns.clip(lower=1)
         _noisy_ns = _lq_frac_ns[_lq_frac_ns > thresh_noise_lq_reads].index
-        df_features_no_snvq_filt = df_features_no_snvq_filt[
-            ~df_features_no_snvq_filt.index.isin(_noisy_ns)
-        ]
+        df_features_no_snvq_filt = df_features_no_snvq_filt[~df_features_no_snvq_filt.index.isin(_noisy_ns)]
 
     # Re-apply multi-read locus filter using TF estimated from no-SNVQ reads.
     if thresh_multi_read_pvalue is not None:
         _df_tf_ns, _ = mrd.get_tf_from_filtered_data(
-            df_features_no_snvq_filt, df_signatures_filt,
-            plot_results=False, title="No SNVQ (pre multi-read)", snvq_recall=snvq_recall,
+            df_features_no_snvq_filt,
+            df_signatures_filt,
+            plot_results=False,
+            title="No SNVQ (pre multi-read)",
+            snvq_recall=snvq_recall,
         )
         while True:
             _new_ns, _ = mrd.apply_multi_read_locus_filter(
-                df_features_no_snvq_filt, _df_tf_ns, df_signatures_filt, thresh_multi_read_pvalue,
+                df_features_no_snvq_filt,
+                _df_tf_ns,
+                df_signatures_filt,
+                thresh_multi_read_pvalue,
             )
             if len(_new_ns) == len(df_features_no_snvq_filt):
                 break
             df_features_no_snvq_filt = _new_ns
             _df_tf_ns, _ = mrd.get_tf_from_filtered_data(
-                df_features_no_snvq_filt, df_signatures_filt,
-                plot_results=False, title="No SNVQ (multi-read iter)", snvq_recall=snvq_recall,
+                df_features_no_snvq_filt,
+                df_signatures_filt,
+                plot_results=False,
+                title="No SNVQ (multi-read iter)",
+                snvq_recall=snvq_recall,
             )
 
     df_tf_unfilt2, df_supporting_reads_per_locus_unfilt2 = mrd.get_tf_from_filtered_data(

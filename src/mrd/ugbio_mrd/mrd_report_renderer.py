@@ -128,7 +128,9 @@ def _drop_snvq_from_query(read_filter_query: str) -> str:
     """Return read_filter_query with the snvq clause removed."""
     import re  # noqa: PLC0415
 
-    parts = [p.strip() for p in re.split(r"\s+and\s+", read_filter_query, flags=re.IGNORECASE) if "snvq" not in p.lower()]
+    parts = [
+        p.strip() for p in re.split(r"\s+and\s+", read_filter_query, flags=re.IGNORECASE) if "snvq" not in p.lower()
+    ]
     return " and ".join(parts)
 
 
@@ -1058,11 +1060,19 @@ def render_supporting_reads_histogram(  # noqa: C901, PLR0912, PLR0915
 
     n_matched_zero = max(0, signature_size - len(matched) - len(multi_excl))
 
-    # Build list of active groups (back to front): db_ctrl, db_ctrl filtered, cohort, cohort filtered, matched filtered, matched
+    # Build list of active groups (back to front):
+    # db_ctrl, db_ctrl filtered, cohort, cohort filtered, matched filtered, matched
     active_groups = []
     for data, sig_size, color, text_color, alpha, label_prefix in [
         (db_ctrl, db_control_signature_size, "#3498db", "#1a5276", 0.55, "Synthetic controls"),
-        (multi_excl_db_ctrl, db_control_signature_size, "#aed6f1", "#1a5276", 0.4, "Synthetic controls multi-read filtered"),
+        (
+            multi_excl_db_ctrl,
+            db_control_signature_size,
+            "#aed6f1",
+            "#1a5276",
+            0.4,
+            "Synthetic controls multi-read filtered",
+        ),
         (cohort, cohort_signature_size, "#9b59b6", "#6c3483", 0.55, "Cohort control"),
         (multi_excl_cohort, cohort_signature_size, "#d7bde2", "#6c3483", 0.4, "Cohort multi-read filtered"),
         (multi_excl, signature_size, "#f0a090", "#c0392b", 0.4, "Patient multi-read filtered"),

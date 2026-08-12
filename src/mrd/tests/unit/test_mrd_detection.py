@@ -641,15 +641,21 @@ class TestDetectionBoundaryStrict:
             names=["signature_type", "signature"],
         )
         matched = pd.DataFrame(
-            {"supporting_reads": [matched_reads], "coverage": [self._N_EFF],
-             "corrected_coverage": [self._N_EFF], "ctdna_vaf": [matched_reads / self._N_EFF]},
+            {
+                "supporting_reads": [matched_reads],
+                "coverage": [self._N_EFF],
+                "corrected_coverage": [self._N_EFF],
+                "ctdna_vaf": [matched_reads / self._N_EFF],
+            },
             index=idx_m,
         )
         syn = pd.DataFrame(
-            {"supporting_reads": [self._SYN_READS] * self._N_SYN,
-             "coverage": [self._N_EFF] * self._N_SYN,
-             "corrected_coverage": [self._N_EFF] * self._N_SYN,
-             "ctdna_vaf": [self._SYN_READS / self._N_EFF] * self._N_SYN},
+            {
+                "supporting_reads": [self._SYN_READS] * self._N_SYN,
+                "coverage": [self._N_EFF] * self._N_SYN,
+                "corrected_coverage": [self._N_EFF] * self._N_SYN,
+                "ctdna_vaf": [self._SYN_READS / self._N_EFF] * self._N_SYN,
+            },
             index=idx_s,
         )
         return pd.concat([matched, syn])
