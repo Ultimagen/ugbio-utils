@@ -1028,9 +1028,11 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         "max_reads_per_locus_db_control": 1,
     }
 
-    # --- mean_coverage from the matched signature (coverage proxy for all types) ---
+    # --- mean_coverage from the matched signature; fall back to all signatures when absent ---
     if "signature_type" in df_signatures_filt.columns:
         matched_sig_df = df_signatures_filt[df_signatures_filt["signature_type"] == "matched"]
+        if len(matched_sig_df) == 0:
+            matched_sig_df = df_signatures_filt
     else:
         matched_sig_df = df_signatures_filt
     signature_size = len(matched_sig_df)
@@ -1045,12 +1047,11 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
             matched_data["ctdna_vaf"].iloc[0] if isinstance(matched_data, pd.DataFrame) else matched_data["ctdna_vaf"]
         )
     except KeyError:
-        logger.warning("apply_multi_read_locus_filter: no matched TF estimate found — skipping filter")
-        return df_features_filt, filter_info
+        logger.debug("apply_multi_read_locus_filter: no matched TF — controls still filtered per-signature")
+        matched_vaf = 0.0
 
     if matched_vaf <= 0:
-        logger.debug("apply_multi_read_locus_filter: matched_vaf <= 0 — skipping filter")
-        return df_features_filt, filter_info
+        logger.debug("apply_multi_read_locus_filter: matched_vaf <= 0 — controls still filtered per-signature")
 
     if signature_size == 0 or mean_coverage <= 0:
         logger.debug(
@@ -1092,8 +1093,28 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
             continue
         per_locus_counts = sig_rows.groupby(level=["chrom", "pos"]).size()
 
-        # --- Estimate VAF from all loci ---
-        # Using all loci avoids the breakdown at high coverage / high TF where a
+        # --- Restrict to signature loci before VAF estimation ---
+        # Loci absent from df_signatures_filt are excluded from the TF calculation
+        # via the inner join in get_tf_from_filtered_data.  Including them in all_reads
+        # while their coverage is absent from corr_cov would bias the VAF upward.
+        if "signature_type" in df_signatures_filt.columns:
+            sig_type_mask = df_signatures_filt["signature_type"] == sig_type
+        else:
+            sig_type_mask = pd.Series(data=True, index=df_signatures_filt.index)
+        sig_name_mask = df_signatures_filt["signature"] == sig_name
+        sig_loci_cov = df_signatures_filt.loc[sig_type_mask & sig_name_mask, "coverage"]
+        # Deduplicate: take mean coverage if multiple entries per locus
+        if sig_loci_cov.index.duplicated().any():
+            sig_loci_cov = sig_loci_cov.groupby(level=sig_loci_cov.index.names).mean()
+        per_locus_cov = sig_loci_cov.reindex(per_locus_counts.index)
+        in_signature = per_locus_cov.notna()
+        per_locus_counts = per_locus_counts[in_signature]
+        per_locus_cov = per_locus_cov[in_signature].to_numpy()
+        if len(per_locus_counts) == 0:
+            continue
+
+        # --- Estimate VAF from signature loci ---
+        # Using all (retained) loci avoids the breakdown at high coverage / high TF where a
         # low-read cap would leave too few background observations.  Germline /
         # mosaic variants can slightly inflate the estimate; that is acceptable.
         all_reads = int(per_locus_counts.sum())
@@ -1111,23 +1132,9 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         n_loci = _n_sig(sig_type, sig_name, len(per_locus_counts))
 
         # --- Per-locus lambda using local coverage ---
-        # Instead of a single λ = VAF × mean_coverage for all loci, use
         # λ_i = VAF × coverage_i to account for local coverage variation.
         # High-coverage loci naturally expect more reads and need a higher
         # threshold before being flagged as outliers.
-        if "signature_type" in df_signatures_filt.columns:
-            sig_type_mask = df_signatures_filt["signature_type"] == sig_type
-        else:
-            sig_type_mask = pd.Series(data=True, index=df_signatures_filt.index)
-        sig_name_mask = df_signatures_filt["signature"] == sig_name
-        sig_loci_cov = df_signatures_filt.loc[sig_type_mask & sig_name_mask, "coverage"]
-        # Deduplicate: take mean coverage if multiple entries per locus
-        if sig_loci_cov.index.duplicated().any():
-            sig_loci_cov = sig_loci_cov.groupby(level=sig_loci_cov.index.names).mean()
-        # Align per-locus coverage to per_locus_counts index
-        per_locus_cov = sig_loci_cov.reindex(per_locus_counts.index)
-        # Fall back to mean_coverage for any loci missing coverage data
-        per_locus_cov = per_locus_cov.fillna(mean_coverage).to_numpy()
         lam_per_locus = vaf * per_locus_cov
 
         bonf_pvals = poisson.sf(per_locus_counts.to_numpy() - 1, lam_per_locus) * n_loci
@@ -1145,11 +1152,13 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
                 logger.debug("apply_multi_read_locus_filter: no matched outlier loci (min Bonferroni p=%.4f)", min_bonf)
             continue
 
-        # Remove ALL rows of this sig_type at the outlier loci
-        is_type_row = df_features_filt_out["signature_type"] == sig_type
+        # Remove ALL rows of this specific signature at the outlier loci
+        is_sig_row = (df_features_filt_out["signature_type"] == sig_type) & (
+            df_features_filt_out["signature"] == sig_name
+        )
         is_outlier_locus = df_features_filt_out.index.isin(outlier_loci)
         n_before = len(df_features_filt_out)
-        df_features_filt_out = df_features_filt_out[~(is_type_row & is_outlier_locus)]
+        df_features_filt_out = df_features_filt_out[~(is_sig_row & is_outlier_locus)]
         n_reads_removed = n_before - len(df_features_filt_out)
         logger.info(
             "apply_multi_read_locus_filter: removed %d %s/%s loci (%d reads); λ=%.4f, min Bonferroni p=%.4e",
@@ -1196,13 +1205,21 @@ def get_tf_from_filtered_data(
     df_features_in: pd.DataFrame,
     df_signatures_in: pd.DataFrame,
     title=None,  # noqa: ARG001 (kept for call-site compatibility)
-    denom_ratio=None,
+    snvq_recall=None,
     *,
     plot_results=False,  # noqa: ARG002 (deprecated — plotting moved to mrd_detection)
     excluded_loci: pd.Index | None = None,
 ):
     """
-    Calculate tumor fraction from filtered dataframes.
+    Calculate ctDNA VAF from filtered featuremap and signature dataframes.
+
+    VAF formula:  VAF = T / N  where T = K / P
+      N = total coverage at signature loci (sum of per-locus coverage)
+      K = supporting reads (rows in df_features_in after read-quality filter)
+      P = SNVQ recall (snvq_recall: fraction of TP reads passing the quality threshold)
+      T = total signal = K / P
+
+    In practice: corrected_coverage = ceil(N × P) and ctdna_vaf = K / corrected_coverage.
 
     Parameters
     ----------
@@ -1258,16 +1275,29 @@ def get_tf_from_filtered_data(
     df_n_loci = df_signatures_active.groupby("signature").size().rename("n_loci")
     df_tf = df_supporting_reads.join(df_coverage).join(df_n_loci).fillna(0)
     df_tf["n_loci"] = df_tf["n_loci"].astype(int)
-    df_tf["corrected_coverage"] = df_tf["coverage"] * denom_ratio
+    df_tf["corrected_coverage"] = df_tf["coverage"] * snvq_recall
     df_tf["corrected_coverage"] = np.ceil(df_tf["corrected_coverage"])
     df_tf = df_tf.assign(ctdna_vaf=df_tf["supporting_reads"] / df_tf["corrected_coverage"]).sort_index(ascending=False)
 
     return (df_tf, df_supporting_reads_per_locus)
 
 
-def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadata_json: str, read_filter_query: str):
+def calc_tumor_fraction_denominator_ratio(
+    featuremap_df_file: str,
+    srsnv_metadata_json: str,
+    read_filter_query: str,
+):
     """
-    Calculate the ratio of filtered to total reads from the single_read_snv training dataframe
+    Compute P (SNVQ recall): the fraction of true-positive reads passing the read quality filter.
+
+    P = filt_ratio × read_filter_non_filt, where:
+      filt_ratio           = fraction of TPs surviving the training region filter
+      read_filter_non_filt = fraction of TPs passing the SNVQ threshold (read_filter_query)
+
+    P is used as the denominator correction so that:
+      corrected_coverage = ceil(N × P)
+      ctDNA VAF = K / corrected_coverage = (K/P) / N = T / N
+
     Parameters
     ----------
     featuremap_df_file: str
@@ -1279,8 +1309,8 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
         query to filter the dataframe
     Returns
     -------
-    denom_ratio: float
-        ratio of filtered to total reads
+    snvq_recall: float
+        P = SNVQ recall (combined fraction of TP reads passing region + quality filters)
     """
     # Read parquet (only required columns) and apply read filter query to true positives
     # Get column names from parquet schema without reading data
@@ -1334,5 +1364,5 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
     filt_numer = tp_filtering.iloc[-1][filtering_count_column]  # final number of true positives (before downsampling)
     filt_ratio = filt_numer / filt_denom
 
-    denom_ratio = filt_ratio * read_filter_non_filt
-    return denom_ratio, filt_ratio, read_filter_non_filt
+    snvq_recall = filt_ratio * read_filter_non_filt
+    return snvq_recall, filt_ratio, read_filter_non_filt

@@ -120,7 +120,7 @@
   /* ── Metrics grid ── */
   .metrics-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 12px;
   }
   .metric-card {
@@ -260,6 +260,7 @@
           <div class="stat">
             <span class="stat-label">ctDNA VAF</span>
             <span class="stat-value">{{ vaf_str }}</span>
+            <span class="stat-sub">= Total Signal / Total Coverage</span>
           </div>
           <div class="stat">
             <span class="stat-label">p-value (Binomial)</span>
@@ -267,13 +268,8 @@
             <span class="stat-sub">Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }})</span>
           </div>
           <div class="stat">
-            <span class="stat-label">Sample-specific LOD</span>
-            <span class="stat-value">{{ lod_str }}</span>
-            <span class="stat-sub">{{ "%.0f"|format(detection.lod_recall * 100) }}% recall · {{ "%.0f"|format(detection.lod_fpr * 100) }}% FPR</span>
-          </div>
-          <div class="stat">
             <span class="stat-label">Supporting Reads</span>
-            <span class="stat-value">{{ detection.matched_supporting_reads }}</span>
+            <span class="stat-value">{{ "{:,}".format(detection.matched_supporting_reads) }}</span>
           </div>
         </div>
       </div>
@@ -321,14 +317,22 @@
           <div class="sub">at signature loci</div>
         </div>
         <div class="metric-card">
-          <div class="label">Corrected Coverage</div>
-          <div class="value">{{ "{:,.0f}".format(detection.corrected_coverage) }}</div>
-          <div class="sub">effective depth &times; loci</div>
+          <div class="label">Total Coverage</div>
+          <div class="value">{{ "{:,.0f}".format(total_coverage_n) }}</div>
+          <div class="sub">reads covering signature</div>
         </div>
         <div class="metric-card">
-          <div class="label">Coverage Correction Ratio</div>
-          <div class="value">{{ "%.2f"|format(denom_ratio) }}</div>
-          <div class="sub">corrected / original coverage</div>
+          <div class="label">PASS-FILTER RATE</div>
+          <div class="value">{{ "%.2f"|format(snvq_recall) }}</div>
+          <div class="sub">Estimated fraction of true events passing read filters</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Total Signal</div>
+          <div class="value">{{ "%.1f"|format(total_signal_t) }}</div>
+          <div class="sub" style="display:flex; flex-direction:column; align-items:center; line-height:1.4; margin-top:4px;">
+            <span>supporting reads</span>
+            <span style="border-top:1px solid currentColor; padding-top:2px; width:100%; text-align:center;">pass-filter rate</span>
+          </div>
         </div>
       </div>
     </div>
@@ -345,7 +349,7 @@
         <span style="color:#3a9ad9;">&#9679;</span> <strong>Synthetic control signatures:</strong> Signatures drawn from db_control.<br>
         <strong>Blue violin:</strong> Fitted Binomial, according to synthetic control error-rates: Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }}).<br>
         <span style="color:#e67e22;">&#9135;&#9135;</span> Detection threshold (min VAF for Binomial p&nbsp;&lt;&nbsp;{{ "%.0f"|format(detection.alpha * 100) }}%).<br>
-        <span style="color:#27ae60;">&#183;&ndash;&#183;</span> LOD (min VAF for {{ "%.0f"|format(detection.lod_recall * 100) }}% recall at {{ "%.0f"|format(detection.lod_fpr * 100) }}% FPR).<br>
+        <span style="color:#27ae60;">&#183;&ndash;&#183;</span> <strong>Sample-specific LOD</strong> = {{ lod_str }} &mdash; minimum VAF detectable at {{ "%.0f"|format(detection.lod_recall * 100) }}% recall / {{ "%.0f"|format(detection.lod_fpr * 100) }}% FPR for this patient&rsquo;s signature size and coverage.<br>
         <span style="color:#9b59b6;">&#9670;</span> Cohort control signatures.
       </div>
     </div>
@@ -397,6 +401,7 @@
           Read length distribution of cfDNA reads at signature loci (after read filter).
           Red: patient signature loci. Blue: control signature loci.
           Shorter fragment lengths are enriched in ctDNA due to nucleosomal positioning.
+          Synthetic control counts are averaged across synthetic signatures.
         </div>
       </div>
     </div>
@@ -409,9 +414,10 @@
       <div class="chart-container">
         <img src="data:image/png;base64,{{ intersection_snvq_img }}" alt="cfDNA Intersection SNVQ">
         <div class="chart-description">
-          SNVQ score distribution of cfDNA reads at signature loci (after read filter).
+          SNVQ score distribution of cfDNA reads at signature loci (after read filter, SNVQ &ge; 40).
           Red: patient signature loci. Blue: control signature loci.
           Higher SNVQ indicates higher confidence in the SNV call.
+          Synthetic control counts are averaged across synthetic signatures.
         </div>
       </div>
     </div>
@@ -460,36 +466,41 @@
     </div>
     {% endif %}
 
-    <!-- ── CONTROL SIGNATURE PROFILES ── -->
-    {% if control_profiles %}
-    <div class="section">
-      <div class="section-title">Control Signature Profiles</div>
-      {% for profile in control_profiles %}
-      <div class="chart-label">{{ profile.label }}</div>
-      <div class="chart-container">
-        <img src="data:image/png;base64,{{ profile.img_b64 }}" alt="{{ profile.label }} SBS profile">
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
+    <!-- ── CONTROL SIGNATURE PROFILES — moved to end of report ── -->
 
-    <!-- ── FRAGMENT LENGTH DISTRIBUTIONS ── -->
-    {% if fragment_length_img %}
-    <div class="section">
-      <div class="section-title">cfDNA Fragment Length Distributions</div>
-      <div class="chart-container">
-        <img src="data:image/png;base64,{{ fragment_length_img }}" alt="Fragment length distributions">
-      </div>
-    </div>
-    {% endif %}
+    <!-- ── FRAGMENT LENGTH DISTRIBUTIONS — moved to end of report ── -->
 
     <!-- ── QC ANALYSIS: UNFILTERED SIGNATURE ── -->
     <div class="section">
       <div class="section-title">QC Analysis — Unfiltered Signature</div>
       <div class="chart-description" style="margin-bottom:10px;">
         Filtered reads + unfiltered signatures: assesses the impact of signature QC filters.
-      </div>
-      {% if unfilt_sig_signal_noise_img %}
+      </div>      {% if unfilt_sig_comparison %}
+      <table style="width:100%; border-collapse:collapse; margin-bottom:16px; font-size:13px;">
+        <thead>
+          <tr style="background:var(--light-gray); text-align:left;">
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Analysis</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Call</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">p-value</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Supporting Reads</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">ctDNA VAF</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in unfilt_sig_comparison %}
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px 12px; font-weight:600;">{{ row.label }}</td>
+            <td style="padding:8px 12px;">
+              <span class="status-badge {{ row.call_class }}" style="font-size:11px; padding:3px 8px;">{{ row.call }}</span>
+            </td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.p_str }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ "{:,}".format(row.supporting_reads) }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.vaf_str }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}      {% if unfilt_sig_signal_noise_img %}
       <div class="chart-container">
         <img src="data:image/png;base64,{{ unfilt_sig_signal_noise_img }}" alt="Signal vs Noise (unfiltered sig)">
       </div>
@@ -504,27 +515,96 @@
         <img src="data:image/png;base64,{{ unfilt_sig_intersection_img }}" alt="Intersection AF (unfiltered sig)">
       </div>
       {% endif %}
+      {% if unfilt_sig_read_length_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_sig_read_length_img }}" alt="Read length distribution (unfiltered sig)">
+        <div class="chart-description">
+          Read length distribution of cfDNA reads at signature loci (filtered reads).
+          Red: patient signature. Blue: control loci.
+          Synthetic control counts are averaged across synthetic signatures.
+        </div>
+      </div>
+      {% endif %}
+      {% if unfilt_sig_snvq_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_sig_snvq_img }}" alt="SNVQ distribution (unfiltered sig)">
+        <div class="chart-description">
+          SNVQ score distribution at signature loci (filtered reads, SNVQ &ge; 40).
+          Red: patient. Blue: control.
+          Synthetic control counts are averaged across synthetic signatures.
+        </div>
+      </div>
+      {% endif %}
     </div>
 
-    <!-- ── QC ANALYSIS: UNFILTERED READS ── -->
+    <!-- ── QC ANALYSIS: NO SNVQ FILTER ── -->
     <div class="section">
-      <div class="section-title">QC Analysis — Unfiltered Reads</div>
+      <div class="section-title">QC Analysis &mdash; No SNVQ Filter</div>
       <div class="chart-description" style="margin-bottom:10px;">
-        Unfiltered reads + filtered signatures: assesses the impact of read-level QC filters.
+        Reads passing all filters <em>except</em> the SNVQ threshold (<code>filt&gt;0</code> and <code>mapq&ge;60</code>) at filtered
+        signature loci. Dark bars in the SNVQ histogram (above threshold) should match the primary supporting-reads count.
+      </div>
+      {% if no_snvq_comparison %}
+      <table style="width:100%; border-collapse:collapse; margin-bottom:16px; font-size:13px;">
+        <thead>
+          <tr style="background:var(--light-gray); text-align:left;">
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Analysis</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Call</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">p-value</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Supporting Reads</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">ctDNA VAF</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in no_snvq_comparison %}
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px 12px; font-weight:600;">{{ row.label }}</td>
+            <td style="padding:8px 12px;">
+              <span class="status-badge {{ row.call_class }}" style="font-size:11px; padding:3px 8px;">{{ row.call }}</span>
+            </td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.p_str }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ "{:,}".format(row.supporting_reads) }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.vaf_str }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
       </div>
       {% if unfilt_reads_signal_noise_img %}
       <div class="chart-container">
-        <img src="data:image/png;base64,{{ unfilt_reads_signal_noise_img }}" alt="Signal vs Noise (unfiltered reads)">
+        <img src="data:image/png;base64,{{ unfilt_reads_signal_noise_img }}" alt="Signal vs Noise (no SNVQ filter)">
       </div>
       {% endif %}
       {% if unfilt_reads_sbs_vaf_img %}
       <div class="chart-container">
-        <img src="data:image/png;base64,{{ unfilt_reads_sbs_vaf_img }}" alt="SBS + VAF (unfiltered reads)">
+        <img src="data:image/png;base64,{{ unfilt_reads_sbs_vaf_img }}" alt="SBS + VAF (no SNVQ filter)">
       </div>
       {% endif %}
       {% if unfilt_reads_intersection_img %}
       <div class="chart-container">
-        <img src="data:image/png;base64,{{ unfilt_reads_intersection_img }}" alt="Intersection AF (unfiltered reads)">
+        <img src="data:image/png;base64,{{ unfilt_reads_intersection_img }}" alt="Intersection AF (no SNVQ filter)">
+      </div>
+      {% endif %}
+      {% if unfilt_reads_read_length_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_reads_read_length_img }}" alt="cfDNA Intersection Read Length (no SNVQ filter)">
+        <div class="chart-description">
+          cfDNA Intersection Read Length Distribution at filtered signature loci
+          (filt&gt;0 and mapq&ge;60, no SNVQ threshold applied).
+          Red: patient signature. Blue: control loci.
+          Synthetic control counts are averaged across synthetic signatures.
+        </div>
+      </div>
+      {% endif %}
+      {% if unfilt_reads_snvq_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_reads_snvq_img }}" alt="SNVQ distribution (no SNVQ filter)">
+        <div class="chart-description">
+          SNVQ distribution at filtered signature loci (filt&gt;0 and mapq&ge;60, SNVQ &ge; 40 shown).
+          Light bars: reads below the SNVQ threshold. Dark bars: reads above threshold (= supporting reads count).
+          Synthetic control counts are averaged across synthetic signatures.
+        </div>
       </div>
       {% endif %}
     </div>
@@ -559,7 +639,7 @@
               <span class="status-badge {{ row.call_class }}" style="font-size:11px; padding:3px 8px;">{{ row.call }}</span>
             </td>
             <td style="padding:8px 12px; font-family:monospace;">{{ row.p_str }}</td>
-            <td style="padding:8px 12px; font-family:monospace;">{{ row.supporting_reads }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ "{:,}".format(row.supporting_reads) }}</td>
             <td style="padding:8px 12px; font-family:monospace;">{{ row.vaf_str }}</td>
           </tr>
           {% endfor %}
@@ -604,7 +684,7 @@
               <span class="status-badge {{ row.call_class }}" style="font-size:11px; padding:3px 8px;">{{ row.call }}</span>
             </td>
             <td style="padding:8px 12px; font-family:monospace;">{{ row.p_str }}</td>
-            <td style="padding:8px 12px; font-family:monospace;">{{ row.supporting_reads }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ "{:,}".format(row.supporting_reads) }}</td>
             <td style="padding:8px 12px; font-family:monospace;">{{ row.vaf_str }}</td>
           </tr>
           {% endfor %}
@@ -617,6 +697,29 @@
              alt="Signal vs Noise (no multi-read filter)">
       </div>
       {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- ── CONTROL SIGNATURE PROFILES ── -->
+    {% if control_profiles %}
+    <div class="section">
+      <div class="section-title">Control Signature Profiles</div>
+      {% for profile in control_profiles %}
+      <div class="chart-label">{{ profile.label }}</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ profile.img_b64 }}" alt="{{ profile.label }} SBS profile">
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- ── FRAGMENT LENGTH DISTRIBUTIONS ── -->
+    {% if fragment_length_img %}
+    <div class="section">
+      <div class="section-title">cfDNA Fragment Length Distributions</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ fragment_length_img }}" alt="Fragment length distributions">
+      </div>
     </div>
     {% endif %}
 

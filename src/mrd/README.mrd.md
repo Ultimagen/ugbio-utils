@@ -6,8 +6,18 @@ This module includes MRD (Minimal Residual Disease) python scripts and utils for
 
 MRD detection is based on a Binomial test comparing the observed supporting read count at patient signature loci against a background noise model derived from synthetic (db\_control) signatures.
 
-**Detection p-value:** `P(X ≥ observed_reads | Binom(n_effective, p_err))`
-where `n_effective = signature_size × mean_coverage × denom_ratio` and `p_err` is the background error rate estimated from synthetic controls via Jeffreys prior.
+### ctDNA VAF estimation
+
+Given:
+- **N** = total coverage = reads covering signature loci (`signature_size × mean_coverage`)
+- **K** = supporting reads passing the SNVQ quality threshold
+- **P** = SNVQ recall = fraction of true-positive reads passing the threshold (estimated from training data)
+- **T** = total signal = K / P (supporting reads corrected for recall)
+
+$$\text{ctDNA VAF} = \frac{T}{N} = \frac{K/P}{N}$$
+
+**Detection p-value:** `P(X ≥ K | Binom(N × P, p_err))`
+where `N × P` (= `corrected_coverage`) is the effective Binomial trial count and `p_err` is the background error rate estimated from synthetic controls via Jeffreys prior.
 
 ### Personal LOD
 
@@ -23,7 +33,7 @@ $$n_{th} = \min\{k : P(X \geq k \mid \mathrm{Binom}(N,\, p_{err})) < 0.05\}$$
 
 $$\mathrm{LOD} = \min\{\mathrm{TF} : P(X \geq n_{th} \mid \mathrm{Binom}(N,\, p_{err} + \mathrm{TF})) \geq 0.95\}$$
 
-where $N = \text{signature\_size} \times \text{mean\_coverage} \times \text{denom\_ratio}$.
+where $N_{\text{eff}} = N \times P = \text{signature\_size} \times \text{mean\_coverage} \times \text{SNVQ\_recall}$.
 
 The LOD decreases (improves) with larger signature size, higher coverage, or lower noise rate. It is `None` when no threshold satisfies the FPR constraint (e.g., signature too small or coverage too low).
 

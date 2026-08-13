@@ -614,3 +614,79 @@ class TestFormatScientific:
     def test_power_of_ten(self):
         result = format_scientific(1e-6)
         assert "10" in result
+
+
+class TestDetectionBoundaryStrict:
+    """Regression tests for the strict > detection threshold (matched_reads > threshold, not >=)."""
+
+    _N_EFF = 10_000
+    _N_SYN = 30
+    _SYN_READS = 1  # each synthetic has 1 read → p_err = 30/(30*10000) = 1e-4
+
+    def _p_err(self) -> float:
+        return (self._N_SYN * self._SYN_READS) / (self._N_SYN * self._N_EFF)
+
+    def _threshold(self) -> int:
+        """Compute detection_threshold the same way run_detection_analysis does."""
+        p = self._p_err()
+        k_vals = np.arange(1, 200)
+        sf_vals = binom.sf(k_vals - 1, self._N_EFF, p)
+        hits = k_vals[sf_vals < 0.01]
+        return int(hits[0])
+
+    def _df_tf(self, matched_reads: int) -> pd.DataFrame:
+        idx_m = pd.MultiIndex.from_tuples([("matched", "patient")], names=["signature_type", "signature"])
+        idx_s = pd.MultiIndex.from_tuples(
+            [("db_control", f"syn{i}") for i in range(self._N_SYN)],
+            names=["signature_type", "signature"],
+        )
+        matched = pd.DataFrame(
+            {
+                "supporting_reads": [matched_reads],
+                "coverage": [self._N_EFF],
+                "corrected_coverage": [self._N_EFF],
+                "ctdna_vaf": [matched_reads / self._N_EFF],
+            },
+            index=idx_m,
+        )
+        syn = pd.DataFrame(
+            {
+                "supporting_reads": [self._SYN_READS] * self._N_SYN,
+                "coverage": [self._N_EFF] * self._N_SYN,
+                "corrected_coverage": [self._N_EFF] * self._N_SYN,
+                "ctdna_vaf": [self._SYN_READS / self._N_EFF] * self._N_SYN,
+            },
+            index=idx_s,
+        )
+        return pd.concat([matched, syn])
+
+    def _df_sigs(self) -> pd.DataFrame:
+        n = 500
+        idx = pd.MultiIndex.from_arrays([["chr1"] * n, range(1000, 1000 + n)], names=["chrom", "pos"])
+        return pd.DataFrame(
+            {"signature_type": ["matched"] * n, "signature": ["patient"] * n, "coverage": [40] * n},
+            index=idx,
+        )
+
+    def test_at_threshold_not_detected(self):
+        """matched_reads == detection_threshold must be Not Detected (strict >, not >=)."""
+        thr = self._threshold()
+        result = run_detection_analysis(df_tf=self._df_tf(thr), df_signatures_filt=self._df_sigs())
+        assert result.detected is False, f"threshold={thr}: reads==threshold must be Not Detected"
+        assert result.call == "MRD Not Detected"
+        assert result.detection_threshold == thr
+
+    def test_one_above_threshold_detected(self):
+        """matched_reads == detection_threshold + 1 must be Detected."""
+        thr = self._threshold()
+        result = run_detection_analysis(df_tf=self._df_tf(thr + 1), df_signatures_filt=self._df_sigs())
+        assert result.detected is True, f"threshold={thr}: reads=threshold+1 must be Detected"
+        assert result.call == "MRD Detected"
+
+    def test_one_below_threshold_not_detected(self):
+        """matched_reads == detection_threshold - 1 must be Not Detected."""
+        thr = self._threshold()
+        assert thr >= 2, "threshold must be >= 2 for this test to be meaningful"  # noqa: PLR2004
+        result = run_detection_analysis(df_tf=self._df_tf(thr - 1), df_signatures_filt=self._df_sigs())
+        assert result.detected is False, f"threshold={thr}: reads=threshold-1 must be Not Detected"
+        assert result.call == "MRD Not Detected"

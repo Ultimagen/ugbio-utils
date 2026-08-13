@@ -273,7 +273,7 @@ def test_generate_mrd_report_with_multi_read_filter(output_path, resources_dir):
         signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
         read_filter_query="filt>0 and snvq>60 and mapq>=60",
         srsnv_metadata_json=str(resources_dir / "Pa_46_333_LuNgs_08.srsnv_metadata.json"),
-        thresh_multi_read_pvalue=0.05,
+        thresh_multi_read_pvalue_low_tf=0.05,
     )
 
     results_html, qc_html = generate_mrd_report(multi_read_inputs)

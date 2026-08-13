@@ -191,24 +191,24 @@ def test_calc_tumor_fraction_denominator_ratio(tmpdir, resources_dir):
     read_filter_query = "filt>0 and snvq>60"
 
     # Run the function
-    denom_ratio, filt_ratio, read_filter_non_filt = calc_tumor_fraction_denominator_ratio(
+    snvq_recall, filt_ratio, read_filter_non_filt = calc_tumor_fraction_denominator_ratio(
         featuremap_df_file=featuremap_file,
         srsnv_metadata_json=metadata_file,
         read_filter_query=read_filter_query,
     )
 
     # Verify return values are floats
-    assert isinstance(denom_ratio, float | np.floating)
+    assert isinstance(snvq_recall, float | np.floating)
     assert isinstance(filt_ratio, float | np.floating)
     assert isinstance(read_filter_non_filt, float | np.floating)
 
     # Verify values
     assert np.isclose(filt_ratio, 0.7012110035188417)
     assert np.isclose(read_filter_non_filt, 0.658410138248848)
-    assert np.isclose(denom_ratio, 0.461684433768454)
+    assert np.isclose(snvq_recall, 0.461684433768454)
 
-    # Verify the calculation: denom_ratio = filt_ratio * read_filter_non_filt
-    assert np.isclose(denom_ratio, filt_ratio * read_filter_non_filt)
+    # Verify the calculation: snvq_recall = filt_ratio * read_filter_non_filt
+    assert np.isclose(snvq_recall, filt_ratio * read_filter_non_filt)
 
 
 def test_calc_tumor_fraction_denominator_ratio_rows_metadata(tmpdir, resources_dir):
@@ -228,19 +228,19 @@ def test_calc_tumor_fraction_denominator_ratio_rows_metadata(tmpdir, resources_d
     with open(metadata_rows_file, "w") as f:
         json.dump(metadata, f)
 
-    denom_ratio, filt_ratio, read_filter_non_filt = calc_tumor_fraction_denominator_ratio(
+    snvq_recall, filt_ratio, read_filter_non_filt = calc_tumor_fraction_denominator_ratio(
         featuremap_df_file=featuremap_file,
         srsnv_metadata_json=str(metadata_rows_file),
         read_filter_query=read_filter_query,
     )
 
-    assert isinstance(denom_ratio, float | np.floating)
+    assert isinstance(snvq_recall, float | np.floating)
     assert isinstance(filt_ratio, float | np.floating)
     assert isinstance(read_filter_non_filt, float | np.floating)
 
     assert np.isclose(filt_ratio, 0.7012110035188417)
     assert np.isclose(read_filter_non_filt, 0.658410138248848)
-    assert np.isclose(denom_ratio, 0.461684433768454)
+    assert np.isclose(snvq_recall, 0.461684433768454)
 
 
 def test_read_and_filter_features_parquet_noise_filter(tmp_path):
@@ -392,8 +392,12 @@ def _make_multi_read_test_data():
     )
 
     df_signatures_filt = pd.DataFrame(
-        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
-    )
+        [
+            {"chrom": "chr1", "pos": 100, "signature": "sig1", "signature_type": "matched", "coverage": 1000.0},
+            {"chrom": "chr1", "pos": 200, "signature": "sig1", "signature_type": "matched", "coverage": 1000.0},
+            {"chrom": "chr1", "pos": 300, "signature": "sig1", "signature_type": "matched", "coverage": 1000.0},
+        ]
+    ).set_index(["chrom", "pos"])
     return df_features_filt, df_tf, df_signatures_filt
 
 
@@ -469,7 +473,7 @@ def test_apply_multi_read_matched_filter_preserves_control_rows():
 
 
 def test_apply_multi_read_locus_filter_zero_vaf():
-    """When matched_ctdna_vaf is 0, filter must be skipped gracefully."""
+    """When matched ctdna_vaf in df_tf is 0, per-signature filtering still runs based on actual reads."""
     from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
 
     df_features_filt, df_tf, df_signatures_filt = _make_multi_read_test_data()
@@ -477,12 +481,12 @@ def test_apply_multi_read_locus_filter_zero_vaf():
     df_tf_zero["ctdna_vaf"] = 0.0
 
     df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf_zero, df_signatures_filt, 0.01)
-    assert info["n_filtered_loci"] == 0
-    assert len(df_out) == len(df_features_filt)
+    # Per-signature VAF is recomputed from actual reads, so outlier loci are still removed
+    assert len(df_out) < len(df_features_filt)
 
 
 def test_apply_multi_read_locus_filter_no_matched_key():
-    """When there is no 'matched' key in df_tf, filter must return original df unchanged."""
+    """When there is no 'matched' key in df_tf, controls are still filtered per-signature."""
     from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
 
     df_features_filt, _df_tf, df_signatures_filt = _make_multi_read_test_data()
@@ -492,8 +496,8 @@ def test_apply_multi_read_locus_filter_no_matched_key():
     )
 
     df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf_no_matched, df_signatures_filt, 0.01)
-    assert info["n_filtered_loci"] == 0
-    assert len(df_out) == len(df_features_filt)
+    # Filter still runs; matched loci may be filtered based on their own read density
+    assert len(df_out) <= len(df_features_filt)
 
 
 def test_apply_multi_read_locus_filter_skips_db_control_rows():
@@ -567,9 +571,18 @@ def _make_ctrl_filter_test_data():
         index=index,
     )
 
-    df_signatures_filt = pd.DataFrame(
-        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
-    )
+    sig_entries = []
+    for sig, sig_type, positions in [
+        ("sig1", "matched", [100, 200, 300]),
+        ("ctrl0", "control", [100, 200, 300]),
+        ("syn0", "db_control", [100, 200, 300]),
+        ("syn1", "db_control", [100, 200]),
+    ]:
+        for pos in positions:
+            sig_entries.append(
+                {"chrom": "chr1", "pos": pos, "signature": sig, "signature_type": sig_type, "coverage": 1000.0}
+            )
+    df_signatures_filt = pd.DataFrame(sig_entries).set_index(["chrom", "pos"])
     return df_features_filt, df_tf, df_signatures_filt
 
 
@@ -638,9 +651,18 @@ def test_apply_multi_read_locus_filter_removes_outlier_db_control_loci():
         },
         index=index,
     )
-    df_signatures_filt = pd.DataFrame(
-        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
+    sig_entries = [
+        {"chrom": "chr1", "pos": p, "signature": "sig1", "signature_type": "matched", "coverage": 1000.0}
+        for p in [100, 200, 300]
+    ]
+    for i in range(n_background):
+        sig_entries.append(
+            {"chrom": f"chr{i + 2}", "pos": i, "signature": "syn0", "signature_type": "db_control", "coverage": 1000.0}
+        )
+    sig_entries.append(
+        {"chrom": "chr1", "pos": 999, "signature": "syn0", "signature_type": "db_control", "coverage": 1000.0}
     )
+    df_signatures_filt = pd.DataFrame(sig_entries).set_index(["chrom", "pos"])
 
     df_out, info = apply_multi_read_locus_filter(df_features, df_tf, df_signatures_filt, 0.01)
 
@@ -657,9 +679,9 @@ def test_apply_multi_read_locus_filter_never_removes_single_read_loci():
     """Single-read loci must never be filtered regardless of how low the TF estimate is."""
     from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
 
-    # Use an extremely low TF so that the Bonferroni test would flag single reads
-    # without the guard (TF=1e-9 << the 5e-8 transition point).
-    tiny_vaf = 1e-9
+    # corrected_coverage=1e8 → vaf=3/1e8=3e-8 → lambda=3e-5.
+    # P(X>=1|Poi(3e-5))*1000 ≈ 0.03 < 0.05: single-read loci *would* be flagged
+    # without the >=2 guard — confirming the guard is what protects them.
     records = [
         {"chrom": "chr1", "pos": 100, "signature": "sig1", "signature_type": "matched"},
         {"chrom": "chr1", "pos": 200, "signature": "sig1", "signature_type": "matched"},
@@ -668,12 +690,16 @@ def test_apply_multi_read_locus_filter_never_removes_single_read_loci():
     df_features_filt = pd.DataFrame(records).set_index(["chrom", "pos"])
 
     df_tf = pd.DataFrame(
-        [{"ctdna_vaf": tiny_vaf, "supporting_reads": 3, "corrected_coverage": 1000.0}],
+        [{"ctdna_vaf": 3e-8, "supporting_reads": 3, "corrected_coverage": 1e8}],
         index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
     )
+    # 1000 signature loci → Bonferroni N=1000; features only cover 3 of them
     df_signatures_filt = pd.DataFrame(
-        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(1000)]
-    )
+        [
+            {"chrom": "chr1", "pos": i, "signature": "sig1", "signature_type": "matched", "coverage": 1000.0}
+            for i in range(1000)
+        ]
+    ).set_index(["chrom", "pos"])
 
     df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.05)
 
