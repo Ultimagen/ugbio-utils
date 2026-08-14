@@ -582,6 +582,7 @@ def _make_ctrl_filter_test_data():
             sig_entries.append(
                 {"chrom": "chr1", "pos": pos, "signature": sig, "signature_type": sig_type, "coverage": 1000.0}
             )
+
     df_signatures_filt = pd.DataFrame(sig_entries).set_index(["chrom", "pos"])
     return df_features_filt, df_tf, df_signatures_filt
 

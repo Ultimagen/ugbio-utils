@@ -1131,25 +1131,69 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
 
         n_loci = _n_sig(sig_type, sig_name, len(per_locus_counts))
 
-        # --- Per-locus lambda using local coverage ---
-        # λ_i = VAF × coverage_i to account for local coverage variation.
-        # High-coverage loci naturally expect more reads and need a higher
-        # threshold before being flagged as outliers.
-        lam_per_locus = vaf * per_locus_cov
+        # --- Per-locus lambda: sliding-window VAF over ALL signature loci ---
+        # Window size = max(W_min, ceil(TARGET_READS / λ)):
+        #   high TF (λ≈50) → ~20 loci  — captures sub-chromosomal CN structure
+        #   low  TF (λ≈0.01) → very large — effectively global estimate
+        # Zero-read loci are included so the window denominator mirrors global_vaf's denominator.
+        # _cov_scale = corr_cov / total_sig_coverage ≈ snvq_recall, converting raw coverage to
+        # corrected units so local_vaf and global_vaf are on the same scale.
+        _TARGET_READS = 100
+        _W_MIN = 20
+        window_size = max(_W_MIN, int(np.ceil(_TARGET_READS / max(lam, 1e-9))))
+        _all_loci_df = (
+            sig_loci_cov.rename("cov")
+            .reset_index()
+            .merge(per_locus_counts.rename("reads").reset_index(), on=["chrom", "pos"], how="left")
+            .fillna({"reads": 0})
+            .sort_values(["chrom", "pos"])
+        )
+        _roll = _all_loci_df[["reads", "cov"]].rolling(window_size, min_periods=1, center=True).sum()
+        _cov_scale = corr_cov / max(float(sig_loci_cov.sum()), 1.0)
+        _all_loci_df["local_vaf"] = (_roll["reads"] / (_roll["cov"] * _cov_scale).clip(lower=1.0)).clip(lower=0.0)
+        _all_loci_df = _all_loci_df.set_index(["chrom", "pos"])
+        # Floor at global VAF: never more aggressive than the genome-wide Poisson model
+        per_locus_vaf = np.maximum(
+            _all_loci_df["local_vaf"].reindex(per_locus_counts.index).to_numpy(), vaf
+        )
+        lam_per_locus = per_locus_vaf * per_locus_cov
+
+        logger.debug(
+            "all_reads=%d, corr_cov=%.1f, vaf=%.4f, lam=%.4f, window=%d, "
+            "per_locus_cov min/mean/max=%.1f/%.1f/%.1f, lam_per_locus min/mean/max=%.4f/%.4f/%.4f",
+            sig_type, sig_name,
+            n_loci, len(per_locus_counts),
+            all_reads, corr_cov, vaf, lam, window_size,
+            per_locus_cov.min(), per_locus_cov.mean(), per_locus_cov.max(),
+            lam_per_locus.min(), lam_per_locus.mean(), lam_per_locus.max(),
+        )
 
         bonf_pvals = poisson.sf(per_locus_counts.to_numpy() - 1, lam_per_locus) * n_loci
+        bonf_pvals_global = poisson.sf(per_locus_counts.to_numpy() - 1, vaf * per_locus_cov) * n_loci
         # Never remove loci backed by only a single read: one read is indistinguishable
         # from background noise regardless of how small λ is (e.g. near-zero TF).
+        multi_read_mask = per_locus_counts.to_numpy() >= 2  # noqa: PLR2004
         outlier_loci = per_locus_counts.index[
-            (bonf_pvals < thresh_multi_read_pvalue) & (per_locus_counts.to_numpy() >= 2)  # noqa: PLR2004
+            (bonf_pvals < thresh_multi_read_pvalue) & multi_read_mask
         ]
         cur_min_bonf = float(bonf_pvals.min()) if len(bonf_pvals) > 0 else 1.0
         if sig_type == "matched":
             min_bonf = min(min_bonf, cur_min_bonf)
 
         if len(outlier_loci) == 0:
-            if sig_type == "matched":
-                logger.debug("apply_multi_read_locus_filter: no matched outlier loci (min Bonferroni p=%.4f)", min_bonf)
+            # Log only if there are ≥2-read loci (single-read-only signatures are uninteresting)
+            if multi_read_mask.any():
+                _min_local_p = float(bonf_pvals[multi_read_mask].min())
+                _min_global_p = float(bonf_pvals_global[multi_read_mask].min())
+                _max_reads = int(per_locus_counts[multi_read_mask].max())
+                logger.info(
+                    "apply_multi_read_locus_filter: %d %s/%s loci with ≥2 reads not filtered "
+                    "(max reads/locus=%d); global_λ=%.4f, window=%d loci, "
+                    "min local Bonferroni p=%.4e, min global Bonferroni p=%.4e",
+                    int(multi_read_mask.sum()), sig_type, sig_name,
+                    _max_reads, lam, window_size,
+                    _min_local_p, _min_global_p,
+                )
             continue
 
         # Remove ALL rows of this specific signature at the outlier loci
@@ -1157,17 +1201,19 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
             df_features_filt_out["signature"] == sig_name
         )
         is_outlier_locus = df_features_filt_out.index.isin(outlier_loci)
+        min_reads_filtered = int(per_locus_counts[outlier_loci].min())
+        _min_local_p_filt = float(bonf_pvals[per_locus_counts.index.isin(outlier_loci)].min())
+        _min_global_p_filt = float(bonf_pvals_global[per_locus_counts.index.isin(outlier_loci)].min())
         n_before = len(df_features_filt_out)
         df_features_filt_out = df_features_filt_out[~(is_sig_row & is_outlier_locus)]
         n_reads_removed = n_before - len(df_features_filt_out)
         logger.info(
-            "apply_multi_read_locus_filter: removed %d %s/%s loci (%d reads); λ=%.4f, min Bonferroni p=%.4e",
-            len(outlier_loci),
-            sig_type,
-            sig_name,
-            n_reads_removed,
-            lam,
-            cur_min_bonf,
+            "apply_multi_read_locus_filter: removed %d %s/%s loci (%d reads); "
+            "global_λ=%.4f, window=%d loci, min reads/locus=%d, "
+            "min local Bonferroni p=%.4e, min global Bonferroni p=%.4e",
+            len(outlier_loci), sig_type, sig_name, n_reads_removed,
+            lam, window_size, min_reads_filtered,
+            _min_local_p_filt, _min_global_p_filt,
         )
 
         if sig_type == "matched":
