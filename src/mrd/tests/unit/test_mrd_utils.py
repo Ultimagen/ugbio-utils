@@ -731,3 +731,220 @@ def test_apply_multi_read_filter_all_loci_vaf_estimation():
     remaining = df_out.index.get_level_values("pos").tolist()
     assert 100 not in remaining
     assert 200 in remaining and 300 in remaining
+
+
+def test_apply_multi_read_locus_filter_high_tf_germline_outlier_detected():
+    """At high TF (≈30%), a single locus with 10× expected reads is correctly removed.
+
+    Setup: 200 background loci with 30 reads each (λ≈30) + 1 hot locus with 300 reads.
+    The hot locus has Z≈(300-31)/sqrt(31)≈48, Bonferroni p≈0 → removed.
+    All 200 background loci survive; the local sliding-window model does not raise
+    false alarms even though TF is high and the absolute read counts are large.
+    """
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    n_loci = 200
+    reads_per_locus = 30
+    hot_reads = 300
+    mean_cov = 100
+
+    records = []
+    for i in range(n_loci):
+        for _ in range(reads_per_locus):
+            records.append({"chrom": "chr1", "pos": i * 100, "signature": "sig1", "signature_type": "matched"})
+    for _ in range(hot_reads):
+        records.append({"chrom": "chr1", "pos": 99999, "signature": "sig1", "signature_type": "matched"})
+    df_features = pd.DataFrame(records).set_index(["chrom", "pos"])
+
+    corrected_coverage = (n_loci + 1) * float(mean_cov)
+    total_reads = n_loci * reads_per_locus + hot_reads
+    df_tf = pd.DataFrame(
+        [{"ctdna_vaf": total_reads / corrected_coverage, "supporting_reads": total_reads, "corrected_coverage": corrected_coverage}],
+        index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
+    )
+    sig_entries = [
+        {"chrom": "chr1", "pos": i * 100, "signature": "sig1", "signature_type": "matched", "coverage": float(mean_cov)}
+        for i in range(n_loci)
+    ]
+    sig_entries.append({"chrom": "chr1", "pos": 99999, "signature": "sig1", "signature_type": "matched", "coverage": float(mean_cov)})
+    df_signatures_filt = pd.DataFrame(sig_entries).set_index(["chrom", "pos"])
+
+    df_out, info = apply_multi_read_locus_filter(df_features, df_tf, df_signatures_filt, 0.01)
+
+    assert info["n_filtered_loci"] == 1
+    assert info["n_filtered_reads"] == hot_reads
+    assert 99999 not in df_out.reset_index()["pos"].to_numpy()
+    assert len(df_out) == n_loci * reads_per_locus
+
+
+def test_apply_multi_read_locus_filter_aneuploid_amplified_region_preserved():
+    """Sliding-window local VAF prevents false positives in an amplified chromosomal region.
+
+    A matched signature spans two regions with very different copy numbers:
+      - chr1 (diploid,   400 loci): 1 read/locus  → global λ≈11 reads/locus
+      - chr2 (amplified,  90 loci): 50 reads/locus → 5× enriched over global background
+      - chr2 hot locus (pos=9999):  500 reads      → true germline outlier
+
+    With a naive global Poisson(11) model every chr2 locus would be flagged
+    (Z≈12.5, Bonferroni p≈0).  The sliding-window local VAF gives inner chr2
+    loci λ_local≈50, so P(X≥50 | Poi(50))×491≈245 >> 0.01 — they are preserved.
+
+    The 10 boundary chr2 loci (positions 0–900) sit in the transition window and
+    may be filtered; the assertion allows for up to 12 removals (10 boundary + hot).
+    """
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    n_diploid = 400
+    n_amplified = 90
+    reads_diploid = 1
+    reads_amplified = 50
+    hot_reads = 500
+    hot_pos = 9999
+    mean_cov = 100
+
+    records = []
+    for i in range(n_diploid):
+        records.append({"chrom": "chr1", "pos": i * 100, "signature": "sig1", "signature_type": "matched"})
+    for i in range(n_amplified):
+        for _ in range(reads_amplified):
+            records.append({"chrom": "chr2", "pos": i * 100, "signature": "sig1", "signature_type": "matched"})
+    for _ in range(hot_reads):
+        records.append({"chrom": "chr2", "pos": hot_pos, "signature": "sig1", "signature_type": "matched"})
+    df_features = pd.DataFrame(records).set_index(["chrom", "pos"])
+
+    n_total_loci = n_diploid + n_amplified + 1  # +1 for hot locus
+    corrected_coverage = n_total_loci * float(mean_cov)
+    total_reads = n_diploid * reads_diploid + n_amplified * reads_amplified + hot_reads
+    df_tf = pd.DataFrame(
+        [{"ctdna_vaf": total_reads / corrected_coverage, "supporting_reads": total_reads, "corrected_coverage": corrected_coverage}],
+        index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
+    )
+    sig_entries = [
+        {"chrom": "chr1", "pos": i * 100, "signature": "sig1", "signature_type": "matched", "coverage": float(mean_cov)}
+        for i in range(n_diploid)
+    ]
+    for i in range(n_amplified):
+        sig_entries.append({"chrom": "chr2", "pos": i * 100, "signature": "sig1", "signature_type": "matched", "coverage": float(mean_cov)})
+    sig_entries.append({"chrom": "chr2", "pos": hot_pos, "signature": "sig1", "signature_type": "matched", "coverage": float(mean_cov)})
+    df_signatures_filt = pd.DataFrame(sig_entries).set_index(["chrom", "pos"])
+
+    df_out, info = apply_multi_read_locus_filter(df_features, df_tf, df_signatures_filt, 0.01)
+
+    remaining = df_out.reset_index()
+
+    # True germline outlier must be removed
+    assert hot_pos not in remaining.loc[remaining["chrom"] == "chr2", "pos"].to_numpy()
+
+    # Inner amplified loci (position ≥ 1000, well past the chr1/chr2 boundary window)
+    # must all be preserved — these are the loci the sliding-window protects.
+    inner_chr2 = remaining[(remaining["chrom"] == "chr2") & (remaining["pos"] >= 1000) & (remaining["pos"] != hot_pos)]
+    n_inner_chr2_loci = inner_chr2.groupby("pos").ngroups
+    assert n_inner_chr2_loci == 80, f"Expected 80 inner chr2 loci preserved, got {n_inner_chr2_loci}"
+
+    # Total removals: at most 10 boundary chr2 loci + 1 hot locus (global model would remove all 91)
+    assert info["n_filtered_loci"] <= 12
+
+
+@pytest.mark.parametrize(
+    "tf,coverage,n_per_region",
+    [
+        (0.05,  50,  50),   # low TF, low coverage, small signature
+        (0.05, 200, 150),   # low TF, high coverage, large signature
+        (0.15, 100, 100),   # moderate TF / coverage / signature
+        (0.30,  50,  50),   # high TF, low coverage, small signature
+        (0.30, 200, 150),   # high TF, high coverage, large signature
+    ],
+)
+def test_apply_multi_read_locus_filter_aneuploid_parametric(tf, coverage, n_per_region):
+    """Parametric sweep: filter behaviour across (TF, coverage, signature_size).
+
+    Signature layout
+    ----------------
+    chr1 (diploid,    n_per_region loci): reads_diploid  = round(tf × coverage)
+    chr2 (2× amplified, n_per_region loci): reads_amplified = 2 × reads_diploid
+    chr2 hot locus (pos=999_999):          reads_hot      = 10 × reads_amplified
+
+    Why 2× amplification is safe to NOT filter
+    -------------------------------------------
+    Global λ ≈ 1.5 × reads_diploid (chr1 and chr2 loci averaged).
+    For any chr2 regular locus at reads_amplified = 2 × reads_diploid the
+    Z-score against global λ is ≈ 0.5/√1.5 × √reads_diploid ≤ ~2σ, giving a
+    Bonferroni p >> 0.01 for all tested n_per_region values — so even the global
+    model would not flag them.  The sliding-window local VAF makes this even
+    safer by correctly estimating λ_local ≈ reads_amplified for inner chr2 loci.
+
+    Why the hot locus (10× amplified reads) is always detected
+    ----------------------------------------------------------
+    reads_hot = 20 × reads_diploid.  The Poisson right-tail at ≥20 × mean is
+    effectively zero at all tested λ values, so the hot locus is always removed.
+
+    Assertions
+    ----------
+    1. Hot locus removed.
+    2. Every chr2 amplified locus preserved (2× enrichment ≠ germline outlier).
+    3. Every chr1 diploid locus preserved.
+    4. Exactly 1 locus filtered.
+    """
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    reads_diploid = max(2, round(tf * coverage))
+    reads_amplified = 2 * reads_diploid
+    reads_hot = 10 * reads_amplified
+    hot_pos = 999_999
+
+    records = []
+    for i in range(n_per_region):
+        for _ in range(reads_diploid):
+            records.append({"chrom": "chr1", "pos": i * 100, "signature": "sig1", "signature_type": "matched"})
+    for i in range(n_per_region):
+        for _ in range(reads_amplified):
+            records.append({"chrom": "chr2", "pos": i * 100, "signature": "sig1", "signature_type": "matched"})
+    for _ in range(reads_hot):
+        records.append({"chrom": "chr2", "pos": hot_pos, "signature": "sig1", "signature_type": "matched"})
+    df_features = pd.DataFrame(records).set_index(["chrom", "pos"])
+
+    n_total_loci = 2 * n_per_region + 1
+    corrected_coverage = n_total_loci * float(coverage)
+    total_reads = n_per_region * reads_diploid + n_per_region * reads_amplified + reads_hot
+    df_tf = pd.DataFrame(
+        [{"ctdna_vaf": total_reads / corrected_coverage, "supporting_reads": total_reads, "corrected_coverage": corrected_coverage}],
+        index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
+    )
+    sig_entries = [
+        {"chrom": "chr1", "pos": i * 100, "signature": "sig1", "signature_type": "matched", "coverage": float(coverage)}
+        for i in range(n_per_region)
+    ]
+    for i in range(n_per_region):
+        sig_entries.append(
+            {"chrom": "chr2", "pos": i * 100, "signature": "sig1", "signature_type": "matched", "coverage": float(coverage)}
+        )
+    sig_entries.append(
+        {"chrom": "chr2", "pos": hot_pos, "signature": "sig1", "signature_type": "matched", "coverage": float(coverage)}
+    )
+    df_signatures_filt = pd.DataFrame(sig_entries).set_index(["chrom", "pos"])
+
+    df_out, info = apply_multi_read_locus_filter(df_features, df_tf, df_signatures_filt, 0.01)
+    remaining = df_out.reset_index()
+
+    tag = f"tf={tf}, cov={coverage}, n={n_per_region}, reads_dip={reads_diploid}"
+
+    # 1. True outlier removed
+    assert hot_pos not in remaining.loc[remaining["chrom"] == "chr2", "pos"].to_numpy(), \
+        f"Hot locus not filtered — {tag}"
+
+    # 2. All amplified chr2 regular loci preserved
+    chr2_remaining = set(map(int, remaining.loc[remaining["chrom"] == "chr2", "pos"].unique())) - {hot_pos}
+    expected_chr2 = {i * 100 for i in range(n_per_region)}
+    assert chr2_remaining == expected_chr2, \
+        f"Amplified chr2 loci incorrectly filtered — {tag}, missing={expected_chr2 - chr2_remaining}"
+
+    # 3. All diploid chr1 loci preserved
+    chr1_remaining = set(map(int, remaining.loc[remaining["chrom"] == "chr1", "pos"].unique()))
+    assert chr1_remaining == {i * 100 for i in range(n_per_region)}, \
+        f"Diploid chr1 loci incorrectly filtered — {tag}"
+
+    # 4. Exactly 1 locus (the hot one) filtered
+    assert info["n_filtered_loci"] == 1, \
+        f"Expected 1 filtered locus, got {info['n_filtered_loci']} — {tag}"
+    assert info["n_filtered_reads"] == reads_hot, \
+        f"Expected {reads_hot} filtered reads, got {info['n_filtered_reads']} — {tag}"
