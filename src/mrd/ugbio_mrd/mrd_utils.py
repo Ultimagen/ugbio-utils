@@ -1157,7 +1157,8 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         lam_per_locus = per_locus_vaf * per_locus_cov
 
         logger.debug(
-            "all_reads=%d, corr_cov=%.1f, vaf=%.4f, lam=%.4f, window=%d, "
+            "apply_multi_read_locus_filter: %s/%s n_loci=%d, n_reads_loci=%d, all_reads=%d, "
+            "corr_cov=%.1f, vaf=%.4f, lam=%.4f, window=%d, "
             "per_locus_cov min/mean/max=%.1f/%.1f/%.1f, lam_per_locus min/mean/max=%.4f/%.4f/%.4f",
             sig_type,
             sig_name,
