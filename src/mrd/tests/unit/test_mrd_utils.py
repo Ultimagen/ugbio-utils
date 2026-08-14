@@ -734,10 +734,11 @@ def test_apply_multi_read_filter_all_loci_vaf_estimation():
 
 
 def test_apply_multi_read_locus_filter_high_tf_germline_outlier_detected():
-    """At high TF (≈30%), a single locus with 10× expected reads is correctly removed.
+    """At high TF (≈30%), a single locus with 2× expected reads is correctly removed.
 
-    Setup: 200 background loci with 30 reads each (λ≈30) + 1 hot locus with 300 reads.
-    The hot locus has Z≈(300-31)/sqrt(31)≈48, Bonferroni p≈0 → removed.
+    Setup: 200 background loci with 30 reads each (λ≈30) + 1 hot locus with 60 reads
+    (2× the local background — a heterozygous germline SNP level of enrichment).
+    Z≈(60-30)/sqrt(30)≈5.5, Bonferroni p≈7e-6 << 0.01 → removed.
     All 200 background loci survive; the local sliding-window model does not raise
     false alarms even though TF is high and the absolute read counts are large.
     """
@@ -745,7 +746,7 @@ def test_apply_multi_read_locus_filter_high_tf_germline_outlier_detected():
 
     n_loci = 200
     reads_per_locus = 30
-    hot_reads = 300
+    hot_reads = 2 * reads_per_locus  # 60 reads — 2× local background
     mean_cov = 100
 
     records = []
@@ -783,11 +784,12 @@ def test_apply_multi_read_locus_filter_aneuploid_amplified_region_preserved():
     A matched signature spans two regions with very different copy numbers:
       - chr1 (diploid,   400 loci): 1 read/locus  → global λ≈11 reads/locus
       - chr2 (amplified,  90 loci): 50 reads/locus → 5× enriched over global background
-      - chr2 hot locus (pos=9999):  500 reads      → true germline outlier
+      - chr2 hot locus (pos=9999):  100 reads      → 2× local background (germline het level)
 
     With a naive global Poisson(11) model every chr2 locus would be flagged
     (Z≈12.5, Bonferroni p≈0).  The sliding-window local VAF gives inner chr2
     loci λ_local≈50, so P(X≥50 | Poi(50))×491≈245 >> 0.01 — they are preserved.
+    The hot locus at 100 reads has Z≈6.5 locally → Bonferroni p≈2e-8 → removed.
 
     The 10 boundary chr2 loci (positions 0–900) sit in the transition window and
     may be filtered; the assertion allows for up to 12 removals (10 boundary + hot).
@@ -798,7 +800,7 @@ def test_apply_multi_read_locus_filter_aneuploid_amplified_region_preserved():
     n_amplified = 90
     reads_diploid = 1
     reads_amplified = 50
-    hot_reads = 500
+    hot_reads = 2 * reads_amplified  # 100 reads — 2× local amplified background
     hot_pos = 9999
     mean_cov = 100
 
@@ -848,11 +850,12 @@ def test_apply_multi_read_locus_filter_aneuploid_amplified_region_preserved():
 @pytest.mark.parametrize(
     "tf,coverage,n_per_region",
     [
-        (0.05,  50,  50),   # low TF, low coverage, small signature
-        (0.05, 200, 150),   # low TF, high coverage, large signature
-        (0.15, 100, 100),   # moderate TF / coverage / signature
-        (0.30,  50,  50),   # high TF, low coverage, small signature
-        (0.30, 200, 150),   # high TF, high coverage, large signature
+        (1e-4, 1000, 100),  # ultra-low TF (cfDNA MRD regime), deep coverage
+        (0.20, 100,   50),  # moderate TF, moderate coverage, small signature
+        (0.15, 200,  150),  # moderate TF, high coverage, large signature
+        (0.15, 100,  100),  # moderate TF / coverage / signature
+        (0.30,  50,   50),  # high TF, low coverage, small signature
+        (0.30, 200,  150),  # high TF, high coverage, large signature
     ],
 )
 def test_apply_multi_read_locus_filter_aneuploid_parametric(tf, coverage, n_per_region):
@@ -862,7 +865,8 @@ def test_apply_multi_read_locus_filter_aneuploid_parametric(tf, coverage, n_per_
     ----------------
     chr1 (diploid,    n_per_region loci): reads_diploid  = round(tf × coverage)
     chr2 (2× amplified, n_per_region loci): reads_amplified = 2 × reads_diploid
-    chr2 hot locus (pos=999_999):          reads_hot      = 10 × reads_amplified
+    chr2 hot locus (pos=999_999):          reads_hot      = 2 × reads_amplified
+                                            (2× its local chr2 background — germline het level)
 
     Why 2× amplification is safe to NOT filter
     -------------------------------------------
@@ -873,10 +877,13 @@ def test_apply_multi_read_locus_filter_aneuploid_parametric(tf, coverage, n_per_
     model would not flag them.  The sliding-window local VAF makes this even
     safer by correctly estimating λ_local ≈ reads_amplified for inner chr2 loci.
 
-    Why the hot locus (10× amplified reads) is always detected
-    ----------------------------------------------------------
-    reads_hot = 20 × reads_diploid.  The Poisson right-tail at ≥20 × mean is
-    effectively zero at all tested λ values, so the hot locus is always removed.
+    Why the hot locus is always detected
+    --------------------------------------
+    reads_hot = max(2 × reads_amplified, round(0.5 × coverage)).
+    At high TF this is 2× the local chr2 background (germline-het-level).
+    At ultra-low TF (reads_amplified ≈ floor), the fallback to 0.5 × coverage
+    models a realistic heterozygous germline variant (50% AF) which always
+    stands out against λ ≈ reads_amplified (Bonferroni p ≈ 0).
 
     Assertions
     ----------
@@ -889,7 +896,8 @@ def test_apply_multi_read_locus_filter_aneuploid_parametric(tf, coverage, n_per_
 
     reads_diploid = max(2, round(tf * coverage))
     reads_amplified = 2 * reads_diploid
-    reads_hot = 10 * reads_amplified
+    # at low TF the 2× local ratio is undetectable; fall back to a realistic germline het (50% AF)
+    reads_hot = max(2 * reads_amplified, round(0.5 * coverage))
     hot_pos = 999_999
 
     records = []
