@@ -760,14 +760,22 @@ def test_apply_multi_read_locus_filter_high_tf_germline_outlier_detected():
     corrected_coverage = (n_loci + 1) * float(mean_cov)
     total_reads = n_loci * reads_per_locus + hot_reads
     df_tf = pd.DataFrame(
-        [{"ctdna_vaf": total_reads / corrected_coverage, "supporting_reads": total_reads, "corrected_coverage": corrected_coverage}],
+        [
+            {
+                "ctdna_vaf": total_reads / corrected_coverage,
+                "supporting_reads": total_reads,
+                "corrected_coverage": corrected_coverage,
+            }
+        ],
         index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
     )
     sig_entries = [
         {"chrom": "chr1", "pos": i * 100, "signature": "sig1", "signature_type": "matched", "coverage": float(mean_cov)}
         for i in range(n_loci)
     ]
-    sig_entries.append({"chrom": "chr1", "pos": 99999, "signature": "sig1", "signature_type": "matched", "coverage": float(mean_cov)})
+    sig_entries.append(
+        {"chrom": "chr1", "pos": 99999, "signature": "sig1", "signature_type": "matched", "coverage": float(mean_cov)}
+    )
     df_signatures_filt = pd.DataFrame(sig_entries).set_index(["chrom", "pos"])
 
     df_out, info = apply_multi_read_locus_filter(df_features, df_tf, df_signatures_filt, 0.01)
@@ -818,7 +826,13 @@ def test_apply_multi_read_locus_filter_aneuploid_amplified_region_preserved():
     corrected_coverage = n_total_loci * float(mean_cov)
     total_reads = n_diploid * reads_diploid + n_amplified * reads_amplified + hot_reads
     df_tf = pd.DataFrame(
-        [{"ctdna_vaf": total_reads / corrected_coverage, "supporting_reads": total_reads, "corrected_coverage": corrected_coverage}],
+        [
+            {
+                "ctdna_vaf": total_reads / corrected_coverage,
+                "supporting_reads": total_reads,
+                "corrected_coverage": corrected_coverage,
+            }
+        ],
         index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
     )
     sig_entries = [
@@ -826,8 +840,18 @@ def test_apply_multi_read_locus_filter_aneuploid_amplified_region_preserved():
         for i in range(n_diploid)
     ]
     for i in range(n_amplified):
-        sig_entries.append({"chrom": "chr2", "pos": i * 100, "signature": "sig1", "signature_type": "matched", "coverage": float(mean_cov)})
-    sig_entries.append({"chrom": "chr2", "pos": hot_pos, "signature": "sig1", "signature_type": "matched", "coverage": float(mean_cov)})
+        sig_entries.append(
+            {
+                "chrom": "chr2",
+                "pos": i * 100,
+                "signature": "sig1",
+                "signature_type": "matched",
+                "coverage": float(mean_cov),
+            }
+        )
+    sig_entries.append(
+        {"chrom": "chr2", "pos": hot_pos, "signature": "sig1", "signature_type": "matched", "coverage": float(mean_cov)}
+    )
     df_signatures_filt = pd.DataFrame(sig_entries).set_index(["chrom", "pos"])
 
     df_out, info = apply_multi_read_locus_filter(df_features, df_tf, df_signatures_filt, 0.01)
@@ -851,11 +875,11 @@ def test_apply_multi_read_locus_filter_aneuploid_amplified_region_preserved():
     "tf,coverage,n_per_region",
     [
         (1e-4, 1000, 100),  # ultra-low TF (cfDNA MRD regime), deep coverage
-        (0.20, 100,   50),  # moderate TF, moderate coverage, small signature
-        (0.15, 200,  150),  # moderate TF, high coverage, large signature
-        (0.15, 100,  100),  # moderate TF / coverage / signature
-        (0.30,  50,   50),  # high TF, low coverage, small signature
-        (0.30, 200,  150),  # high TF, high coverage, large signature
+        (0.20, 100, 50),  # moderate TF, moderate coverage, small signature
+        (0.15, 200, 150),  # moderate TF, high coverage, large signature
+        (0.15, 100, 100),  # moderate TF / coverage / signature
+        (0.30, 50, 50),  # high TF, low coverage, small signature
+        (0.30, 200, 150),  # high TF, high coverage, large signature
     ],
 )
 def test_apply_multi_read_locus_filter_aneuploid_parametric(tf, coverage, n_per_region):
@@ -915,7 +939,13 @@ def test_apply_multi_read_locus_filter_aneuploid_parametric(tf, coverage, n_per_
     corrected_coverage = n_total_loci * float(coverage)
     total_reads = n_per_region * reads_diploid + n_per_region * reads_amplified + reads_hot
     df_tf = pd.DataFrame(
-        [{"ctdna_vaf": total_reads / corrected_coverage, "supporting_reads": total_reads, "corrected_coverage": corrected_coverage}],
+        [
+            {
+                "ctdna_vaf": total_reads / corrected_coverage,
+                "supporting_reads": total_reads,
+                "corrected_coverage": corrected_coverage,
+            }
+        ],
         index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
     )
     sig_entries = [
@@ -924,7 +954,13 @@ def test_apply_multi_read_locus_filter_aneuploid_parametric(tf, coverage, n_per_
     ]
     for i in range(n_per_region):
         sig_entries.append(
-            {"chrom": "chr2", "pos": i * 100, "signature": "sig1", "signature_type": "matched", "coverage": float(coverage)}
+            {
+                "chrom": "chr2",
+                "pos": i * 100,
+                "signature": "sig1",
+                "signature_type": "matched",
+                "coverage": float(coverage),
+            }
         )
     sig_entries.append(
         {"chrom": "chr2", "pos": hot_pos, "signature": "sig1", "signature_type": "matched", "coverage": float(coverage)}
@@ -937,22 +973,23 @@ def test_apply_multi_read_locus_filter_aneuploid_parametric(tf, coverage, n_per_
     tag = f"tf={tf}, cov={coverage}, n={n_per_region}, reads_dip={reads_diploid}"
 
     # 1. True outlier removed
-    assert hot_pos not in remaining.loc[remaining["chrom"] == "chr2", "pos"].to_numpy(), \
-        f"Hot locus not filtered — {tag}"
+    assert (
+        hot_pos not in remaining.loc[remaining["chrom"] == "chr2", "pos"].to_numpy()
+    ), f"Hot locus not filtered — {tag}"
 
     # 2. All amplified chr2 regular loci preserved
     chr2_remaining = set(map(int, remaining.loc[remaining["chrom"] == "chr2", "pos"].unique())) - {hot_pos}
     expected_chr2 = {i * 100 for i in range(n_per_region)}
-    assert chr2_remaining == expected_chr2, \
-        f"Amplified chr2 loci incorrectly filtered — {tag}, missing={expected_chr2 - chr2_remaining}"
+    assert (
+        chr2_remaining == expected_chr2
+    ), f"Amplified chr2 loci incorrectly filtered — {tag}, missing={expected_chr2 - chr2_remaining}"
 
     # 3. All diploid chr1 loci preserved
     chr1_remaining = set(map(int, remaining.loc[remaining["chrom"] == "chr1", "pos"].unique()))
-    assert chr1_remaining == {i * 100 for i in range(n_per_region)}, \
-        f"Diploid chr1 loci incorrectly filtered — {tag}"
+    assert chr1_remaining == {i * 100 for i in range(n_per_region)}, f"Diploid chr1 loci incorrectly filtered — {tag}"
 
     # 4. Exactly 1 locus (the hot one) filtered
-    assert info["n_filtered_loci"] == 1, \
-        f"Expected 1 filtered locus, got {info['n_filtered_loci']} — {tag}"
-    assert info["n_filtered_reads"] == reads_hot, \
-        f"Expected {reads_hot} filtered reads, got {info['n_filtered_reads']} — {tag}"
+    assert info["n_filtered_loci"] == 1, f"Expected 1 filtered locus, got {info['n_filtered_loci']} — {tag}"
+    assert (
+        info["n_filtered_reads"] == reads_hot
+    ), f"Expected {reads_hot} filtered reads, got {info['n_filtered_reads']} — {tag}"
