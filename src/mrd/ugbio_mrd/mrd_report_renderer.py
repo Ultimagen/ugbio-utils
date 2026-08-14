@@ -1069,13 +1069,13 @@ def render_supporting_reads_histogram(  # noqa: C901, PLR0912, PLR0915
             multi_excl_db_ctrl,
             db_control_signature_size,
             "#aed6f1",
-            "#1a5276",
+            "#aed6f1",
             0.4,
             "Synthetic controls multi-read filtered",
         ),
         (cohort, cohort_signature_size, "#9b59b6", "#6c3483", 0.55, "Cohort control"),
-        (multi_excl_cohort, cohort_signature_size, "#d7bde2", "#6c3483", 0.4, "Cohort multi-read filtered"),
-        (multi_excl, signature_size, "#f0a090", "#c0392b", 0.4, "Patient multi-read filtered"),
+        (multi_excl_cohort, cohort_signature_size, "#d7bde2", "#d7bde2", 0.4, "Cohort multi-read filtered"),
+        (multi_excl, signature_size, "#f0a090", "#f0a090", 0.4, "Patient multi-read filtered"),
         (matched, signature_size, "#c0392b", "#7b241c", 0.6, "Patient signature"),
     ]:
         if len(data) > 0:

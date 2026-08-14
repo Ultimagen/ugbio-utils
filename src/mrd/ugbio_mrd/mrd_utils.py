@@ -1138,9 +1138,9 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         # Zero-read loci are included so the window denominator mirrors global_vaf's denominator.
         # _cov_scale = corr_cov / total_sig_coverage ≈ snvq_recall, converting raw coverage to
         # corrected units so local_vaf and global_vaf are on the same scale.
-        _TARGET_READS = 100
-        _W_MIN = 20
-        window_size = max(_W_MIN, int(np.ceil(_TARGET_READS / max(lam, 1e-9))))
+        _target_reads = 100
+        _w_min = 20
+        window_size = max(_w_min, int(np.ceil(_target_reads / max(lam, 1e-9))))
         _all_loci_df = (
             sig_loci_cov.rename("cov")
             .reset_index()
@@ -1153,19 +1153,27 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         _all_loci_df["local_vaf"] = (_roll["reads"] / (_roll["cov"] * _cov_scale).clip(lower=1.0)).clip(lower=0.0)
         _all_loci_df = _all_loci_df.set_index(["chrom", "pos"])
         # Floor at global VAF: never more aggressive than the genome-wide Poisson model
-        per_locus_vaf = np.maximum(
-            _all_loci_df["local_vaf"].reindex(per_locus_counts.index).to_numpy(), vaf
-        )
+        per_locus_vaf = np.maximum(_all_loci_df["local_vaf"].reindex(per_locus_counts.index).to_numpy(), vaf)
         lam_per_locus = per_locus_vaf * per_locus_cov
 
         logger.debug(
             "all_reads=%d, corr_cov=%.1f, vaf=%.4f, lam=%.4f, window=%d, "
             "per_locus_cov min/mean/max=%.1f/%.1f/%.1f, lam_per_locus min/mean/max=%.4f/%.4f/%.4f",
-            sig_type, sig_name,
-            n_loci, len(per_locus_counts),
-            all_reads, corr_cov, vaf, lam, window_size,
-            per_locus_cov.min(), per_locus_cov.mean(), per_locus_cov.max(),
-            lam_per_locus.min(), lam_per_locus.mean(), lam_per_locus.max(),
+            sig_type,
+            sig_name,
+            n_loci,
+            len(per_locus_counts),
+            all_reads,
+            corr_cov,
+            vaf,
+            lam,
+            window_size,
+            per_locus_cov.min(),
+            per_locus_cov.mean(),
+            per_locus_cov.max(),
+            lam_per_locus.min(),
+            lam_per_locus.mean(),
+            lam_per_locus.max(),
         )
 
         bonf_pvals = poisson.sf(per_locus_counts.to_numpy() - 1, lam_per_locus) * n_loci
@@ -1173,9 +1181,7 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         # Never remove loci backed by only a single read: one read is indistinguishable
         # from background noise regardless of how small λ is (e.g. near-zero TF).
         multi_read_mask = per_locus_counts.to_numpy() >= 2  # noqa: PLR2004
-        outlier_loci = per_locus_counts.index[
-            (bonf_pvals < thresh_multi_read_pvalue) & multi_read_mask
-        ]
+        outlier_loci = per_locus_counts.index[(bonf_pvals < thresh_multi_read_pvalue) & multi_read_mask]
         cur_min_bonf = float(bonf_pvals.min()) if len(bonf_pvals) > 0 else 1.0
         if sig_type == "matched":
             min_bonf = min(min_bonf, cur_min_bonf)
@@ -1190,9 +1196,14 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
                     "apply_multi_read_locus_filter: %d %s/%s loci with ≥2 reads not filtered "
                     "(max reads/locus=%d); global_λ=%.4f, window=%d loci, "
                     "min local Bonferroni p=%.4e, min global Bonferroni p=%.4e",
-                    int(multi_read_mask.sum()), sig_type, sig_name,
-                    _max_reads, lam, window_size,
-                    _min_local_p, _min_global_p,
+                    int(multi_read_mask.sum()),
+                    sig_type,
+                    sig_name,
+                    _max_reads,
+                    lam,
+                    window_size,
+                    _min_local_p,
+                    _min_global_p,
                 )
             continue
 
@@ -1211,9 +1222,15 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
             "apply_multi_read_locus_filter: removed %d %s/%s loci (%d reads); "
             "global_λ=%.4f, window=%d loci, min reads/locus=%d, "
             "min local Bonferroni p=%.4e, min global Bonferroni p=%.4e",
-            len(outlier_loci), sig_type, sig_name, n_reads_removed,
-            lam, window_size, min_reads_filtered,
-            _min_local_p_filt, _min_global_p_filt,
+            len(outlier_loci),
+            sig_type,
+            sig_name,
+            n_reads_removed,
+            lam,
+            window_size,
+            min_reads_filtered,
+            _min_local_p_filt,
+            _min_global_p_filt,
         )
 
         if sig_type == "matched":
