@@ -24,9 +24,7 @@ BASE_PATH = Path(__file__).parent  # should be: src/mrd/ugbio_mrd
 # Both filters are enabled by default when using the CLI.
 # Pass None explicitly via MrdReportInputs to disable programmatically.
 DEFAULT_THRESH_NOISE_LQ_READS: float | None = None
-DEFAULT_THRESH_MULTI_READ_PVALUE_LOW_TF: float = 0.01
-DEFAULT_THRESH_MULTI_READ_PVALUE_HIGH_TF: float = 0.001
-DEFAULT_MULTI_READ_HIGH_TF_THRESHOLD: float = 1e-4
+DEFAULT_THRESH_MULTI_READ_PVALUE: float = 0.01
 DEFAULT_READ_FILTER_QUERY: str = "filt>0 and snvq>60 and mapq>=60"
 DEFAULT_LOD_RECALL: float = 0.95
 
@@ -51,9 +49,7 @@ class MrdReportInputs:
     lod_fpr: float = DEFAULT_LOD_FPR
     lod_recall: float = DEFAULT_LOD_RECALL
     thresh_noise_lq_reads: float | None = DEFAULT_THRESH_NOISE_LQ_READS
-    thresh_multi_read_pvalue_low_tf: float | None = DEFAULT_THRESH_MULTI_READ_PVALUE_LOW_TF
-    thresh_multi_read_pvalue_high_tf: float | None = DEFAULT_THRESH_MULTI_READ_PVALUE_HIGH_TF
-    multi_read_high_tf_threshold: float = DEFAULT_MULTI_READ_HIGH_TF_THRESHOLD
+    thresh_multi_read_pvalue: float | None = DEFAULT_THRESH_MULTI_READ_PVALUE
     filter_funnel_json: str = None
 
 
@@ -445,20 +441,14 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     # other signatures at the same position when only one was filtered.
 
     # 1.5. Multi-read locus filter: remove matched loci with unexpectedly many HQ reads
-    # (e.g. germline / mosaic variants). The p-value threshold is chosen adaptively:
-    # use the high-TF threshold when the initial matched TF exceeds
-    # multi_read_high_tf_threshold, otherwise the low-TF threshold.
+    # (e.g. germline / mosaic variants).
     detection_pre_multi_read = None
     df_tf_pre_multi_read = None
     df_supporting_pre_multi = None
-    thresh_multi_read_pvalue = None
+    thresh_multi_read_pvalue = mrd_report_inputs.thresh_multi_read_pvalue
     multi_read_excluded_per_type = None
-    _filter_potentially_active = (
-        mrd_report_inputs.thresh_multi_read_pvalue_low_tf is not None
-        or mrd_report_inputs.thresh_multi_read_pvalue_high_tf is not None
-    )
-    if _filter_potentially_active:
-        # Compute initial TF — serves both adaptive threshold selection and QC baseline.
+    if thresh_multi_read_pvalue is not None:
+        # Compute initial TF for QC baseline.
         df_tf_pre_multi_read, df_supporting_pre_multi = mrd.get_tf_from_filtered_data(
             df_features_filt,
             df_signatures_filt,
@@ -475,31 +465,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             lod_recall=mrd_report_inputs.lod_recall,
             df_supporting_reads_per_locus=df_supporting_pre_multi,
         )
-        try:
-            _matched_pre = df_tf_pre_multi_read.loc["matched"]
-            _initial_tf = float(
-                _matched_pre["ctdna_vaf"].iloc[0]
-                if isinstance(_matched_pre, pd.DataFrame)
-                else _matched_pre["ctdna_vaf"]
-            )
-        except (KeyError, Exception):  # noqa: BLE001
-            _initial_tf = 0.0
-        if _initial_tf > mrd_report_inputs.multi_read_high_tf_threshold:
-            thresh_multi_read_pvalue = mrd_report_inputs.thresh_multi_read_pvalue_high_tf
-            logger.info(
-                "Multi-read filter: high-TF regime (TF=%.2e > threshold=%.2e) → p=%.4f",
-                _initial_tf,
-                mrd_report_inputs.multi_read_high_tf_threshold,
-                thresh_multi_read_pvalue or 0,
-            )
-        else:
-            thresh_multi_read_pvalue = mrd_report_inputs.thresh_multi_read_pvalue_low_tf
-            logger.info(
-                "Multi-read filter: low-TF regime (TF=%.2e ≤ threshold=%.2e) → p=%.4f",
-                _initial_tf,
-                mrd_report_inputs.multi_read_high_tf_threshold,
-                thresh_multi_read_pvalue or 0,
-            )
+        logger.info("Multi-read filter: Bonferroni p-value threshold=%.4f", thresh_multi_read_pvalue)
     if thresh_multi_read_pvalue is not None:
         df_features_before_multi = df_features_filt
         _excluded_per_sig_noise = dict(excluded_per_sig) if excluded_per_sig else {}
@@ -1208,38 +1174,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--thresh-multi-read-pvalue-low-tf",
+        "--thresh-multi-read-pvalue",
         type=float,
         nargs="?",
         const=None,
-        default=DEFAULT_THRESH_MULTI_READ_PVALUE_LOW_TF,
+        default=DEFAULT_THRESH_MULTI_READ_PVALUE,
         help=(
-            "Multi-read locus filter Bonferroni p-value threshold used when the initial "
-            f"matched TF is at or below --multi-read-high-tf-threshold"
-            f" (default {DEFAULT_MULTI_READ_HIGH_TF_THRESHOLD:.0e}). "
-            f"Default: {DEFAULT_THRESH_MULTI_READ_PVALUE_LOW_TF}. Pass 0 or omit a value to disable."
-        ),
-    )
-    parser.add_argument(
-        "--thresh-multi-read-pvalue-high-tf",
-        type=float,
-        nargs="?",
-        const=None,
-        default=DEFAULT_THRESH_MULTI_READ_PVALUE_HIGH_TF,
-        help=(
-            "Multi-read locus filter Bonferroni p-value threshold used when the initial "
-            f"matched TF exceeds --multi-read-high-tf-threshold (default {DEFAULT_MULTI_READ_HIGH_TF_THRESHOLD:.0e}). "
-            f"Default: {DEFAULT_THRESH_MULTI_READ_PVALUE_HIGH_TF}. Pass 0 or omit a value to disable."
-        ),
-    )
-    parser.add_argument(
-        "--multi-read-high-tf-threshold",
-        type=float,
-        default=DEFAULT_MULTI_READ_HIGH_TF_THRESHOLD,
-        help=(
-            "Initial matched TF cutoff that switches the multi-read filter from the "
-            "low-TF p-value to the high-TF p-value. "
-            f"Default: {DEFAULT_MULTI_READ_HIGH_TF_THRESHOLD:.0e}."
+            "Multi-read locus filter Bonferroni p-value threshold. "
+            f"Default: {DEFAULT_THRESH_MULTI_READ_PVALUE}. Pass 0 or omit a value to disable."
         ),
     )
     parser.add_argument(
@@ -1267,17 +1209,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     # Convert 1.0 → None: threshold of 1.0 can never filter anything; skip the computation
     if args.thresh_noise_lq_reads is not None and args.thresh_noise_lq_reads >= 1.0:
         args.thresh_noise_lq_reads = None
-    for _arg, _name in [
-        (args.thresh_multi_read_pvalue_low_tf, "--thresh-multi-read-pvalue-low-tf"),
-        (args.thresh_multi_read_pvalue_high_tf, "--thresh-multi-read-pvalue-high-tf"),
-    ]:
-        if _arg is not None and _arg < 0:
-            parser.error(f"{_name} must be >= 0; pass 0 or omit a value to disable")
-    # Convert 0.0 → None so the filter is skipped for that regime
-    if args.thresh_multi_read_pvalue_low_tf == 0.0:
-        args.thresh_multi_read_pvalue_low_tf = None
-    if args.thresh_multi_read_pvalue_high_tf == 0.0:
-        args.thresh_multi_read_pvalue_high_tf = None
+    if args.thresh_multi_read_pvalue is not None and args.thresh_multi_read_pvalue < 0:
+        parser.error("--thresh-multi-read-pvalue must be >= 0; pass 0 or omit a value to disable")
+    if args.thresh_multi_read_pvalue == 0.0:
+        args.thresh_multi_read_pvalue = None
     return args
 
 
@@ -1303,9 +1238,7 @@ def main(argv: list[str] | None = None):
         lod_fpr=args_in.lod_fpr,
         lod_recall=args_in.lod_recall,
         thresh_noise_lq_reads=args_in.thresh_noise_lq_reads,
-        thresh_multi_read_pvalue_low_tf=args_in.thresh_multi_read_pvalue_low_tf,
-        thresh_multi_read_pvalue_high_tf=args_in.thresh_multi_read_pvalue_high_tf,
-        multi_read_high_tf_threshold=args_in.multi_read_high_tf_threshold,
+        thresh_multi_read_pvalue=args_in.thresh_multi_read_pvalue,
         filter_funnel_json=args_in.filter_funnel_json,
     )
 
