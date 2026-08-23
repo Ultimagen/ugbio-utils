@@ -59,6 +59,7 @@ collect_existing_metrics = "ugbio_core.collect_existing_metrics:main"
 generate_report = "ugbio_core.reports.report_utils:main"
 calculate_library_complexity = "ugbio_core.calculate_library_complexity:main"
 estimate_ploidy = "ugbio_core.estimate_ploidy:main"
+convert_haploid_regions = "ugbio_core.convert_haploid_regions:main"
 
 [tool.setuptools.package-data]
 "*" = [
