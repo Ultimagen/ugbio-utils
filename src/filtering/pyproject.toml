@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_filtering"
-version = "1.30.2-0"
+version = "1.30.3-0"
 description = "Ultima Genomics filtering scripts"
 authors = [
     { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },
@@ -29,7 +29,7 @@ train_models_pipeline = "ugbio_filtering.train_models_pipeline:main"
 training_prep_pipeline = "ugbio_filtering.training_prep_pipeline:main"
 training_prep_cnv_pipeline = "ugbio_filtering.training_prep_cnv_pipeline:main"
 filter_low_af_ratio_to_background = "ugbio_filtering.filter_low_af_ratio_to_background:main"
-annotate_numt = "ugbio_filtering.annotate_numt:main"
+postprocess_mitochondria = "ugbio_filtering.postprocess_mitochondria:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true
