@@ -71,39 +71,55 @@ filter_low_af_ratio_to_background \
 - `--tumor_vaf_threshold_h_indels`: Tumor VAF threshold for h-indel filtering (default: 0)
 - `--new_filter`: Name of the FILTER tag to add (default: LowAFRatioToBackground)
 
-#### `postprocess_mitochondria`
+#### `annotate_numt`
 
-Two independent corrections to a mitochondrial callset, applied in a single pass: soft-flagging NUMT (nuclear mitochondrial DNA segment) bleed, and regenotyping a haploid contig the diploid model cannot describe. Each is enabled by its own arguments; either or both may be used. No record is ever dropped.
+Soft-flags NUMT (nuclear mitochondrial DNA segment) bleed in a mitochondrial callset. No record is ever dropped, and genotypes are never touched — the haploid-contig genotype correction is `regenotype_mitochondria` below. The two are independent and can be run in either order on the same VCF.
 
 **Usage**:
 ```bash
-postprocess_mitochondria \
+annotate_numt \
   input.vcf.gz \
   output.vcf.gz \
-  [--numt_intervals numt.chrM.hg38.bed \
-   --numt_nuclear_intervals numt.nuclear.hg38.bed \
-   --input_alignments sample.cram \
-   --reference Homo_sapiens_assembly38.fasta \
-   [--vaf_ceiling 0.90] \
-   [--sa_excess 0.02]] \
-  [--regenotype_contig chrM [--homoplasmy_vaf 0.85]]
+  --numt_intervals numt.chrM.hg38.bed \
+  --numt_nuclear_intervals numt.nuclear.hg38.bed \
+  --input_alignments sample.cram \
+  --reference Homo_sapiens_assembly38.fasta \
+  [--vaf_ceiling 0.90] \
+  [--sa_excess 0.02]
 ```
 
 **Key Parameters**:
 - `input.vcf.gz`: Input VCF file
 - `output.vcf.gz`: Output VCF file (bgzipped and tabix-indexed)
-- `--numt_intervals`: chrM-side BED. Its first line must be the VCF `##INFO=<ID=...>` header, and that ID becomes both the INFO tag and the FILTER name. Enables NUMT annotation, which then requires the other three arguments of its group
+- `--numt_intervals`: chrM-side BED. Its first line must be the VCF `##INFO=<ID=...>` header, and that ID becomes both the INFO tag and the FILTER name
 - `--numt_nuclear_intervals`: nuclear-side BED of the paired NUMT loci; a read's supplementary-alignment (`SA`) target is tested against these
 - `--input_alignments`: the CRAM/BAM files the VCF was called from, needed to read `SA` tags
 - `--reference`: reference fasta, required to decode CRAM
 - `--vaf_ceiling`: records above this read-derived VAF are never flagged (default: 0.90)
 - `--sa_excess`: minimal excess of the NUMT `SA` rate in alt-supporting reads over ref-supporting reads *at the same site* (default: 0.02)
-- `--regenotype_contig`: contig to regenotype, e.g. `chrM`. Absent means no regenotyping; no other contig is read or written differently
+
+Reads originating in a NUMT can mismap to chrM and manufacture apparent low-frequency heteroplasmy. A record is flagged only when all three terms hold: it is inside a chrM NUMT-homology interval, its alt reads are `SA`-enriched relative to the reference reads at that same site, and its VAF is at or below the ceiling. The local reference rate is the background rather than a global constant because NUMT `SA` traffic is strongly position-dependent — in the control region every read carries such a tag — and the VAF ceiling is a property of the molecule rather than a threshold: two nuclear copies cannot outvote thousands of mtDNA copies. Records inside an interval get the `INFO` tag; only those satisfying all three terms also get the `FILTER`, so use `bcftools view -f PASS` for the filtered callset.
+
+#### `regenotype_mitochondria`
+
+Rewrites `GT` and `INFO/AF` from `FORMAT/VAF`, on one contig only. No record is dropped, no record on any other contig is modified, and nothing here reads the alignments.
+
+**Usage**:
+```bash
+regenotype_mitochondria \
+  input.vcf.gz \
+  output.vcf.gz \
+  --contig chrM \
+  [--homoplasmy_vaf 0.85]
+```
+
+**Key Parameters**:
+- `input.vcf.gz`: Input VCF file (single-sample; a multi-sample VCF is rejected, since `INFO/AF` cannot hold a per-sample value)
+- `output.vcf.gz`: Output VCF file (bgzipped and tabix-indexed)
+- `--contig`: contig to regenotype, e.g. `chrM`
 - `--homoplasmy_vaf`: `FORMAT/VAF` at or above which a call on that contig becomes homozygous-alt (default: 0.85)
 
-**NUMT annotation**: reads originating in a NUMT can mismap to chrM and manufacture apparent low-frequency heteroplasmy. A record is flagged only when all three terms hold: it is inside a chrM NUMT-homology interval, its alt reads are `SA`-enriched relative to the reference reads at that same site, and its VAF is at or below the ceiling. The local reference rate is the background rather than a global constant because NUMT `SA` traffic is strongly position-dependent — in the control region every read carries such a tag — and the VAF ceiling is a property of the molecule rather than a threshold: two nuclear copies cannot outvote thousands of mtDNA copies. Records inside an interval get the `INFO` tag; only those satisfying all three terms also get the `FILTER`, so use `bcftools view -f PASS` for the filtered callset.
-
-**Regenotyping**: a diploid model on a haploid, multi-copy contig cannot reach `1/1`, so its genotypes are uninformative there and `INFO/AF`, being derived from `GT`, is a constant `0.5`. Measured over HG001–HG007, all 208 chrM PASS records were `0/1` with no `1/1` anywhere, 183 of them at `FORMAT/VAF` ≥ 0.85. `FORMAT/VAF` and `FORMAT/AD` are accurate, so this is a relabel: on the named contig `INFO/AF` is recomputed from `FORMAT/VAF`, and where the dominant non-symbolic alt is at or above `--homoplasmy_vaf` the genotype becomes homozygous for it. The model's own genotype is preserved in `FORMAT/OGT` and the record is flagged `INFO/MT_REGT`, both only where the genotype actually changed. Records with no usable `FORMAT/VAF` (gVCF reference blocks) and records the model declined to call (`./.`) are passed through untouched.
+A diploid model on a haploid, multi-copy contig cannot reach `1/1`, so its genotypes are uninformative there and `INFO/AF`, being derived from `GT`, is a constant `0.5`. Measured over HG001–HG007, all 207 chrM PASS records were `0/1` with no `1/1` anywhere, 183 of them at `FORMAT/VAF` ≥ 0.85. `FORMAT/VAF` and `FORMAT/AD` are accurate, so this is a relabel: on the named contig `INFO/AF` is recomputed from `FORMAT/VAF`, and where the dominant non-symbolic alt is at or above `--homoplasmy_vaf` the genotype becomes homozygous for it. The model's own genotype is preserved in `FORMAT/OGT` and the record is flagged `INFO/MT_REGT`, both only where the genotype actually changed. Records with no usable `FORMAT/VAF` (gVCF reference blocks) and records the model declined to call (`./.`) are passed through untouched.
 
 `FORMAT/PL`, `FORMAT/GQ` and `QUAL` are deliberately **not** recomputed and may disagree with the new `GT` — recomputing likelihoods would mean shipping a chrM-specific model. The default 0.85 sits mid-plateau of a sweep against a second caller over the same samples: cutoffs 0.75–0.90 all leave 3 genotype disagreements, 0.95 leaves 6, 0.99 leaves 71. The 3 that survive every cutoff are genuine intermediate heteroplasmies (VAF 0.81–0.90) where the hom/het label is a convention, not a floor any threshold can move.
 
