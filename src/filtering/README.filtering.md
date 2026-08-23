@@ -71,6 +71,37 @@ filter_low_af_ratio_to_background \
 - `--tumor_vaf_threshold_h_indels`: Tumor VAF threshold for h-indel filtering (default: 0)
 - `--new_filter`: Name of the FILTER tag to add (default: LowAFRatioToBackground)
 
+#### `annotate_numt`
+
+Soft-flags mitochondrial variants that look like NUMT (nuclear mitochondrial DNA segment) bleed.
+
+**Purpose**: Reads originating in a NUMT can mismap to chrM and manufacture apparent low-frequency heteroplasmy. This adds an `INFO` flag inside chrM regions that have a nuclear paralog, and a `FILTER` on the subset where the reads agree. No record is dropped — use `bcftools view -f PASS` for the filtered callset.
+
+**Usage**:
+```bash
+annotate_numt \
+  input.vcf.gz \
+  output.vcf.gz \
+  --numt_intervals numt.chrM.hg38.bed \
+  --numt_nuclear_intervals numt.nuclear.hg38.bed \
+  --input_alignments sample.cram \
+  --reference Homo_sapiens_assembly38.fasta \
+  [--vaf_ceiling 0.90] \
+  [--sa_excess 0.02]
+```
+
+**Key Parameters**:
+- `input.vcf.gz`: Input VCF file
+- `output.vcf.gz`: Output VCF file (bgzipped and tabix-indexed)
+- `--numt_intervals`: chrM-side BED. Its first line must be the VCF `##INFO=<ID=...>` header, and that ID becomes both the INFO tag and the FILTER name
+- `--numt_nuclear_intervals`: nuclear-side BED of the paired NUMT loci; a read's supplementary-alignment (`SA`) target is tested against these
+- `--input_alignments`: the CRAM/BAM files the VCF was called from, needed to read `SA` tags
+- `--reference`: reference fasta, required to decode CRAM
+- `--vaf_ceiling`: records above this read-derived VAF are never flagged (default: 0.90)
+- `--sa_excess`: minimal excess of the NUMT `SA` rate in alt-supporting reads over ref-supporting reads *at the same site* (default: 0.02)
+
+A record is flagged only when all three terms hold: it is inside a chrM NUMT-homology interval, its alt reads are `SA`-enriched relative to the reference reads at that same site, and its VAF is at or below the ceiling. The local reference rate is the background rather than a global constant because NUMT `SA` traffic is strongly position-dependent — in the control region every read carries such a tag — and the VAF ceiling is a property of the molecule rather than a threshold: two nuclear copies cannot outvote thousands of mtDNA copies.
+
 ### Model Training
 
 #### `train_models_pipeline`
