@@ -71,9 +71,9 @@ def _sex_label_from_karyotype(karyotype: str) -> str:
 
 
 def parse_mosdepth_summary(summary_path: str | Path) -> pd.DataFrame:
-    df = pd.read_csv(summary_path, sep="\t")
-    df.columns = [c.strip().lower() for c in df.columns]
-    return df
+    summary_df = pd.read_csv(summary_path, sep="\t")
+    summary_df.columns = [c.strip().lower() for c in summary_df.columns]
+    return summary_df
 
 
 def _compute_ploidy_from_chr_data(chr_data: dict[str, dict], *, has_chr: bool) -> dict:  # noqa: C901, PLR0912, PLR0915
@@ -128,12 +128,12 @@ def _compute_ploidy_from_chr_data(chr_data: dict[str, dict], *, has_chr: bool) -
     }
 
 
-def estimate_ploidy_from_coverage(df: pd.DataFrame) -> dict:
+def estimate_ploidy_from_coverage(mosdepth_df: pd.DataFrame) -> dict:
     """Mode 2: estimate ploidy from mosdepth summary."""
-    contigs = df["chrom"].tolist()
+    contigs = mosdepth_df["chrom"].tolist()
     has_chr = _detect_chr_prefix(contigs)
 
-    df_filtered = df[~df["chrom"].str.contains(_SKIP, regex=True, na=False)].copy()
+    df_filtered = mosdepth_df[~mosdepth_df["chrom"].str.contains(_SKIP, regex=True, na=False)].copy()
     df_filtered = df_filtered[~df_filtered["chrom"].str.match(_MITO, na=False)]
     df_filtered = df_filtered[df_filtered["chrom"] != "total"]
 
@@ -347,8 +347,8 @@ def main(argv: list[str] | None = None) -> None:
         source_path = args.vcf
     else:
         print(f"[estimate_ploidy] Mode 2 (mosdepth): {args.mosdepth_summary}", file=sys.stderr)
-        df = parse_mosdepth_summary(args.mosdepth_summary)
-        coverage_result = estimate_ploidy_from_coverage(df)
+        mosdepth_df = parse_mosdepth_summary(args.mosdepth_summary)
+        coverage_result = estimate_ploidy_from_coverage(mosdepth_df)
         baf_result = None
         source_path = args.mosdepth_summary
 
