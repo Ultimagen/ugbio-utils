@@ -47,7 +47,7 @@ def _detect_chr_prefix(contigs: list[str]) -> bool:
     return any(c.startswith("chr") for c in contigs if re.match(r"^chr\d+$", c))
 
 
-def _autosome_number(contig: str, has_chr: bool) -> int | None:
+def _autosome_number(contig: str, *, has_chr: bool) -> int | None:
     pattern = _AUTOSOME_CHR if has_chr else _AUTOSOME_NOCHR
     m = pattern.match(contig)
     return int(m.group(1)) if m else None
@@ -76,13 +76,13 @@ def parse_mosdepth_summary(summary_path: str | Path) -> pd.DataFrame:
     return df
 
 
-def _compute_ploidy_from_chr_data(chr_data: dict[str, dict], has_chr: bool) -> dict:
+def _compute_ploidy_from_chr_data(chr_data: dict[str, dict], *, has_chr: bool) -> dict:  # noqa: C901, PLR0912, PLR0915
     """Shared logic: given {chrom: {mean, length(optional)}} compute ploidy, karyotype."""
     acrocentrics = _ACROCENTRICS_CHR if has_chr else _ACROCENTRICS_NOCHR
     x_name = "chrX" if has_chr else "X"
     y_name = "chrY" if has_chr else "Y"
 
-    auto_chroms = {c: d for c, d in chr_data.items() if _autosome_number(c, has_chr) is not None}
+    auto_chroms = {c: d for c, d in chr_data.items() if _autosome_number(c, has_chr=has_chr) is not None}
     if not auto_chroms:
         raise ValueError("No autosomal contigs found")
 
@@ -103,7 +103,7 @@ def _compute_ploidy_from_chr_data(chr_data: dict[str, dict], has_chr: bool) -> d
     sex_label = _sex_label_from_karyotype(karyotype)
 
     per_chrom = []
-    sorted_autos = sorted(auto_chroms.keys(), key=lambda c: _autosome_number(c, has_chr))
+    sorted_autos = sorted(auto_chroms.keys(), key=lambda c: _autosome_number(c, has_chr=has_chr))
     for chrom in sorted_autos:
         data = chr_data[chrom]
         ploidy = 2 * data["mean"] / auto_mean
@@ -140,21 +140,24 @@ def estimate_ploidy_from_coverage(df: pd.DataFrame) -> dict:
     chr_data = {}
     for _, row in df_filtered.iterrows():
         chrom = row["chrom"]
-        if _autosome_number(chrom, has_chr) is not None or bool(_SEX_CHR.match(chrom)):
+        if _autosome_number(chrom, has_chr=has_chr) is not None or bool(_SEX_CHR.match(chrom)):
             chr_data[chrom] = {"length": row["length"], "mean": row["mean"]}
 
-    result = _compute_ploidy_from_chr_data(chr_data, has_chr)
+    result = _compute_ploidy_from_chr_data(chr_data, has_chr=has_chr)
     result["source"] = "mosdepth"
     return result
 
 
-def estimate_ploidy_from_vcf(vcf_path: str | Path, het_sample_count: int = 5000) -> tuple[dict, dict]:
+def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
+    vcf_path: str | Path, het_sample_count: int = 5000
+) -> tuple[dict, dict]:
     """Mode 1: per-chr coverage from SNP DP + BAF. Returns (coverage_result, baf_result)."""
-    import random
-    random.seed(42)
+    import random  # noqa: PLC0415
+
+    random.seed(42)  # noqa: S311
 
     cmd = f"bcftools view -H -v snps {vcf_path}"
-    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # noqa: S602
 
     chr_dps: dict[str, list[int]] = {}
     # Reservoir sampling for BAF: uniform random sample over autosomal het SNPs
@@ -163,7 +166,7 @@ def estimate_ploidy_from_vcf(vcf_path: str | Path, het_sample_count: int = 5000)
 
     for line in proc.stdout:
         parts = line.strip().split("\t")
-        if len(parts) < 10:
+        if len(parts) < 10:  # noqa: PLR2004
             continue
 
         chrom = parts[0]
@@ -192,18 +195,18 @@ def estimate_ploidy_from_vcf(vcf_path: str | Path, het_sample_count: int = 5000)
         gt_field = sample_fields[0] if sample_fields else ""
         if is_autosome and gt_field in ("0/1", "0|1", "1|0") and ad_value:
             ad_parts = ad_value.split(",")
-            if len(ad_parts) >= 2:
+            if len(ad_parts) >= 2:  # noqa: PLR2004
                 try:
                     ref_count, alt_count = int(ad_parts[0]), int(ad_parts[1])
                     total = ref_count + alt_count
-                    if total >= 10:
+                    if total >= 10:  # noqa: PLR2004
                         baf = alt_count / total
-                        if 0.1 <= baf <= 0.9:
+                        if 0.1 <= baf <= 0.9:  # noqa: PLR2004
                             baf_seen += 1
                             if len(baf_reservoir) < het_sample_count:
                                 baf_reservoir.append(baf)
                             else:
-                                idx = random.randint(0, baf_seen - 1)
+                                idx = random.randint(0, baf_seen - 1)  # noqa: S311
                                 if idx < het_sample_count:
                                     baf_reservoir[idx] = baf
                 except ValueError:
@@ -217,10 +220,10 @@ def estimate_ploidy_from_vcf(vcf_path: str | Path, het_sample_count: int = 5000)
 
     chr_data = {}
     for chrom, dps in chr_dps.items():
-        if (_autosome_number(chrom, has_chr) is not None or bool(_SEX_CHR.match(chrom))) and len(dps) >= 20:
+        if (_autosome_number(chrom, has_chr=has_chr) is not None or bool(_SEX_CHR.match(chrom))) and len(dps) >= 20:  # noqa: PLR2004
             chr_data[chrom] = {"mean": float(np.median(dps))}
 
-    coverage_result = _compute_ploidy_from_chr_data(chr_data, has_chr)
+    coverage_result = _compute_ploidy_from_chr_data(chr_data, has_chr=has_chr)
     coverage_result["source"] = "VCF SNP median DP"
 
     baf_result = _classify_baf(baf_reservoir)
@@ -229,19 +232,19 @@ def estimate_ploidy_from_vcf(vcf_path: str | Path, het_sample_count: int = 5000)
 
 def _classify_baf(baf_values: list[float]) -> dict:
     n_het = len(baf_values)
-    if n_het < 50:
+    if n_het < 50:  # noqa: PLR2004
         return {"label": "INSUFFICIENT_DATA", "confidence": f"(<50 het SNPs, found {n_het})", "n_het": n_het}
 
-    di_count = sum(1 for b in baf_values if 0.40 <= b <= 0.60)
-    tri_count = sum(1 for b in baf_values if (0.25 <= b <= 0.35) or (0.65 <= b <= 0.75))
+    di_count = sum(1 for b in baf_values if 0.40 <= b <= 0.60)  # noqa: PLR2004
+    tri_count = sum(1 for b in baf_values if (0.25 <= b <= 0.35) or (0.65 <= b <= 0.75))  # noqa: PLR2004
     di_frac = round(di_count / n_het * 100, 1)
     tri_frac = round(tri_count / n_het * 100, 1)
 
-    if di_count > tri_count * 2.5:
+    if di_count > tri_count * 2.5:  # noqa: PLR2004
         label, confidence = "DIPLOID", f"({di_frac}% hets in 0.4-0.6 BAF band, n={n_het})"
-    elif tri_count > di_count * 0.4:
+    elif tri_count > di_count * 0.4:  # noqa: PLR2004
         label, confidence = "TRIPLOID", f"(diplo={di_frac}%, tri={tri_frac}%, n={n_het})"
-    elif di_count > tri_count * 1.5:
+    elif di_count > tri_count * 1.5:  # noqa: PLR2004
         label, confidence = "LIKELY_DIPLOID", f"({di_frac}% in 0.4-0.6 band, {tri_frac}% in triploid bands, n={n_het})"
     else:
         label, confidence = "INCONCLUSIVE", f"(diplo={di_frac}%, tri={tri_frac}%, n={n_het})"
@@ -287,18 +290,20 @@ def write_report(
         icon = {"acro": "*", "sex": "."}.get(entry["flag"], " ")
         lines.append(f"  {entry['chrom']:<6s} ploidy={entry['ploidy']:.3f}  cov={entry['mean_cov']:.2f}x  {icon}")
 
-    lines.extend([
-        "",
-        "  (* = acrocentric, lower coverage typical in short-read WGS)",
-        "  (. = sex chromosome)",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "  (* = acrocentric, lower coverage typical in short-read WGS)",
+            "  (. = sex chromosome)",
+            "",
+        ]
+    )
 
     any_warn = False
     for entry in cr["per_chrom"]:
         if entry["flag"] not in ("acro", "sex"):
             dev = abs(entry["ploidy"] - 2.0)
-            if dev >= 0.35:
+            if dev >= 0.35:  # noqa: PLR2004
                 lines.append(
                     f"  [WARNING] {entry['chrom']} ploidy={entry['ploidy']:.3f} "
                     f"(deviation={dev:.2f}, cov={entry['mean_cov']:.2f}x)"
@@ -307,6 +312,7 @@ def write_report(
 
     if not any_warn:
         lines.append("  No autosomal aneuploidy detected (all within +/-0.35 of 2.0).")
+    lines.append("")
 
     report_path.write_text("\n".join(lines) + "\n")
 

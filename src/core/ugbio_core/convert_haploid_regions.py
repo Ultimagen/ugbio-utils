@@ -47,8 +47,8 @@ def _detect_reference(vcf: pysam.VariantFile) -> str:
     if "X" in contigs:
         return "b37_non_par"
     raise ValueError(
-        f"Cannot auto-detect reference: VCF contigs contain neither 'chrX' (hg38) "
-        f"nor 'X' (b37). Use --haploid_regions with a BED file or explicit preset."
+        "Cannot auto-detect reference: VCF contigs contain neither 'chrX' (hg38) "
+        "nor 'X' (b37). Use --haploid_regions with a BED file or explicit preset."
     )
 
 
@@ -60,7 +60,7 @@ def _convert_to_haploid(variant: pysam.VariantRecord) -> pysam.VariantRecord:
     call = variant.samples[0]
     pls = call["PL"]
     num_alleles = len(variant.alts) + 1
-    if len(pls) == 2:
+    if len(pls) == 2:  # noqa: PLR2004
         return variant
 
     un_normalized = [10 ** (pl / -10) for pl in pls]
@@ -103,7 +103,7 @@ def convert_haploid_regions(input_vcf: str, output_vcf: str, haploid_regions: st
         with open(haploid_regions) as f:
             for line in f:
                 parts = line.strip().split("\t")
-                if len(parts) >= 3:
+                if len(parts) >= 3:  # noqa: PLR2004
                     regions.append((parts[0], int(parts[1]), int(parts[2])))
 
     writer = pysam.VariantFile(output_vcf, mode="w", header=reader.header)
