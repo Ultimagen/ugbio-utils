@@ -159,10 +159,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
 
     random.seed(42)  # noqa: S311
 
-    cmd = f"bcftools view -H -v snps {vcf_path}"
-    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # noqa: S602
-
-    # Read header to validate single-sample
+    # Validate single-sample before starting the streaming process
     header_cmd = f"bcftools query -l {vcf_path}"
     samples = (
         subprocess.run(  # noqa: S602
@@ -176,8 +173,10 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
         .split("\n")
     )
     if len(samples) > 1:
-        proc.terminate()
         raise ValueError(f"Multi-sample VCF not supported for ploidy estimation (found {len(samples)} samples)")
+
+    cmd = f"bcftools view -H -v snps {vcf_path}"
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)  # noqa: S602
 
     chr_dps: dict[str, list[int]] = {}
     # Reservoir sampling for BAF: uniform random sample over autosomal het SNPs
