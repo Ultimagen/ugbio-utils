@@ -1,11 +1,10 @@
 import pysam
 import pytest
-
 from ugbio_core.convert_haploid_regions import (
-    _HG38_NON_PAR,
     _B37_NON_PAR,
-    _in_regions,
+    _HG38_NON_PAR,
     _convert_to_haploid,
+    _in_regions,
     convert_haploid_regions,
 )
 
@@ -94,8 +93,8 @@ class TestConvertHaploidRegions:
     def test_nonpar_converted_par_preserved(self, tmp_path):
         records = [
             ("chr1", 1000000, (0, 1), [30, 0, 40]),  # autosome — should stay diploid
-            ("chrX", 15000, (1, 1), [60, 30, 0]),     # PAR1 — should stay diploid
-            ("chrX", 5000000, (1, 1), [60, 30, 0]),   # non-PAR — should become haploid
+            ("chrX", 15000, (1, 1), [60, 30, 0]),  # PAR1 — should stay diploid
+            ("chrX", 5000000, (1, 1), [60, 30, 0]),  # non-PAR — should become haploid
         ]
         input_vcf = self._make_test_vcf(tmp_path, records)
         output_vcf = str(tmp_path / "output.vcf.gz")
