@@ -234,10 +234,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
     proc.wait()
     if proc.returncode and proc.returncode != 0:
         stderr_text = proc.stderr.read() if proc.stderr else ""
-        print(
-            f"[estimate_ploidy] WARNING: bcftools exited with code {proc.returncode}: {stderr_text[:200]}",
-            file=sys.stderr,
-        )
+        raise RuntimeError(f"bcftools exited with code {proc.returncode}: {stderr_text[:200]}")
 
     contigs = list(chr_dps.keys())
     has_chr = _detect_chr_prefix(contigs)
