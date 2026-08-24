@@ -65,13 +65,17 @@ def _convert_to_haploid(variant: pysam.VariantRecord) -> pysam.VariantRecord:
     if len(pls) <= num_alleles:
         return variant
 
-    un_normalized = [10 ** (pl / -10) for pl in pls]
-    hom_probs = []
+    # Extract homozygous PLs and normalize in log-space to avoid underflow
+    hom_pls = []
     for i in range(num_alleles):
         idx = int(i * (i + 1) / 2 + i)
-        hom_probs.append(un_normalized[idx])
-    total = sum(hom_probs)
-    haploid_pls = [int(-10 * math.log10(p / total)) for p in hom_probs]
+        hom_pls.append(pls[idx])
+    min_hom_pl = min(hom_pls)
+    # Shift so smallest PL is 0, then exponentiate (safe from underflow)
+    shifted = [pl - min_hom_pl for pl in hom_pls]
+    probs = [10 ** (s / -10) for s in shifted]
+    total = sum(probs)
+    haploid_pls = [int(-10 * math.log10(max(p / total, 1e-300))) for p in probs]
     min_pl = min(haploid_pls)
     haploid_pls = [pl - min_pl for pl in haploid_pls]
 
@@ -96,7 +100,7 @@ def convert_haploid_regions(input_vcf: str, output_vcf: str, haploid_regions: st
     reader = pysam.VariantFile(input_vcf)
 
     if len(reader.header.samples) != 1:
-        raise ValueError(f"Multi-sample VCF not supported (found {len(reader.header.samples)} samples)")
+        raise ValueError(f"Expected single-sample VCF, found {len(reader.header.samples)} samples")
     if haploid_regions == "auto":
         preset = _detect_reference(reader)
         print(f"Auto-detected reference: {preset}", file=sys.stderr)
