@@ -106,7 +106,7 @@ def read_trimmer_failure_codes(
     # group by segment and reason (aggregate read groups)
     df_trimmer_failure_codes = (
         df_trimmer_failure_codes.groupby(["format", "segment", "reason"], observed=True)
-        .agg({x: "sum" for x in ("failed_read_count", "total_read_count")})
+        .agg(dict.fromkeys(("failed_read_count", "total_read_count"), "sum"))
         .reset_index(level=["format"])
     )
 
