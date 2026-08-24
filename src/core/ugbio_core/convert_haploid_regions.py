@@ -58,9 +58,10 @@ def _in_regions(chrom: str, pos: int, regions: list[tuple[str, int, int]]) -> bo
 
 def _convert_to_haploid(variant: pysam.VariantRecord) -> pysam.VariantRecord:
     call = variant.samples[0]
-    pls = call["PL"]
+    pls = call.get("PL")
+    if pls is None:
+        raise ValueError("PL field is required to convert genotypes to haploid")
     num_alleles = len(variant.alts) + 1
-    # already haploid (2 PL values for biallelic, or num_alleles for multi-allelic)
     if len(pls) <= num_alleles:
         return variant
 
