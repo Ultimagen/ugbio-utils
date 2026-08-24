@@ -60,7 +60,8 @@ def _convert_to_haploid(variant: pysam.VariantRecord) -> pysam.VariantRecord:
     call = variant.samples[0]
     pls = call["PL"]
     num_alleles = len(variant.alts) + 1
-    if len(pls) == 2:  # noqa: PLR2004
+    # already haploid (2 PL values for biallelic, or num_alleles for multi-allelic)
+    if len(pls) <= num_alleles:
         return variant
 
     un_normalized = [10 ** (pl / -10) for pl in pls]
@@ -91,6 +92,9 @@ def _convert_to_haploid(variant: pysam.VariantRecord) -> pysam.VariantRecord:
 
 def convert_haploid_regions(input_vcf: str, output_vcf: str, haploid_regions: str = "auto") -> None:
     reader = pysam.VariantFile(input_vcf)
+
+    if len(reader.header.samples) > 1:
+        raise ValueError(f"Multi-sample VCF not supported (found {len(reader.header.samples)} samples)")
 
     if haploid_regions == "auto":
         preset = _detect_reference(reader)

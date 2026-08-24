@@ -94,6 +94,9 @@ def _compute_ploidy_from_chr_data(chr_data: dict[str, dict], *, has_chr: bool) -
     else:
         auto_mean = float(np.median([d["mean"] for d in auto_chroms.values()]))
 
+    if auto_mean == 0:
+        raise ValueError("Autosomal mean coverage is 0; cannot compute ploidy")
+
     x_mean = chr_data.get(x_name, {}).get("mean", 0)
     y_mean = chr_data.get(y_name, {}).get("mean", 0)
     x_ratio = x_mean / auto_mean if auto_mean > 0 else 0
@@ -182,7 +185,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
                 try:
                     dp_value = int(sample_fields[j])
                 except ValueError:
-                    pass
+                    pass  # skip unparseable DP fields
             if fmt == "AD" and j < len(sample_fields):
                 ad_value = sample_fields[j]
 
@@ -210,10 +213,15 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
                                 if idx < het_sample_count:
                                     baf_reservoir[idx] = baf
                 except ValueError:
-                    pass
+                    pass  # skip unparseable AD fields
 
-    proc.terminate()
     proc.wait()
+    if proc.returncode and proc.returncode != 0:
+        stderr_text = proc.stderr.read() if proc.stderr else ""
+        print(
+            f"[estimate_ploidy] WARNING: bcftools exited with code {proc.returncode}: {stderr_text[:200]}",
+            file=sys.stderr,
+        )
 
     contigs = list(chr_dps.keys())
     has_chr = _detect_chr_prefix(contigs)
