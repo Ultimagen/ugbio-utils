@@ -96,8 +96,7 @@ def convert_haploid_regions(input_vcf: str, output_vcf: str, haploid_regions: st
     reader = pysam.VariantFile(input_vcf)
 
     if len(reader.header.samples) != 1:
-        raise ValueError(f"Expected single-sample VCF, found {len(reader.header.samples)} samples")
-
+        raise ValueError(f"Multi-sample VCF not supported (found {len(reader.header.samples)} samples)")
     if haploid_regions == "auto":
         preset = _detect_reference(reader)
         print(f"Auto-detected reference: {preset}", file=sys.stderr)
