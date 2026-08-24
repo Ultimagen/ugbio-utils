@@ -133,5 +133,5 @@ class TestConvertHaploidRegions:
         vcf = pysam.VariantFile(vcf_path, "wz", header=header)
         vcf.close()
 
-        with pytest.raises(ValueError, match="Multi-sample VCF not supported"):
+        with pytest.raises(ValueError, match="Expected single-sample VCF"):
             convert_haploid_regions(vcf_path, str(tmp_path / "out.vcf.gz"))

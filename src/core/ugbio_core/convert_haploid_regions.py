@@ -85,8 +85,9 @@ def _convert_to_haploid(variant: pysam.VariantRecord) -> pysam.VariantRecord:
 
     if call["GT"][0] is None:
         called = None
-    call["GT"] = called
-    call["GQ"] = gq
+    call["GT"] = (called,)
+    if called is not None:
+        call["GQ"] = gq
     call["PL"] = haploid_pls
     return variant
 
