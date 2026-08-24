@@ -1,17 +1,19 @@
 """Fix haploid genotypes on a mitochondrial contig, from FORMAT/VAF.
 
 The caller runs a diploid model on a haploid, multi-copy contig, so its ``1/1`` state is
-effectively unreachable there: over a 7-sample cohort every one of 207 chrM calls came out
-``0/1``, including 183 whose own ``FORMAT/VAF`` was at or above 0.85.  ``INFO/AF`` is derived
-from the genotype and therefore reads a constant 0.5 on every record.  ``FORMAT/VAF`` and
-``FORMAT/AD``, by contrast, agree with an orthogonal caller to ~0.005, so the information is
-already in the record and only the genotype summary needs rewriting.
+effectively unreachable there: over a 7-sample cohort every one of 207 chrM PASS calls came out
+``0/1`` and not one ``1/1``, including all 182 records an orthogonal caller and our own reads
+both call homoplasmic.  ``INFO/AF`` is derived from the genotype and therefore reads a constant
+0.5 on every record.  ``FORMAT/VAF`` and ``FORMAT/AD``, by contrast, agree with the orthogonal
+caller to ~0.005, so the information is already in the record and only the genotype summary
+needs rewriting.
 
 On the requested contig, an alternate allele at ``FORMAT/VAF >= homoplasmy_vaf`` therefore
 becomes homozygous and ``INFO/AF`` is recomputed from the observed VAF.  The default 0.85 sits
-in the middle of a plateau: sweeping it over that cohort leaves 3 genotypes disagreeing with the
-orthogonal caller anywhere in 0.75-0.90, 6 at 0.95 and 71 at 0.99.  The 3 that remain are
-heteroplasmies at AF 0.81-0.90, where the hom/het label is a matter of convention and no
+in the middle of a plateau: swept over the 192 alleles both callers report on that cohort, it
+leaves 3 genotypes disagreeing with the orthogonal caller anywhere in 0.75-0.85, then 4 at 0.90,
+8 at 0.95 and 142 at 0.99, against 182 disagreements before the correction.  The 3 that remain
+are heteroplasmies at AF 0.81-0.90, where the hom/het label is a matter of convention and no
 threshold helps.
 
 ``FORMAT/PL``, ``FORMAT/GQ`` and ``QUAL`` are deliberately left as the model emitted them:
@@ -165,7 +167,7 @@ def main():
         type=float,
         default=0.85,
         help="An alternate allele at or above this FORMAT/VAF is genotyped homozygous on --contig. "
-        "Anywhere in 0.75-0.90 gives the same concordance with an orthogonal caller on the development "
+        "Anywhere in 0.75-0.85 gives the same concordance with an orthogonal caller on the development "
         "cohort (default: 0.85)",
     )
 
