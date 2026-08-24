@@ -19,11 +19,10 @@ class TestInRegions:
         assert _in_regions("chrX", 2000000, _HG38_NON_PAR) is False
 
     def test_par1_region_not_in_nonpar(self):
-        # Positions in PAR1 (10001-2781479) are NOT in non-PAR list
-        # The first non-PAR entry is (chrX, 1, 10001), second is (chrX, 2781479, ...)
-        # pos=10001 is in first entry (1 < 10001 <= 10001), pos=10002 is NOT in any entry
+        # Non-PAR entry (chrX, 1, 10001) covers VCF pos 2-10001 (s < pos <= e)
+        # PAR1 starts at VCF pos 10002 (BED 10001), so 10001 is the last non-PAR base
         assert _in_regions("chrX", 10001, _HG38_NON_PAR) is True
-        assert _in_regions("chrX", 10002, _HG38_NON_PAR) is False  # in PAR1, not non-PAR
+        assert _in_regions("chrX", 10002, _HG38_NON_PAR) is False  # first PAR1 base
 
     def test_autosome_not_in_nonpar(self):
         assert _in_regions("chr1", 1000000, _HG38_NON_PAR) is False
