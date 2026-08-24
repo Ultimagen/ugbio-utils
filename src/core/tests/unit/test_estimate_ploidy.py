@@ -1,6 +1,4 @@
-import pandas as pd
 import pytest
-
 from ugbio_core.estimate_ploidy import (
     _autosome_number,
     _classify_baf,
