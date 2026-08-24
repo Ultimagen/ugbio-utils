@@ -128,9 +128,10 @@ def main(argv: list[str] | None = None) -> None:
   auto           Auto-detect hg38 vs b37 from VCF contigs (default)
   hg38_non_par   GRCh38 non-PAR regions (chrX/chrY naming)
   b37_non_par    GRCh37/b37 non-PAR regions (X/Y naming)
-  <path.bed>     Custom BED file with 3 tab-separated columns:
-                   chrom  start(0-based)  end
-                 Example for a custom genome:
+  <path.bed>     Custom BED file (0-based half-open, standard BED convention).
+                 The predicate s < pos <= e on 1-based VCF positions handles
+                 the 0-to-1-based conversion automatically.
+                 Example:
                    chrX  0      10000
                    chrX  2781479  155701383
                    chrY  0      10000
