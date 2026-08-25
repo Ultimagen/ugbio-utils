@@ -903,7 +903,7 @@ def get_trinuc_substitution_dist(vcf_file, ref_fasta: str = None):
             raise FileNotFoundError(f"ref_fasta {ref_fasta} does not exist")
     # initialize trinuc_sub dictionary
     trinuc_sub = get_trinuc_sub_list()
-    trinuc_dict = dict.fromkeys(trinuc_sub, 0)
+    trinuc_dict = {k: 0 for k in trinuc_sub}
     # initialize fasta index if given
     faidx = pyfaidx.Fasta(ref_fasta, build_index=False, rebuild=False) if ref_fasta is not None else None
     with pysam.VariantFile(vcf_file, "rb") as infh:
