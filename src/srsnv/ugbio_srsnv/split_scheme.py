@@ -32,11 +32,15 @@ from ugbio_srsnv.srsnv_utils import (
     CONSENSUS_GROUP_ONE_STRAND,
     CONSENSUS_GROUP_SINGLE,
     CONSENSUS_GROUPS,
+    DUPLEX_MOL_GROUPS,
+    DUPLEX_MOL_PAIRED,
+    DUPLEX_MOL_SINGLE,
     ET,
     FS,
     IS_CONSENSUS,
     IS_MIXED,
     IS_MIXED_START,
+    MATE_PRESENT,
     MIXED_GROUP_NON,
     MIXED_GROUP_POS,
     MIXED_GROUPS,
@@ -47,6 +51,7 @@ from ugbio_srsnv.srsnv_utils import (
     TE,
     TS,
     ReportMode,
+    add_duplex_columns_to_featuremap_df,
     add_is_consensus_to_featuremap_df,
     add_is_mixed_to_featuremap_df,
 )
@@ -202,6 +207,13 @@ def _consensus_groups(data_df: pd.DataFrame) -> pd.Categorical:
     return _ordered(g, CONSENSUS_GROUPS)
 
 
+def _duplex_groups(data_df: pd.DataFrame) -> pd.Categorical:
+    """Per-molecule split: single-strand molecule / duplex molecule (from ``mate_present``)."""
+    g = pd.Series(DUPLEX_MOL_SINGLE, index=data_df.index, dtype=object)
+    g[data_df[MATE_PRESENT].astype(bool)] = DUPLEX_MOL_PAIRED
+    return _ordered(g, DUPLEX_MOL_GROUPS)
+
+
 def _none_groups(data_df: pd.DataFrame) -> pd.Categorical:
     return _ordered([NONE_GROUP_ALL] * len(data_df), [NONE_GROUP_ALL])
 
@@ -215,6 +227,10 @@ def _mixed_add_columns(data_df: pd.DataFrame, kw: dict) -> pd.DataFrame:
 
 def _consensus_add_columns(data_df: pd.DataFrame, kw: dict) -> pd.DataFrame:  # noqa: ARG001
     return add_is_consensus_to_featuremap_df(data_df)
+
+
+def _duplex_add_columns(data_df: pd.DataFrame, kw: dict) -> pd.DataFrame:  # noqa: ARG001
+    return add_duplex_columns_to_featuremap_df(data_df)
 
 
 def _none_add_columns(data_df: pd.DataFrame, kw: dict) -> pd.DataFrame:  # noqa: ARG001
@@ -287,6 +303,22 @@ MIXED_SCHEME = SplitScheme(
     ),
 )
 
+DUPLEX_SCHEME = SplitScheme(
+    mode=ReportMode.DUPLEX,
+    detect=lambda cols: MATE_PRESENT in cols,
+    add_columns=_duplex_add_columns,
+    tag_axis="mate status",
+    variants=(
+        SplitVariant(
+            suffix="duplex_molecule",
+            group_fn=_duplex_groups,
+            groups=tuple(DUPLEX_MOL_GROUPS),
+            is_display=True,
+            tag_axis="mate status",
+        ),
+    ),
+)
+
 CONSENSUS_SCHEME = SplitScheme(
     mode=ReportMode.CONSENSUS,
     detect=lambda cols: FS in cols and RS in cols,
@@ -319,9 +351,11 @@ NONE_SCHEME = SplitScheme(
     ),
 )
 
-# Ordered registry. Detection order preserves the historical priority: ppmSeq tags beat fs/rs.
-# NONE is the explicit fallback and is not consulted via `detect`.
-SPLIT_SCHEMES: tuple[SplitScheme, ...] = (MIXED_SCHEME, CONSENSUS_SCHEME, NONE_SCHEME)
+# Ordered registry. Detection order preserves the historical priority: ppmSeq tags beat everything;
+# the per-molecule duplex `mate_present` flag beats per-read fs/rs (a duplex featuremap may carry
+# both, and the per-molecule split must win). NONE is the explicit fallback, not consulted via
+# `detect`.
+SPLIT_SCHEMES: tuple[SplitScheme, ...] = (MIXED_SCHEME, DUPLEX_SCHEME, CONSENSUS_SCHEME, NONE_SCHEME)
 _BY_MODE: dict[ReportMode, SplitScheme] = {s.mode: s for s in SPLIT_SCHEMES}
 
 

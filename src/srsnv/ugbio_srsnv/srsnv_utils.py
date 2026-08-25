@@ -81,6 +81,12 @@ FS = "fs"  # forward-strand read count (consensus data)
 RS = "rs"  # reverse-strand read count (consensus data)
 IS_CONSENSUS = "is_consensus"  # read is a consensus read (fs >= 1 and rs >= 1)
 
+# Duplex per-molecule data: one prediction row is a MOLECULE built from two consensus reads
+# (opposite strands, same molecular id MI). ``mate_present`` = 1 when the molecule had a real
+# partner (both strands), 0 for a single-strand molecule / singleton. ``MI`` is the molecular id.
+MATE_PRESENT = "mate_present"  # per-molecule flag: molecule has both strand-mates present
+MI = "MI"  # molecular id column
+
 # Ordered read-group column: reads are split into N ordered groups per mode (see
 # add_read_group_column). The report iterates these groups instead of a binary split.
 READ_GROUP = "read_group"
@@ -90,6 +96,12 @@ CONSENSUS_GROUP_SINGLE = "single read"  # fs + rs <= 1
 CONSENSUS_GROUP_ONE_STRAND = "consensus, one strand"  # fs + rs >= 2 and (fs == 0) xor (rs == 0)
 CONSENSUS_GROUP_DUPLEX = "consensus, duplex"  # fs >= 1 and rs >= 1
 CONSENSUS_GROUPS = [CONSENSUS_GROUP_SINGLE, CONSENSUS_GROUP_ONE_STRAND, CONSENSUS_GROUP_DUPLEX]
+
+# Duplex per-molecule groups (2), ordered by ascending strand support (single -> paired),
+# mirroring the CONSENSUS_GROUPS ordering convention (weaker support first).
+DUPLEX_MOL_SINGLE = "single-strand molecule"  # mate_present is falsy: only one strand / singleton
+DUPLEX_MOL_PAIRED = "duplex molecule"  # mate_present is truthy: both strand-mates present
+DUPLEX_MOL_GROUPS = [DUPLEX_MOL_SINGLE, DUPLEX_MOL_PAIRED]
 
 # Mixed groups (2), reproducing the historical binary ppmSeq labels/order.
 MIXED_GROUP_NON = "Non-mixed"
@@ -110,6 +122,7 @@ class ReportMode(Enum):
 
     MIXED = "mixed"  # ppmSeq data: split on mixed vs non-mixed reads (st/et tags)
     CONSENSUS = "consensus"  # consensus data: split on consensus vs non-consensus (fs/rs)
+    DUPLEX = "duplex_molecule"  # duplex per-molecule data: split on mate_present (paired vs single-strand)
     NONE = "none"  # neither available: single "all reads" group
 
 
@@ -160,6 +173,28 @@ def add_is_consensus_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
     """
     logger.info("Adding is_consensus column to featuremap")
     data_df[IS_CONSENSUS] = (data_df[FS] >= 1) & (data_df[RS] >= 1)
+    return data_df
+
+
+def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure the duplex per-molecule grouping column is derivable from ``mate_present``.
+
+    In a duplex run each row is a molecule; ``mate_present`` marks whether the molecule had a real
+    partner (both strand-mates, 1) or is a single-strand molecule / singleton (0). This coerces
+    ``mate_present`` to a plain boolean so the duplex group function can split on it directly.
+
+    Parameters
+    ----------
+    data_df : pd.DataFrame
+        The featuremap dataframe, expected to contain the ``mate_present`` column.
+
+    Returns
+    -------
+    pd.DataFrame
+        The same dataframe with ``mate_present`` coerced to a boolean column.
+    """
+    logger.info("Adding duplex per-molecule columns to featuremap")
+    data_df[MATE_PRESENT] = data_df[MATE_PRESENT].fillna(0).astype(bool)
     return data_df
 
 

@@ -13,6 +13,7 @@ import pytest
 from ugbio_srsnv import split_scheme as ss
 from ugbio_srsnv.split_scheme import (
     CONSENSUS_SCHEME,
+    DUPLEX_SCHEME,
     MIXED_SCHEME,
     NONE_SCHEME,
     SplitScheme,
@@ -22,9 +23,12 @@ from ugbio_srsnv.split_scheme import (
     resolve_scheme_and_add_columns,
 )
 from ugbio_srsnv.srsnv_utils import (
+    DUPLEX_MOL_PAIRED,
+    DUPLEX_MOL_SINGLE,
     FS,
     IS_CONSENSUS,
     IS_MIXED,
+    MATE_PRESENT,
     READ_GROUP,
     RS,
     ReportMode,
@@ -62,6 +66,29 @@ class TestResolveScheme:
     def test_resolve_by_mode_enum(self):
         assert resolve_scheme(mode=ReportMode.CONSENSUS) is CONSENSUS_SCHEME
 
+    def test_duplex_from_mate_present(self):
+        data_df = pd.DataFrame({MATE_PRESENT: [1, 0, 1]})
+        assert resolve_scheme(data_df) is DUPLEX_SCHEME
+
+    def test_duplex_takes_priority_over_fs_rs(self):
+        # A duplex featuremap may also carry per-read fs/rs; the per-molecule split must win.
+        data_df = pd.DataFrame({MATE_PRESENT: [1, 0], FS: [1, 2], RS: [1, 0]})
+        assert resolve_scheme(data_df) is DUPLEX_SCHEME
+
+    def test_ppmseq_tags_take_priority_over_mate_present(self):
+        data_df = pd.DataFrame({"st": ["MIXED", "PLUS"], "et": ["MIXED", "MINUS"], MATE_PRESENT: [1, 0]})
+        assert resolve_scheme(data_df) is MIXED_SCHEME
+
+    def test_resolve_duplex_by_mode(self):
+        assert resolve_scheme(mode="duplex_molecule") is DUPLEX_SCHEME
+        assert resolve_scheme(mode=ReportMode.DUPLEX) is DUPLEX_SCHEME
+
+    def test_no_mate_present_still_resolves_as_before(self):
+        # Regression: without mate_present, detection is unchanged.
+        assert resolve_scheme(pd.DataFrame({"st": ["MIXED"], "et": ["MIXED"]})) is MIXED_SCHEME
+        assert resolve_scheme(pd.DataFrame({FS: [0, 1], RS: [1, 1]})) is CONSENSUS_SCHEME
+        assert resolve_scheme(pd.DataFrame({"MQUAL": [1.0, 2.0]})) is NONE_SCHEME
+
 
 # ──────────────────────────── h5 keys / variants ────────────────────────────
 
@@ -86,7 +113,7 @@ class TestVariantsAndKeys:
         assert h5_key("run_info_table", CONSENSUS_SCHEME.display_variant) == "run_info_table_strand_support"
 
     def test_exactly_one_display_variant_per_scheme(self):
-        for scheme in (MIXED_SCHEME, CONSENSUS_SCHEME, NONE_SCHEME):
+        for scheme in (MIXED_SCHEME, DUPLEX_SCHEME, CONSENSUS_SCHEME, NONE_SCHEME):
             assert sum(v.is_display for v in scheme.variants) == 1
 
 
@@ -112,6 +139,24 @@ class TestGroupFunctions:
         assert isinstance(cat, pd.Categorical)
         assert cat.ordered
         assert list(cat.categories) == ["single read", "consensus, one strand", "consensus, duplex"]
+
+    def test_duplex_groups_definition(self):
+        data_df = pd.DataFrame({MATE_PRESENT: [1, 0, 1, 0]})
+        groups = np.asarray(DUPLEX_SCHEME.display_variant.group_fn(data_df))
+        assert list(groups) == [
+            DUPLEX_MOL_PAIRED,
+            DUPLEX_MOL_SINGLE,
+            DUPLEX_MOL_PAIRED,
+            DUPLEX_MOL_SINGLE,
+        ]
+
+    def test_duplex_groups_are_ordered_categorical_single_first(self):
+        data_df = pd.DataFrame({MATE_PRESENT: [1, 0]})
+        cat = DUPLEX_SCHEME.display_variant.group_fn(data_df)
+        assert isinstance(cat, pd.Categorical)
+        assert cat.ordered
+        # ascending strand support: single-strand first, then duplex (paired)
+        assert list(cat.categories) == [DUPLEX_MOL_SINGLE, DUPLEX_MOL_PAIRED]
 
     def test_mixed_display_groups_from_is_mixed_start(self):
         data_df = pd.DataFrame({"is_mixed_start": [True, False, True], "is_mixed": [False, False, True]})
@@ -149,6 +194,23 @@ class TestAddColumns:
         # read_group is the display variant's grouping
         assert READ_GROUP in out.columns
         np.testing.assert_array_equal((out[READ_GROUP] == "consensus, duplex").to_numpy(), np.array(expected))
+
+    def test_duplex_coerces_mate_present_and_adds_read_group(self):
+        data_df = pd.DataFrame({MATE_PRESENT: [1, 0, 1, 0]})
+        out, scheme = resolve_scheme_and_add_columns(data_df)
+        assert scheme is DUPLEX_SCHEME
+        # mate_present coerced to bool
+        assert out[MATE_PRESENT].dtype == bool
+        assert out[MATE_PRESENT].tolist() == [True, False, True, False]
+        # read_group is the display variant's grouping
+        assert READ_GROUP in out.columns
+        assert list(out[READ_GROUP]) == [
+            DUPLEX_MOL_PAIRED,
+            DUPLEX_MOL_SINGLE,
+            DUPLEX_MOL_PAIRED,
+            DUPLEX_MOL_SINGLE,
+        ]
+        assert list(out[READ_GROUP].cat.categories) == [DUPLEX_MOL_SINGLE, DUPLEX_MOL_PAIRED]
 
     def test_none_sets_is_consensus_false_and_single_group(self):
         data_df = pd.DataFrame({"MQUAL": [1.0, 2.0, 3.0]})
