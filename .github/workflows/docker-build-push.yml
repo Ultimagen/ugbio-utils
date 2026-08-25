@@ -226,7 +226,7 @@ jobs:
       - name: Check ECR scan results
         id: ecr-scan
         continue-on-error: true
-        uses: Ultimagen/ugbio-utils/.github/actions/ecr-scan@srsnv-report-duplex
+        uses: Ultimagen/ugbio-utils/.github/actions/ecr-scan@main
         with:
           repository: ${{ inputs.docker-image }}
           tag: ${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
