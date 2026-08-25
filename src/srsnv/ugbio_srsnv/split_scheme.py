@@ -355,7 +355,11 @@ NONE_SCHEME = SplitScheme(
 # the per-molecule duplex `mate_present` flag beats per-read fs/rs (a duplex featuremap may carry
 # both, and the per-molecule split must win). NONE is the explicit fallback, not consulted via
 # `detect`.
-SPLIT_SCHEMES: tuple[SplitScheme, ...] = (MIXED_SCHEME, DUPLEX_SCHEME, CONSENSUS_SCHEME, NONE_SCHEME)
+# DUPLEX first: it detects the per-molecule `mate_present` column, which is emitted ONLY by duplex
+# DeepSRSNV runs. For those runs the duplex (molecule-pairing) split is the point, so it must win over
+# the ppmSeq MIXED split (which also matches because st/et are present). Non-duplex runs lack
+# `mate_present`, so MIXED/CONSENSUS/NONE detection is unchanged.
+SPLIT_SCHEMES: tuple[SplitScheme, ...] = (DUPLEX_SCHEME, MIXED_SCHEME, CONSENSUS_SCHEME, NONE_SCHEME)
 _BY_MODE: dict[ReportMode, SplitScheme] = {s.mode: s for s in SPLIT_SCHEMES}
 
 

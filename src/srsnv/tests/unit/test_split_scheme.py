@@ -75,9 +75,12 @@ class TestResolveScheme:
         data_df = pd.DataFrame({MATE_PRESENT: [1, 0], FS: [1, 2], RS: [1, 0]})
         assert resolve_scheme(data_df) is DUPLEX_SCHEME
 
-    def test_ppmseq_tags_take_priority_over_mate_present(self):
+    def test_mate_present_takes_priority_over_ppmseq_tags(self):
+        # A duplex run has BOTH st/et (ppmSeq) AND mate_present; the per-molecule duplex split is the
+        # point of a duplex run, so DUPLEX must win over MIXED. (Only duplex runs emit mate_present, so
+        # non-duplex ppmSeq runs still resolve to MIXED — see test above.)
         data_df = pd.DataFrame({"st": ["MIXED", "PLUS"], "et": ["MIXED", "MINUS"], MATE_PRESENT: [1, 0]})
-        assert resolve_scheme(data_df) is MIXED_SCHEME
+        assert resolve_scheme(data_df) is DUPLEX_SCHEME
 
     def test_resolve_duplex_by_mode(self):
         assert resolve_scheme(mode="duplex_molecule") is DUPLEX_SCHEME
