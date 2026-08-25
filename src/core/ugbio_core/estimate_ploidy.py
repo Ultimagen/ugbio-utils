@@ -175,7 +175,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
         raise ValueError(f"Multi-sample VCF not supported for ploidy estimation (found {len(samples)} samples)")
 
     cmd = ["bcftools", "view", "-H", "-v", "snps", str(vcf_path)]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     chr_dps: dict[str, list[int]] = {}
     # Reservoir sampling for BAF: uniform random sample over autosomal het SNPs
     baf_reservoir: list[float] = []
@@ -231,8 +231,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
 
     proc.wait()
     if proc.returncode and proc.returncode != 0:
-        stderr_text = proc.stderr.read() if proc.stderr else ""
-        raise RuntimeError(f"bcftools exited with code {proc.returncode}: {stderr_text[:200]}")
+        raise RuntimeError(f"bcftools exited with code {proc.returncode}")
 
     contigs = list(chr_dps.keys())
     has_chr = _detect_chr_prefix(contigs)

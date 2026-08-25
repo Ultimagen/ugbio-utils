@@ -79,13 +79,14 @@ def _convert_to_haploid(variant: pysam.VariantRecord) -> pysam.VariantRecord:
     min_pl = min(haploid_pls)
     haploid_pls = [pl - min_pl for pl in haploid_pls]
 
-    gq = 10000
+    gq = 0
     called = 0
     for i, pl in enumerate(haploid_pls):
         if pl == 0:
             called = i
-        elif pl < gq:
-            gq = pl
+    # GQ = smallest nonzero PL (distance to next-best call)
+    nonzero_pls = [pl for pl in haploid_pls if pl > 0]
+    gq = min(nonzero_pls) if nonzero_pls else 0
 
     if call["GT"][0] is None:
         called = None
