@@ -60,6 +60,11 @@ on:
         required: false
         type: string
         default: ubuntu-latest
+      trivy-ignore-unfixed:
+        description: "Ignore unfixed vulnerabilities in Trivy scan (default: true)"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   id-token: write # Required for assuming an AWS role
@@ -210,6 +215,7 @@ jobs:
             github_token=${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
           build-args: |
             VERSION_DOCKER=${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
+            IMAGE_TAG=${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
             ${{ inputs.docker-build-args }}
 
       - name: Update action summary with built tags
@@ -223,20 +229,12 @@ jobs:
             echo "- ${dest}" >> ${GITHUB_STEP_SUMMARY}
           done
 
-      - name: Check ECR scan results
-        id: ecr-scan
-        continue-on-error: true
-        uses: Ultimagen/ugbio-utils/.github/actions/ecr-scan@main
+      - name: Trivy image scan
+        if: always()
+        uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@main
         with:
-          repository: ${{ inputs.docker-image }}
-          tag: ${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
-          output-dir: .
-
-      - name: Upload scan findings artifact
-        if: steps.ecr-scan.outputs.scan_status == 'complete'
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: ecr-scan-findings-${{ inputs.docker-image }}-${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
-          path: ${{ steps.ecr-scan.outputs.findings_file }}
-          retention-days: 30
+          image-ref: '${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}:${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}'
+          image-name: "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}"
+          image-tag: "${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}"
+          ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
+          artifact-retention-days: "30"
