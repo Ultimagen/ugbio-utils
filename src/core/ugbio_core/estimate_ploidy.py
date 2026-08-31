@@ -174,7 +174,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
     if len(samples) > 1:
         raise ValueError(f"Multi-sample VCF not supported for ploidy estimation (found {len(samples)} samples)")
 
-    cmd = ["bcftools", "view", "-H", "-v", "snps", str(vcf_path)]
+    cmd = ["bcftools", "view", "-H", "-v", "snps", "-f", "PASS", str(vcf_path)]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     chr_dps: dict[str, list[int]] = {}
     # Reservoir sampling for BAF: uniform random sample over autosomal het SNPs
