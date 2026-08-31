@@ -97,11 +97,15 @@ CONSENSUS_GROUP_ONE_STRAND = "consensus, one strand"  # fs + rs >= 2 and (fs == 
 CONSENSUS_GROUP_DUPLEX = "consensus, duplex"  # fs >= 1 and rs >= 1
 CONSENSUS_GROUPS = [CONSENSUS_GROUP_SINGLE, CONSENSUS_GROUP_ONE_STRAND, CONSENSUS_GROUP_DUPLEX]
 
-# Duplex per-molecule groups (2), ordered by ascending strand support (single -> paired),
-# mirroring the CONSENSUS_GROUPS ordering convention (weaker support first).
-DUPLEX_MOL_SINGLE = "single-strand molecule"  # mate_present is falsy: only one strand / singleton
+# Duplex per-molecule groups (3), ordered by ascending strand support
+# (singleton -> single-strand consensus -> duplex), mirroring the CONSENSUS_GROUPS ordering
+# convention (weaker support first). The split reads the per-row ``is_consensus`` flag (1 = a
+# consensus read that has nf/nr strand counts, 0 = a raw singleton) and the per-molecule
+# ``mate_present`` flag (both strands paired).
+DUPLEX_MOL_SINGLETON = "singleton"  # is_consensus == 0: a raw, non-consensus read (no duplex info)
+DUPLEX_MOL_SINGLE_STRAND = "single-strand consensus"  # is_consensus and mate_present falsy: one strand
 DUPLEX_MOL_PAIRED = "duplex molecule"  # mate_present is truthy: both strand-mates present
-DUPLEX_MOL_GROUPS = [DUPLEX_MOL_SINGLE, DUPLEX_MOL_PAIRED]
+DUPLEX_MOL_GROUPS = [DUPLEX_MOL_SINGLETON, DUPLEX_MOL_SINGLE_STRAND, DUPLEX_MOL_PAIRED]
 
 # Mixed groups (2), reproducing the historical binary ppmSeq labels/order.
 MIXED_GROUP_NON = "Non-mixed"
@@ -177,24 +181,31 @@ def add_is_consensus_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure the duplex per-molecule grouping column is derivable from ``mate_present``.
+    """Coerce the duplex per-molecule grouping columns (``mate_present`` and ``is_consensus``).
 
     In a duplex run each row is a molecule; ``mate_present`` marks whether the molecule had a real
-    partner (both strand-mates, 1) or is a single-strand molecule / singleton (0). This coerces
-    ``mate_present`` to a plain boolean so the duplex group function can split on it directly.
+    partner (both strand-mates, 1) or is a single-strand molecule / singleton (0). The per-row
+    ``is_consensus`` flag (1 = a consensus read with nf/nr strand counts, 0 = a raw singleton), when
+    present, further separates singletons from single-strand consensus reads. This coerces both to
+    plain booleans so the duplex group function can split on them directly. ``is_consensus`` may be
+    absent in older 2-column data, in which case the split falls back to the 2-way behavior.
 
     Parameters
     ----------
     data_df : pd.DataFrame
-        The featuremap dataframe, expected to contain the ``mate_present`` column.
+        The featuremap dataframe, expected to contain the ``mate_present`` column (and optionally
+        the ``is_consensus`` column).
 
     Returns
     -------
     pd.DataFrame
-        The same dataframe with ``mate_present`` coerced to a boolean column.
+        The same dataframe with ``mate_present`` (and ``is_consensus`` when present) coerced to
+        boolean columns.
     """
     logger.info("Adding duplex per-molecule columns to featuremap")
     data_df[MATE_PRESENT] = data_df[MATE_PRESENT].fillna(0).astype(bool)
+    if IS_CONSENSUS in data_df.columns:
+        data_df[IS_CONSENSUS] = data_df[IS_CONSENSUS].fillna(0).astype(bool)
     return data_df
 
 

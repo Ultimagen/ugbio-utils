@@ -34,7 +34,8 @@ from ugbio_srsnv.srsnv_utils import (
     CONSENSUS_GROUPS,
     DUPLEX_MOL_GROUPS,
     DUPLEX_MOL_PAIRED,
-    DUPLEX_MOL_SINGLE,
+    DUPLEX_MOL_SINGLE_STRAND,
+    DUPLEX_MOL_SINGLETON,
     ET,
     FS,
     IS_CONSENSUS,
@@ -208,9 +209,26 @@ def _consensus_groups(data_df: pd.DataFrame) -> pd.Categorical:
 
 
 def _duplex_groups(data_df: pd.DataFrame) -> pd.Categorical:
-    """Per-molecule split: single-strand molecule / duplex molecule (from ``mate_present``)."""
-    g = pd.Series(DUPLEX_MOL_SINGLE, index=data_df.index, dtype=object)
-    g[data_df[MATE_PRESENT].astype(bool)] = DUPLEX_MOL_PAIRED
+    """Per-molecule split by ascending strand support: singleton / single-strand consensus / duplex.
+
+    - ``mate_present`` truthy -> ``duplex molecule`` (both strand-mates paired).
+    - else, if the per-row ``is_consensus`` column is present and truthy -> ``single-strand
+      consensus`` (a consensus read whose opposite strand was not paired).
+    - else -> ``singleton`` (a raw, non-consensus read).
+
+    Backward compatibility: when the ``is_consensus`` column is absent (older 2-column data), the
+    default group becomes ``single-strand consensus`` so it degrades to the previous 2-way behavior
+    (``mate_present`` truthy -> duplex; else -> single-strand consensus).
+    """
+    mate_present = data_df[MATE_PRESENT].astype(bool)
+    if IS_CONSENSUS in data_df.columns:
+        # 3-way split: singletons (is_consensus == 0) are separated from single-strand consensus.
+        g = pd.Series(DUPLEX_MOL_SINGLETON, index=data_df.index, dtype=object)
+        g[data_df[IS_CONSENSUS].astype(bool)] = DUPLEX_MOL_SINGLE_STRAND
+    else:
+        # Backward-compat 2-way split: no is_consensus column, so no singleton group.
+        g = pd.Series(DUPLEX_MOL_SINGLE_STRAND, index=data_df.index, dtype=object)
+    g[mate_present] = DUPLEX_MOL_PAIRED
     return _ordered(g, DUPLEX_MOL_GROUPS)
 
 

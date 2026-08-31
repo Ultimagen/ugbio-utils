@@ -24,7 +24,8 @@ from ugbio_srsnv.split_scheme import (
 )
 from ugbio_srsnv.srsnv_utils import (
     DUPLEX_MOL_PAIRED,
-    DUPLEX_MOL_SINGLE,
+    DUPLEX_MOL_SINGLE_STRAND,
+    DUPLEX_MOL_SINGLETON,
     FS,
     IS_CONSENSUS,
     IS_MIXED,
@@ -143,23 +144,41 @@ class TestGroupFunctions:
         assert cat.ordered
         assert list(cat.categories) == ["single read", "consensus, one strand", "consensus, duplex"]
 
-    def test_duplex_groups_definition(self):
+    def test_duplex_groups_three_way_with_is_consensus(self):
+        # is_consensus present -> 3-way split: mate_present wins -> paired; else is_consensus
+        # truthy -> single-strand consensus; else -> singleton.
+        data_df = pd.DataFrame(
+            {
+                MATE_PRESENT: [1, 0, 0, 1],
+                IS_CONSENSUS: [1, 1, 0, 0],
+            }
+        )
+        groups = np.asarray(DUPLEX_SCHEME.display_variant.group_fn(data_df))
+        assert list(groups) == [
+            DUPLEX_MOL_PAIRED,  # mate_present truthy (is_consensus ignored)
+            DUPLEX_MOL_SINGLE_STRAND,  # not paired, is_consensus == 1
+            DUPLEX_MOL_SINGLETON,  # not paired, is_consensus == 0
+            DUPLEX_MOL_PAIRED,  # mate_present truthy wins even if is_consensus == 0
+        ]
+
+    def test_duplex_groups_two_way_without_is_consensus(self):
+        # Regression: no is_consensus column -> previous 2-way behavior (no singleton group).
         data_df = pd.DataFrame({MATE_PRESENT: [1, 0, 1, 0]})
         groups = np.asarray(DUPLEX_SCHEME.display_variant.group_fn(data_df))
         assert list(groups) == [
             DUPLEX_MOL_PAIRED,
-            DUPLEX_MOL_SINGLE,
+            DUPLEX_MOL_SINGLE_STRAND,
             DUPLEX_MOL_PAIRED,
-            DUPLEX_MOL_SINGLE,
+            DUPLEX_MOL_SINGLE_STRAND,
         ]
 
-    def test_duplex_groups_are_ordered_categorical_single_first(self):
-        data_df = pd.DataFrame({MATE_PRESENT: [1, 0]})
+    def test_duplex_groups_are_ordered_categorical_ascending_support(self):
+        data_df = pd.DataFrame({MATE_PRESENT: [1, 0, 0], IS_CONSENSUS: [1, 1, 0]})
         cat = DUPLEX_SCHEME.display_variant.group_fn(data_df)
         assert isinstance(cat, pd.Categorical)
         assert cat.ordered
-        # ascending strand support: single-strand first, then duplex (paired)
-        assert list(cat.categories) == [DUPLEX_MOL_SINGLE, DUPLEX_MOL_PAIRED]
+        # ascending strand support: singleton -> single-strand consensus -> duplex (paired)
+        assert list(cat.categories) == [DUPLEX_MOL_SINGLETON, DUPLEX_MOL_SINGLE_STRAND, DUPLEX_MOL_PAIRED]
 
     def test_mixed_display_groups_from_is_mixed_start(self):
         data_df = pd.DataFrame({"is_mixed_start": [True, False, True], "is_mixed": [False, False, True]})
@@ -198,22 +217,48 @@ class TestAddColumns:
         assert READ_GROUP in out.columns
         np.testing.assert_array_equal((out[READ_GROUP] == "consensus, duplex").to_numpy(), np.array(expected))
 
-    def test_duplex_coerces_mate_present_and_adds_read_group(self):
-        data_df = pd.DataFrame({MATE_PRESENT: [1, 0, 1, 0]})
+    def test_duplex_three_way_coerces_columns_and_adds_read_group(self):
+        # is_consensus present -> 3-way split.
+        data_df = pd.DataFrame({MATE_PRESENT: [1, 0, 0, 1], IS_CONSENSUS: [1, 1, 0, 0]})
         out, scheme = resolve_scheme_and_add_columns(data_df)
         assert scheme is DUPLEX_SCHEME
-        # mate_present coerced to bool
+        # both columns coerced to bool
         assert out[MATE_PRESENT].dtype == bool
-        assert out[MATE_PRESENT].tolist() == [True, False, True, False]
+        assert out[MATE_PRESENT].tolist() == [True, False, False, True]
+        assert out[IS_CONSENSUS].dtype == bool
+        assert out[IS_CONSENSUS].tolist() == [True, True, False, False]
         # read_group is the display variant's grouping
         assert READ_GROUP in out.columns
         assert list(out[READ_GROUP]) == [
             DUPLEX_MOL_PAIRED,
-            DUPLEX_MOL_SINGLE,
+            DUPLEX_MOL_SINGLE_STRAND,
+            DUPLEX_MOL_SINGLETON,
             DUPLEX_MOL_PAIRED,
-            DUPLEX_MOL_SINGLE,
         ]
-        assert list(out[READ_GROUP].cat.categories) == [DUPLEX_MOL_SINGLE, DUPLEX_MOL_PAIRED]
+        assert list(out[READ_GROUP].cat.categories) == [
+            DUPLEX_MOL_SINGLETON,
+            DUPLEX_MOL_SINGLE_STRAND,
+            DUPLEX_MOL_PAIRED,
+        ]
+
+    def test_duplex_two_way_without_is_consensus_regression(self):
+        # No is_consensus column -> previous 2-way behavior; read_group has no singleton members.
+        data_df = pd.DataFrame({MATE_PRESENT: [1, 0, 1, 0]})
+        out, scheme = resolve_scheme_and_add_columns(data_df)
+        assert scheme is DUPLEX_SCHEME
+        assert out[MATE_PRESENT].tolist() == [True, False, True, False]
+        assert list(out[READ_GROUP]) == [
+            DUPLEX_MOL_PAIRED,
+            DUPLEX_MOL_SINGLE_STRAND,
+            DUPLEX_MOL_PAIRED,
+            DUPLEX_MOL_SINGLE_STRAND,
+        ]
+        # categories still span all 3 groups (ordered Categorical over DUPLEX_MOL_GROUPS)
+        assert list(out[READ_GROUP].cat.categories) == [
+            DUPLEX_MOL_SINGLETON,
+            DUPLEX_MOL_SINGLE_STRAND,
+            DUPLEX_MOL_PAIRED,
+        ]
 
     def test_none_sets_is_consensus_false_and_single_group(self):
         data_df = pd.DataFrame({"MQUAL": [1.0, 2.0, 3.0]})
