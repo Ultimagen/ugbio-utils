@@ -67,6 +67,9 @@ ML_QUAL_1_TEST = "MQUAL"
 ML_LOGIT_TEST = "ML_logit_test"
 LABEL = "label"
 QUAL = FeatureMapFields.SNVQ.value
+X_HMER_REF = FeatureMapFields.X_HMER_REF.value
+VARIANT_TYPE = "variant_type"  # per-row snv | hmer_indel (set by prepare_report.compute_variant_type_column)
+VARIANT_TYPE_HMER_INDEL = "hmer_indel"
 IS_MIXED = "is_mixed"
 IS_MIXED_START = "is_mixed_start"
 IS_MIXED_END = "is_mixed_end"
@@ -299,10 +302,15 @@ def create_srsnv_report_html(
     simple_pipeline=None,
     split_mode: str = "mixed",
     display_suffix: str = "mixed_start",
+    *,
+    has_hmer_indels: bool = False,
 ):
     if len(out_basename) > 0 and not out_basename.endswith("."):
         out_basename += "."
     report_html = Path(out_path) / f"{out_basename}report.html"
+    # hmer-indel section plot path (reconstructed by the same convention create_report uses). The plot
+    # file exists only when has_hmer_indels; the notebook cell is guarded on has_hmer_indels.
+    hmer_indel_metrics_plot = os.path.join(out_path, f"{out_basename}hmer_indel_metrics")
 
     [
         FQ_vs_recall_plot,  # noqa: N806
@@ -337,6 +345,8 @@ def create_srsnv_report_html(
         "calibration_fn_with_hist": calibration_fn_with_hist,
         "split_mode": split_mode,
         "display_suffix": display_suffix,
+        "has_hmer_indels": has_hmer_indels,
+        "hmer_indel_metrics_plot": hmer_indel_metrics_plot,
     }
 
     generate_report(
@@ -3262,6 +3272,53 @@ class SRSNVReport:
         # plt.show()
         self._save_plt(output_filename=output_filename, fig=fig)
 
+    @exception_handler
+    def plot_hmer_indel_metrics(self, output_filename: str = None):
+        """Joint SNV vs hmer-indel figure: model quality and TP count by reference homopolymer length.
+
+        Only produced when the featuremap carries homopolymer indels (``variant_type`` == "hmer_indel",
+        set by ``prepare_report``); for SNV-only runs the method returns without writing a file and the
+        report notebook skips the section. Metrics are computed on TP rows and split by variant type so
+        SNV and hmer-indel behaviour can be compared across homopolymer lengths (0..12). Also writes the
+        per-(variant_type, hmer_length) table to the QC h5 under key ``hmer_indel_stats``.
+        """
+        if VARIANT_TYPE not in self.data_df.columns or X_HMER_REF not in self.data_df.columns:
+            logger.info("plot_hmer_indel_metrics: variant_type / X_HMER_REF missing; skipping")
+            return
+        data = self.data_df
+        if not (data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).any():
+            logger.info("plot_hmer_indel_metrics: no hmer-indel rows; skipping")
+            return
+
+        tp = data[data[LABEL].astype(bool)]
+        hmer_len = pd.to_numeric(tp[X_HMER_REF], errors="coerce").clip(lower=0, upper=12)
+        stats = (
+            pd.DataFrame({"hmer_length": hmer_len, VARIANT_TYPE: tp[VARIANT_TYPE], "mqual": tp[ML_QUAL_1_TEST]})
+            .dropna(subset=["hmer_length"])
+            .groupby([VARIANT_TYPE, "hmer_length"])
+            .agg(median_mqual=("mqual", "median"), count=("mqual", "size"))
+            .reset_index()
+        )
+        stats.to_hdf(self.output_h5_filename, key="hmer_indel_stats", mode="a")
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        for grp, grp_rows in stats.groupby(VARIANT_TYPE):
+            grp_sorted = grp_rows.sort_values("hmer_length")
+            axes[0].plot(grp_sorted["hmer_length"], grp_sorted["median_mqual"], marker="o", label=grp)
+            axes[1].plot(grp_sorted["hmer_length"], grp_sorted["count"], marker="o", label=grp)
+        axes[0].set_xlabel("reference homopolymer length")
+        axes[0].set_ylabel("median MQUAL (TP)")
+        axes[0].set_title("Model quality vs homopolymer length")
+        axes[1].set_xlabel("reference homopolymer length")
+        axes[1].set_ylabel("TP count")
+        axes[1].set_title("TP count vs homopolymer length")
+        axes[1].set_yscale("log")
+        for ax in axes:
+            ax.legend(title="variant type")
+            ax.grid(visible=True, alpha=0.3)
+        self._save_plt(output_filename=output_filename, fig=fig)
+        plt.close(fig)
+
     def create_report(self):
         """Generate plots for report and save data in hdf5 file."""
         logger.info("Creating report")
@@ -3309,6 +3366,11 @@ class SRSNVReport:
         # Quality and histogram for numerical features
         for col in self.params["numerical_features"]:
             self.plot_numerical_feature_hist_and_qual(col, output_filename=output_qual_per_feature + col)
+
+        # Joint SNV + hmer-indel metrics (only writes a file when hmer indels are present). Path follows
+        # the same naming convention create_srsnv_report_html reconstructs, so _get_plot_paths is untouched.
+        hmer_indel_metrics_plot = os.path.join(self.params["workdir"], f"{self.params['data_name']}hmer_indel_metrics")
+        self.plot_hmer_indel_metrics(output_filename=hmer_indel_metrics_plot)
 
         # # Create LoD plot
         # # TODO: Update the following to new conform with new report logic

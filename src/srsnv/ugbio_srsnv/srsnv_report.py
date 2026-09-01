@@ -66,6 +66,14 @@ PROB_FOLD_TMPL = "prob_fold_{k}"
 SCORE = FeatureMapFields.BCSQ.value
 IS_CYCLE_SKIP = "is_cycle_skip"
 
+# Joint SNV + hmer-indel report dimension. snvfind tags homopolymer indels with X_IC (ins/del) and X_IL
+# (indel length); X_HMER_REF is the reference homopolymer length used to bin hmer-indel metrics.
+X_IC = "X_IC"
+X_IL = "X_IL"
+VARIANT_TYPE = "variant_type"
+VARIANT_TYPE_SNV = "snv"
+VARIANT_TYPE_HMER_INDEL = "hmer_indel"
+
 EDIT_DIST_FEATURES = ["EDIST", "HAMDIST", "HAMDIST_FILT"]
 
 pl.enable_string_cache()
@@ -112,6 +120,23 @@ def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA"
     result = result.loc[data_df.index]
 
     return result
+
+
+def compute_variant_type_column(data_df: pd.DataFrame) -> pd.Series:
+    """Label each featuremap row as an SNV or a homopolymer indel (the joint report's variant-type axis).
+
+    In the joint DeepSRSNV mode snvfind emits SNVs plus homopolymer indels; the latter carry ``X_IC``
+    (``ins``/``del``). Rows without ``X_IC`` (SNVs, or any run produced without ``--enable-hmer-indels``)
+    are labeled ``snv``. Returns a Series of ``"snv"`` / ``"hmer_indel"`` aligned to ``data_df.index``.
+    """
+    if X_IC not in data_df.columns:
+        return pd.Series(VARIANT_TYPE_SNV, index=data_df.index)
+    ic = data_df[X_IC].astype(str).str.lower()
+    is_hmer_indel = ic.isin(["ins", "del"])
+    return pd.Series(
+        np.where(is_hmer_indel, VARIANT_TYPE_HMER_INDEL, VARIANT_TYPE_SNV),
+        index=data_df.index,
+    )
 
 
 class _ModelWithTrainingResults:
@@ -286,6 +311,12 @@ def prepare_report(
     params["report_mode"] = scheme.mode.value
     data_df[IS_CYCLE_SKIP] = compute_is_cycle_skip_column(data_df)
 
+    # Joint SNV + hmer-indel report dimension (orthogonal to the read-group split scheme above).
+    # Auto-detected from the featuremap: hmer-indel rows carry X_IC. When present, the report can break
+    # metrics out by variant type and (via X_HMER_REF) by homopolymer length.
+    data_df[VARIANT_TYPE] = compute_variant_type_column(data_df)
+    params["has_hmer_indels"] = bool((data_df[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).any())
+
     # Handle random seed
     rng = np.random.default_rng(random_seed) if random_seed is not None else None
 
@@ -326,6 +357,7 @@ def prepare_report(
         simple_pipeline=None,
         split_mode=scheme.mode.value,
         display_suffix=scheme.display_suffix,
+        has_hmer_indels=params["has_hmer_indels"],
     )
 
 
