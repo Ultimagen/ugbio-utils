@@ -1606,9 +1606,12 @@ def _cast_ref_alt_columns() -> list[pl.Expr]:
     X_ALT is *not* included here because it is already processed via the
     INFO/FORMAT loops; adding it again would create duplicate aliases.
     """
+    # REF/ALT are kept as plain strings rather than single-base categorical Enums: homopolymer indels
+    # (DeepSRSNV joint mode) produce multi-base alleles (e.g. REF="CC", ALT="C"), on which a strict
+    # single-base Enum cast fails. String is consistent across regions (SNV-only files are unaffected).
     return [
-        _cast_expr(REF, {"type": "String", "cat": REF_ALLELE_CATS}),
-        _cast_expr(ALT, {"type": "String", "cat": ALT_ALLELE_CATS}),
+        _cast_expr(REF, {"type": "String", "cat": None}),
+        _cast_expr(ALT, {"type": "String", "cat": None}),
     ]
 
 
