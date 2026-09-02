@@ -68,6 +68,8 @@ ML_LOGIT_TEST = "ML_logit_test"
 LABEL = "label"
 QUAL = FeatureMapFields.SNVQ.value
 X_HMER_REF = FeatureMapFields.X_HMER_REF.value
+X_IC = "X_IC"  # snvfind indel class: "ins" | "del" (present on homopolymer-indel rows)
+X_IL = "X_IL"  # snvfind indel length (|X_IL|)
 VARIANT_TYPE = "variant_type"  # per-row snv | hmer_indel (set by prepare_report.compute_variant_type_column)
 VARIANT_TYPE_HMER_INDEL = "hmer_indel"
 IS_MIXED = "is_mixed"
@@ -311,6 +313,7 @@ def create_srsnv_report_html(
     # hmer-indel section plot path (reconstructed by the same convention create_report uses). The plot
     # file exists only when has_hmer_indels; the notebook cell is guarded on has_hmer_indels.
     hmer_indel_metrics_plot = os.path.join(out_path, f"{out_basename}hmer_indel_metrics")
+    hmer_indel_by_class_plot = os.path.join(out_path, f"{out_basename}hmer_indel_by_class")
 
     [
         FQ_vs_recall_plot,  # noqa: N806
@@ -347,6 +350,7 @@ def create_srsnv_report_html(
         "display_suffix": display_suffix,
         "has_hmer_indels": has_hmer_indels,
         "hmer_indel_metrics_plot": hmer_indel_metrics_plot,
+        "hmer_indel_by_class_plot": hmer_indel_by_class_plot,
     }
 
     generate_report(
@@ -3319,6 +3323,95 @@ class SRSNVReport:
         self._save_plt(output_filename=output_filename, fig=fig)
         plt.close(fig)
 
+    @exception_handler
+    def plot_hmer_indel_by_class(self, output_filename: str = None):
+        """Homopolymer-indel TP metrics split by indel class (insertion vs deletion) and hmer length.
+
+        Complements :func:`plot_hmer_indel_metrics` (which splits SNV vs hmer-indel) by breaking the
+        hmer-indel TPs into insertions vs deletions. Writes the per-(indel_class, hmer_length) table to
+        the QC h5 under ``hmer_indel_class_stats``. Self-skips when there are no hmer-indel TP rows.
+        """
+        if VARIANT_TYPE not in self.data_df.columns or X_IC not in self.data_df.columns:
+            logger.info("plot_hmer_indel_by_class: variant_type / X_IC missing; skipping")
+            return
+        data = self.data_df
+        ind = data[(data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL) & data[LABEL].astype(bool)]
+        if ind.empty:
+            logger.info("plot_hmer_indel_by_class: no hmer-indel TP rows; skipping")
+            return
+        hmer_len = pd.to_numeric(ind[X_HMER_REF], errors="coerce").clip(lower=0, upper=12)
+        stats = (
+            pd.DataFrame(
+                {
+                    "hmer_length": hmer_len,
+                    "indel_class": ind[X_IC].astype(str).str.lower(),
+                    "mqual": ind[ML_QUAL_1_TEST],
+                }
+            )
+            .dropna(subset=["hmer_length"])
+            .groupby(["indel_class", "hmer_length"])
+            .agg(median_mqual=("mqual", "median"), count=("mqual", "size"))
+            .reset_index()
+        )
+        stats.to_hdf(self.output_h5_filename, key="hmer_indel_class_stats", mode="a")
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        for cls_name, cls_rows in stats.groupby("indel_class"):
+            cls_sorted = cls_rows.sort_values("hmer_length")
+            axes[0].plot(cls_sorted["hmer_length"], cls_sorted["median_mqual"], marker="o", label=cls_name)
+            axes[1].plot(cls_sorted["hmer_length"], cls_sorted["count"], marker="o", label=cls_name)
+        axes[0].set_xlabel("reference homopolymer length")
+        axes[0].set_ylabel("median MQUAL (TP)")
+        axes[0].set_title("Homopolymer-indel model quality by class")
+        axes[1].set_xlabel("reference homopolymer length")
+        axes[1].set_ylabel("TP count")
+        axes[1].set_title("Homopolymer-indel TP count by class")
+        axes[1].set_yscale("log")
+        for ax in axes:
+            ax.legend(title="indel class")
+            ax.grid(visible=True, alpha=0.3)
+        self._save_plt(output_filename=output_filename, fig=fig)
+        plt.close(fig)
+
+    @exception_handler
+    def calc_hmer_indel_auc_table(self):
+        """ROC-AUC of MQUAL discriminating TP vs FP, split by group: SNV, hmer-indel, and ins / del.
+
+        The existing ``roc_auc_table`` splits by read-group (duplex/ppmSeq); this adds the orthogonal
+        variant-type / indel-class split. Written to the QC h5 under ``hmer_indel_auc_table`` (rendered as
+        a table by the report notebook). AUC is reported both raw and phred (``-10*log10(1-AUC)``).
+        """
+        from sklearn.metrics import roc_auc_score  # noqa: PLC0415  (optional [ml] dependency)
+
+        if (
+            VARIANT_TYPE not in self.data_df.columns
+            or not (self.data_df[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).any()
+        ):
+            logger.info("calc_hmer_indel_auc_table: no hmer-indel rows; skipping")
+            return
+        data = self.data_df
+        y = data[LABEL].astype(int).to_numpy()
+        q = pd.to_numeric(data[ML_QUAL_1_TEST], errors="coerce").to_numpy()
+        cls = data[X_IC].astype(str).str.lower() if X_IC in data.columns else pd.Series("", index=data.index)
+        is_indel = data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL
+        groups = {
+            "snv": (data[VARIANT_TYPE] == "snv").to_numpy(),
+            "hmer_indel": is_indel.to_numpy(),
+            "hmer_indel:ins": (is_indel & (cls == "ins")).to_numpy(),
+            "hmer_indel:del": (is_indel & (cls == "del")).to_numpy(),
+        }
+        rows = []
+        for name, mask in groups.items():
+            m = mask & np.isfinite(q)
+            yy, qq = y[m], q[m]
+            n_tp, n_fp = int((yy == 1).sum()), int((yy == 0).sum())
+            if n_tp > 0 and n_fp > 0:
+                auc = float(roc_auc_score(yy, qq))
+                auc_phred = float(-10 * np.log10(max(1 - auc, 1e-10)))
+            else:
+                auc, auc_phred = np.nan, np.nan
+            rows.append({"group": name, "roc_auc": auc, "roc_auc_phred": auc_phred, "n_TP": n_tp, "n_FP": n_fp})
+        pd.DataFrame(rows).to_hdf(self.output_h5_filename, key="hmer_indel_auc_table", mode="a")
+
     def create_report(self):
         """Generate plots for report and save data in hdf5 file."""
         logger.info("Creating report")
@@ -3371,6 +3464,11 @@ class SRSNVReport:
         # the same naming convention create_srsnv_report_html reconstructs, so _get_plot_paths is untouched.
         hmer_indel_metrics_plot = os.path.join(self.params["workdir"], f"{self.params['data_name']}hmer_indel_metrics")
         self.plot_hmer_indel_metrics(output_filename=hmer_indel_metrics_plot)
+        hmer_indel_by_class_plot = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}hmer_indel_by_class"
+        )
+        self.plot_hmer_indel_by_class(output_filename=hmer_indel_by_class_plot)
+        self.calc_hmer_indel_auc_table()
 
         # # Create LoD plot
         # # TODO: Update the following to new conform with new report logic
