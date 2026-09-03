@@ -759,27 +759,38 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912
         f"{'...' if len(parquet_files) > MAX_DEBUG_FILES_TO_SHOW else ''}"
     )
 
-    lazy_frames = [pl.scan_parquet(f) for f in parquet_files]
-
-    if log.isEnabledFor(logging.DEBUG):
-        lazy_frames_size = [frame.select(pl.len()).collect().item() for frame in lazy_frames]
-        log.debug(f"Individual Parquet file sizes (rows): {', '.join(map(str, lazy_frames_size))}")
-
-    merged_lazy = pl.concat(lazy_frames, how="vertical")
-
     if downsample_reads is None:
+        # Stream all part-files straight to disk (memory-bounded).
+        merged_lazy = pl.concat([pl.scan_parquet(f) for f in parquet_files], how="vertical")
         log.debug(f"Writing merged Parquet to: {output_path}")
         merged_lazy.sink_parquet(output_path)
     else:
-        merged_df = merged_lazy.collect()
-        if merged_df.height <= downsample_reads:
-            log.debug(
-                f"Dataset has {merged_df.height} rows, which is <= requested {downsample_reads} - keeping all rows"
-            )
-            merged_df.write_parquet(output_path)
+        # Memory-bounded downsampling: never materialize the full merged frame (it can be
+        # hundreds of millions of rows when filters are permissive, which OOMs a plain
+        # `concat().collect()`). Instead sample each part-file independently at the global
+        # keep-fraction (uniform across the genome since every region is sampled at the same
+        # rate), concatenate the small survivors, then exact-trim to `downsample_reads`.
+        part_lengths = [pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files]
+        total_rows = sum(part_lengths)
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"Individual Parquet file sizes (rows): {', '.join(map(str, part_lengths))}")
+
+        if total_rows <= downsample_reads:
+            log.debug(f"Dataset has {total_rows} rows, which is <= requested {downsample_reads} - keeping all rows")
+            pl.concat([pl.scan_parquet(f) for f in parquet_files], how="vertical").sink_parquet(output_path)
         else:
-            log.info(f"Sampling {downsample_reads} rows from {merged_df.height} total rows")
-            merged_df.sample(n=downsample_reads, seed=downsample_seed).write_parquet(output_path)
+            log.info(f"Sampling {downsample_reads} rows from {total_rows} total rows (per-part-file, memory-bounded)")
+            # Oversample slightly per part-file so the concatenated survivors comfortably exceed
+            # the target despite Bernoulli variance; the final exact-trim yields exactly the target.
+            keep_frac = min(1.0, (downsample_reads / total_rows) * 1.05 + 1000.0 / total_rows)
+            sampled_parts = [
+                pl.read_parquet(f).sample(fraction=keep_frac, seed=downsample_seed + i)
+                for i, f in enumerate(parquet_files)
+            ]
+            merged_df = pl.concat(sampled_parts, how="vertical")
+            if merged_df.height > downsample_reads:
+                merged_df = merged_df.sample(n=downsample_reads, seed=downsample_seed)
+            merged_df.write_parquet(output_path)
 
     for f in parquet_files:
         Path(f).unlink(missing_ok=True)
