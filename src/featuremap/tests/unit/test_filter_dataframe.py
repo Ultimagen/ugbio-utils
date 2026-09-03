@@ -719,6 +719,73 @@ class TestCreateDownsampleColumn:
         # First 5 rows don't pass the filter, so their ds value is None
         assert all(v is None for v in ds_values[:5])
 
+    def test_stratified_preserve_field_keeps_all_minority(self):
+        """preserve_field: rows with a non-null value bypass downsampling entirely.
+
+        Mirrors the hmer-indel FP use case (X_IC non-null = indel), which a uniform
+        random downsample would otherwise decimate at its pool fraction.
+        """
+        # 20 SNV rows (X_IC null) + 3 indel rows (X_IC non-null), all pass the filter
+        lf = pl.DataFrame(
+            {
+                "score": list(range(23)),
+                "X_IC": [None] * 20 + ["ins", "del", "ins"],
+            }
+        ).lazy()
+        filters = [
+            {
+                fd.KEY_NAME: "pass_all",
+                fd.KEY_FIELD: "score",
+                fd.KEY_OP: "ge",
+                fd.KEY_VALUE: 0,
+                fd.KEY_TYPE: fd.TYPE_QUALITY,
+            },
+        ]
+        lf, filter_cols = fd._create_filter_columns(lf, filters)
+        cfg = {
+            fd.KEY_FILTERS: filters,
+            fd.KEY_DOWNSAMPLE: {
+                fd.KEY_SIZE: 5,
+                fd.KEY_METHOD: fd.METHOD_RANDOM,
+                fd.KEY_SEED: 0,
+                fd.KEY_PRESERVE_FIELD: "X_IC",
+            },
+        }
+
+        result_lf, ds_col = fd._create_downsample_column(lf, filter_cols, cfg)
+        result_lf = fd._create_final_filter_column(result_lf, filter_cols, ds_col)
+        kept = result_lf.filter(pl.col(fd.COL_FILTER_FINAL)).collect()
+        # All 3 indels kept + exactly 5 downsampled SNVs
+        assert kept.filter(pl.col("X_IC").is_not_null()).height == 3
+        assert kept.filter(pl.col("X_IC").is_null()).height == 5
+        assert kept.height == 8
+
+    def test_missing_preserve_field_falls_back_to_uniform(self):
+        """A preserve_field absent from the dataframe is ignored (uniform downsample)."""
+        lf = pl.DataFrame({"score": list(range(20))}).lazy()
+        filters = [
+            {
+                fd.KEY_NAME: "pass_all",
+                fd.KEY_FIELD: "score",
+                fd.KEY_OP: "ge",
+                fd.KEY_VALUE: 0,
+                fd.KEY_TYPE: fd.TYPE_QUALITY,
+            },
+        ]
+        lf, filter_cols = fd._create_filter_columns(lf, filters)
+        cfg = {
+            fd.KEY_FILTERS: filters,
+            fd.KEY_DOWNSAMPLE: {
+                fd.KEY_SIZE: 10,
+                fd.KEY_METHOD: fd.METHOD_RANDOM,
+                fd.KEY_SEED: 42,
+                fd.KEY_PRESERVE_FIELD: "X_IC",  # not present
+            },
+        }
+        result_lf, ds_col = fd._create_downsample_column(lf, filter_cols, cfg)
+        ds_values = result_lf.collect()[ds_col].to_list()
+        assert sum(v is True for v in ds_values) == 10
+
 
 # ────────────────────────────────────────────────────────
 

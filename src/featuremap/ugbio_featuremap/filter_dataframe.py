@@ -28,6 +28,7 @@ KEY_DOWNSAMPLE = "downsample"
 KEY_SIZE = "size"
 KEY_METHOD = "method"
 KEY_SEED = "seed"
+KEY_PRESERVE_FIELD = "preserve_field"
 KEY_NULL_VALUE = "null_value"
 KEY_FIELDS = "fields"
 
@@ -147,6 +148,10 @@ def _validate_downsample(ds: dict[str, Any]) -> None:
     method = ds.get(KEY_METHOD, METHOD_RANDOM)
     if method not in {METHOD_HEAD, METHOD_RANDOM}:
         raise ValueError(f"Invalid downsample method: {method}. Must be '{METHOD_HEAD}' or '{METHOD_RANDOM}'")
+
+    preserve_field = ds.get(KEY_PRESERVE_FIELD)
+    if preserve_field is not None and not isinstance(preserve_field, str):
+        raise ValueError(f"'{KEY_DOWNSAMPLE}.{KEY_PRESERVE_FIELD}' must be a string column name")
 
 
 def _try_to_convert_to_number_or_boolean(value: str) -> Any:
@@ -391,11 +396,26 @@ def _create_downsample_column(
     # Create combined filter mask
     all_filters_mask = pl.all_horizontal(filter_cols)
 
-    # Build cumulative index for rows that pass all filters
-    row_idx_expr = (pl.when(all_filters_mask).then(1).otherwise(0)).cum_sum() - 1
+    # Stratified keep-all: rows passing all filters whose `preserve_field` is non-null bypass
+    # downsampling entirely (kept in full); the size budget applies only to the remaining rows.
+    # Used to retain rare classes (e.g. hmer-indel FPs, X_IC non-null) that a uniform random
+    # downsample would otherwise decimate at their pool fraction.
+    preserve_field = cfg[KEY_DOWNSAMPLE].get(KEY_PRESERVE_FIELD)
+    if preserve_field is not None and preserve_field in featuremap_dataframe.collect_schema().names():
+        preserved_mask = all_filters_mask & pl.col(preserve_field).is_not_null()
+        downsamplable_mask = all_filters_mask & pl.col(preserve_field).is_null()
+        logger.debug(f"Downsample preserve_field={preserve_field}: rows with non-null value bypass downsampling")
+    else:
+        if preserve_field is not None:
+            logger.warning(f"Downsample preserve_field '{preserve_field}' not in dataframe; ignoring stratification")
+        preserved_mask = pl.lit(value=False)
+        downsamplable_mask = all_filters_mask
+
+    # Build cumulative index over the rows subject to downsampling only
+    row_idx_expr = (pl.when(downsamplable_mask).then(1).otherwise(0)).cum_sum() - 1
 
     featuremap_dataframe = featuremap_dataframe.with_columns(
-        pl.when(all_filters_mask).then(row_idx_expr).otherwise(None).alias(COL_ROW_NUM_FILTERED)
+        pl.when(downsamplable_mask).then(row_idx_expr).otherwise(None).alias(COL_ROW_NUM_FILTERED)
     )
 
     # Create downsample mask
@@ -424,7 +444,12 @@ def _create_downsample_column(
 
     downsample_col = COL_FILTER_DOWNSAMPLE
     featuremap_dataframe = featuremap_dataframe.with_columns(
-        pl.when(all_filters_mask).then(downsample_expr).otherwise(None).alias(downsample_col)
+        pl.when(preserved_mask)
+        .then(pl.lit(value=True))
+        .when(downsamplable_mask)
+        .then(downsample_expr)
+        .otherwise(None)
+        .alias(downsample_col)
     ).drop(tmp_cols)
 
     logger.debug(f"Created downsample column: {downsample_col}")
@@ -447,6 +472,27 @@ def _create_final_filter_column(
         final_expr = pl.all_horizontal(filter_cols)
 
     return featuremap_dataframe.with_columns(final_expr.alias(COL_FILTER_FINAL))
+
+
+def _downsample_final_count(
+    featuremap_dataframe: pl.LazyFrame,
+    filter_cols: list[str],
+    cfg: dict[str, Any],
+    filtered_count: int,
+) -> int:
+    """Post-downsample row count for the funnel, accounting for stratified `preserve_field`."""
+    downsample_size = cfg[KEY_DOWNSAMPLE][KEY_SIZE]
+    preserve_field = cfg[KEY_DOWNSAMPLE].get(KEY_PRESERVE_FIELD)
+    if preserve_field is not None and preserve_field in featuremap_dataframe.collect_schema().names():
+        # Preserved (non-null preserve_field) rows bypass downsampling; the size budget
+        # applies only to the remaining rows.
+        all_mask = pl.all_horizontal(filter_cols)
+        preserved_count = (
+            featuremap_dataframe.select((all_mask & pl.col(preserve_field).is_not_null()).sum()).collect().item()
+        )
+        downsamplable_count = filtered_count - preserved_count
+        return min(downsamplable_count, downsample_size) + preserved_count
+    return min(filtered_count, downsample_size)
 
 
 def _calculate_statistics(
@@ -475,8 +521,7 @@ def _calculate_statistics(
     if KEY_DOWNSAMPLE in cfg:
         # Get the count after all filters
         filtered_count = funnel[-1][1]
-        downsample_size = cfg[KEY_DOWNSAMPLE][KEY_SIZE]
-        final_count = min(filtered_count, downsample_size)
+        final_count = _downsample_final_count(featuremap_dataframe, filter_cols, cfg, filtered_count)
         funnel.append((STAT_DOWNSAMPLE, final_count))
 
     # Single effect statistics
