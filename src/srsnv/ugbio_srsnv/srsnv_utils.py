@@ -86,6 +86,8 @@ IS_CONSENSUS = "is_consensus"  # read is a consensus read (fs >= 1 and rs >= 1)
 # partner (both strands), 0 for a single-strand molecule / singleton. ``MI`` is the molecular id.
 MATE_PRESENT = "mate_present"  # per-molecule flag: molecule has both strand-mates present
 MI = "MI"  # molecular id column
+NF = "nf"  # forward raw-read count of the consensus (copied CRAM tag); 0/absent for a raw singleton
+NR = "nr"  # reverse raw-read count of the consensus (copied CRAM tag); 0/absent for a raw singleton
 
 # Ordered read-group column: reads are split into N ordered groups per mode (see
 # add_read_group_column). The report iterates these groups instead of a binary split.
@@ -204,8 +206,28 @@ def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
     """
     logger.info("Adding duplex per-molecule columns to featuremap")
     data_df[MATE_PRESENT] = data_df[MATE_PRESENT].fillna(0).astype(bool)
+
+    # `is_consensus` is computed during duplex tensorization and is present for the CV-training
+    # rows, but NOT for held-out / inference rows (built from the featuremap VCF via a different
+    # path) -> NaN there. A plain fillna(0) would mislabel every held-out consensus read (which
+    # carries nf/nr strand counts) as a raw `singleton`. Recover it from the copied nf/nr tags
+    # (a consensus read has nf + nr >= 1), filling ONLY the missing rows and leaving the
+    # tensorizer-computed values untouched.
+    nfnr_consensus = None
+    if NF in data_df.columns or NR in data_df.columns:
+        nf = data_df[NF].fillna(0) if NF in data_df.columns else 0
+        nr = data_df[NR].fillna(0) if NR in data_df.columns else 0
+        nfnr_consensus = (nf + nr) >= 1
+
     if IS_CONSENSUS in data_df.columns:
-        data_df[IS_CONSENSUS] = data_df[IS_CONSENSUS].fillna(0).astype(bool)
+        is_con = data_df[IS_CONSENSUS]
+        if nfnr_consensus is not None:
+            is_con = is_con.where(is_con.notna(), nfnr_consensus)
+        data_df[IS_CONSENSUS] = is_con.fillna(0).astype(bool)
+    elif nfnr_consensus is not None:
+        # No tensorizer is_consensus column, but nf/nr are available -> derive it so the
+        # singleton vs single-strand-consensus split still works (3-way instead of 2-way).
+        data_df[IS_CONSENSUS] = nfnr_consensus.astype(bool)
     return data_df
 
 

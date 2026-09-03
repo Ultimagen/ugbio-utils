@@ -30,6 +30,8 @@ from ugbio_srsnv.srsnv_utils import (
     IS_CONSENSUS,
     IS_MIXED,
     MATE_PRESENT,
+    NF,
+    NR,
     READ_GROUP,
     RS,
     ReportMode,
@@ -239,6 +241,28 @@ class TestAddColumns:
             DUPLEX_MOL_SINGLETON,
             DUPLEX_MOL_SINGLE_STRAND,
             DUPLEX_MOL_PAIRED,
+        ]
+
+    def test_duplex_held_out_rows_recover_is_consensus_from_nf_nr(self):
+        # Held-out / inference rows lack tensorizer-computed mate_present/is_consensus (NaN).
+        # A plain fillna(0) would mislabel held-out consensus reads (nf/nr>0) as `singleton`.
+        # With nf/nr present, is_consensus is recovered so they become single-strand consensus.
+        data_df = pd.DataFrame(
+            {
+                MATE_PRESENT: [1, 0, 0, np.nan, np.nan],
+                IS_CONSENSUS: [1, 1, 0, np.nan, np.nan],  # last two rows: held-out (unknown)
+                NF: [2, 3, 0, 4, 0],  # held-out consensus (nf=4) vs held-out singleton (nf=nr=0)
+                NR: [0, 0, 0, 1, 0],
+            }
+        )
+        out, scheme = resolve_scheme_and_add_columns(data_df)
+        assert scheme is DUPLEX_SCHEME
+        assert list(out[READ_GROUP]) == [
+            DUPLEX_MOL_PAIRED,  # mate_present == 1
+            DUPLEX_MOL_SINGLE_STRAND,  # is_consensus == 1
+            DUPLEX_MOL_SINGLETON,  # is_consensus == 0
+            DUPLEX_MOL_SINGLE_STRAND,  # held-out, NaN is_consensus but nf+nr>=1 -> consensus
+            DUPLEX_MOL_SINGLETON,  # held-out, NaN is_consensus and nf==nr==0 -> singleton
         ]
 
     def test_duplex_two_way_without_is_consensus_regression(self):
