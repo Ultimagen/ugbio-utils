@@ -113,13 +113,36 @@ class TestComputePloidyFromChrData:
         result = _compute_ploidy_from_chr_data(chr_data, has_chr=False)
         assert result["karyotype"] == "XY"
 
+    def test_non_numeric_autosomes_from_header(self):
+        chr_data = {
+            "scaffold_a": {"mean": 50.0, "length": 1e8},
+            "scaffold_b": {"mean": 50.0, "length": 1e8},
+            "chrX": {"mean": 25.0, "length": 1e8},
+            "chrY": {"mean": 25.0, "length": 5e7},
+        }
+        result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=("chrX", "chrY"))
+        assert result["karyotype"] == "XY"
+        assert {entry["flag"] for entry in result["per_chrom"] if entry["chrom"].startswith("scaffold_")} == {""}
+
+    def test_autosomal_baseline_uses_median(self):
+        chr_data = {
+            "chr1": {"mean": 50.0, "length": 1e8},
+            "chr2": {"mean": 50.0, "length": 1e8},
+            "chr3": {"mean": 1000.0, "length": 1e8},
+            "chrX": {"mean": 25.0, "length": 1e8},
+            "chrY": {"mean": 25.0, "length": 5e7},
+        }
+        result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=("chrX", "chrY"))
+        assert result["auto_mean"] == 50.0
+        assert result["karyotype"] == "XY"
+
     def test_no_autosomes_raises(self):
         with pytest.raises(ValueError, match="No autosomal contigs"):
             _compute_ploidy_from_chr_data({"chrX": {"mean": 25.0}}, has_chr=True)
 
     def test_zero_coverage_raises(self):
         chr_data = {f"chr{i}": {"mean": 0.0, "length": 1e8} for i in range(1, 23)}
-        with pytest.raises(ValueError, match="Autosomal mean coverage is 0"):
+        with pytest.raises(ValueError, match="Autosomal median coverage is 0"):
             _compute_ploidy_from_chr_data(chr_data, has_chr=True)
 
 

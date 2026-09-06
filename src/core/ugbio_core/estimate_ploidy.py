@@ -13,7 +13,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import csv
 import re
 import subprocess
 import sys
@@ -22,12 +21,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-_ACROCENTRICS_CHR = {"chr13", "chr14", "chr15", "chr21", "chr22"}
-_ACROCENTRICS_NOCHR = {"13", "14", "15", "21", "22"}
+DEFAULT_SEX_CHROMOSOMES = ("chrX", "chrY", "X", "Y")
 
 _AUTOSOME_CHR = re.compile(r"^chr(\d+)$")
 _AUTOSOME_NOCHR = re.compile(r"^(\d+)$")
-_SEX_CHR = re.compile(r"^(chr)?[XY]$", re.IGNORECASE)
 _MITO = re.compile(r"^(chrM|MT)$", re.IGNORECASE)
 _SKIP = re.compile(r"_random$|_decoy$|^chrUn|^HLA|^EBV|_alt$", re.IGNORECASE)
 
@@ -53,6 +50,30 @@ def _autosome_number(contig: str, *, has_chr: bool) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _normalize_chromosome_name(chromosome: str) -> str:
+    return chromosome.lower().removeprefix("chr")
+
+
+def _normalize_sex_chromosomes(sex_chromosomes: list[str] | tuple[str, ...]) -> set[str]:
+    return {_normalize_chromosome_name(chromosome) for chromosome in sex_chromosomes}
+
+
+def _is_sex_chromosome(chromosome: str, sex_chromosomes: set[str]) -> bool:
+    return _normalize_chromosome_name(chromosome) in sex_chromosomes
+
+
+def _is_x_chromosome(chromosome: str) -> bool:
+    return _normalize_chromosome_name(chromosome) == "x"
+
+
+def _is_y_chromosome(chromosome: str) -> bool:
+    return _normalize_chromosome_name(chromosome) == "y"
+
+
+def _is_skipped_chromosome(chromosome: str) -> bool:
+    return chromosome == "total" or bool(_SKIP.search(chromosome)) or bool(_MITO.match(chromosome))
+
+
 def _determine_karyotype(x_ratio: float, y_ratio: float) -> str:
     for x_min, x_max, y_min, y_max, label in _KARYOTYPE_TABLE:
         if x_min <= x_ratio <= x_max and y_min <= y_ratio <= y_max:
@@ -76,47 +97,58 @@ def parse_mosdepth_summary(summary_path: str | Path) -> pd.DataFrame:
     return summary_df
 
 
-def _compute_ploidy_from_chr_data(chr_data: dict[str, dict], *, has_chr: bool) -> dict:  # noqa: C901, PLR0912, PLR0915
-    """Shared logic: given {chrom: {mean, length(optional)}} compute ploidy, karyotype."""
-    acrocentrics = _ACROCENTRICS_CHR if has_chr else _ACROCENTRICS_NOCHR
-    x_name = "chrX" if has_chr else "X"
-    y_name = "chrY" if has_chr else "Y"
-
-    auto_chroms = {c: d for c, d in chr_data.items() if _autosome_number(c, has_chr=has_chr) is not None}
+def _compute_ploidy_from_chr_data(
+    chr_data: dict[str, dict],
+    *,
+    sex_chromosomes: list[str] | tuple[str, ...] = DEFAULT_SEX_CHROMOSOMES,
+    has_chr: bool | None = None,  # noqa: ARG001
+) -> dict:  # noqa: C901, PLR0912, PLR0915
+    """Shared logic: given {chrom: {mean}} compute ploidy, karyotype."""
+    sex_chromosome_names = _normalize_sex_chromosomes(sex_chromosomes)
+    auto_chroms = {
+        chrom: data
+        for chrom, data in chr_data.items()
+        if not _is_skipped_chromosome(chrom) and not _is_sex_chromosome(chrom, sex_chromosome_names)
+    }
     if not auto_chroms:
         raise ValueError("No autosomal contigs found")
 
-    has_length = all("length" in d for d in auto_chroms.values())
-    if has_length:
-        auto_sum_num = sum(d["length"] * d["mean"] for d in auto_chroms.values())
-        auto_sum_den = sum(d["length"] for d in auto_chroms.values())
-        auto_mean = auto_sum_num / auto_sum_den
-    else:
-        auto_mean = float(np.median([d["mean"] for d in auto_chroms.values()]))
+    auto_median = float(np.median([d["mean"] for d in auto_chroms.values()]))
 
-    if auto_mean == 0:
-        raise ValueError("Autosomal mean coverage is 0; cannot compute ploidy")
+    if auto_median == 0:
+        raise ValueError("Autosomal median coverage is 0; cannot compute ploidy")
 
-    x_mean = chr_data.get(x_name, {}).get("mean", 0)
-    y_mean = chr_data.get(y_name, {}).get("mean", 0)
-    x_ratio = x_mean / auto_mean if auto_mean > 0 else 0
-    y_ratio = y_mean / auto_mean if auto_mean > 0 else 0
+    x_mean = next(
+        (
+            data["mean"]
+            for chrom, data in chr_data.items()
+            if _is_sex_chromosome(chrom, sex_chromosome_names) and _is_x_chromosome(chrom)
+        ),
+        0,
+    )
+    y_mean = next(
+        (
+            data["mean"]
+            for chrom, data in chr_data.items()
+            if _is_sex_chromosome(chrom, sex_chromosome_names) and _is_y_chromosome(chrom)
+        ),
+        0,
+    )
+    x_ratio = x_mean / auto_median if auto_median > 0 else 0
+    y_ratio = y_mean / auto_median if auto_median > 0 else 0
 
     karyotype = _determine_karyotype(x_ratio, y_ratio)
     sex_label = _sex_label_from_karyotype(karyotype)
 
     per_chrom = []
-    sorted_autos = sorted(auto_chroms.keys(), key=lambda c: _autosome_number(c, has_chr=has_chr))
-    for chrom in sorted_autos:
+    for chrom in auto_chroms:
         data = chr_data[chrom]
-        ploidy = 2 * data["mean"] / auto_mean
-        flag = "acro" if chrom in acrocentrics else ""
-        per_chrom.append({"chrom": chrom, "ploidy": round(ploidy, 3), "mean_cov": round(data["mean"], 2), "flag": flag})
+        ploidy = 2 * data["mean"] / auto_median
+        per_chrom.append({"chrom": chrom, "ploidy": round(ploidy, 3), "mean_cov": round(data["mean"], 2), "flag": ""})
 
-    for sex_chrom in [x_name, y_name]:
-        if sex_chrom in chr_data:
-            data = chr_data[sex_chrom]
-            ploidy = 2 * data["mean"] / auto_mean
+    for sex_chrom, data in chr_data.items():
+        if _is_sex_chromosome(sex_chrom, sex_chromosome_names):
+            ploidy = 2 * data["mean"] / auto_median
             per_chrom.append(
                 {"chrom": sex_chrom, "ploidy": round(ploidy, 3), "mean_cov": round(data["mean"], 2), "flag": "sex"}
             )
@@ -127,37 +159,38 @@ def _compute_ploidy_from_chr_data(chr_data: dict[str, dict], *, has_chr: bool) -
         "karyotype": karyotype,
         "x_ratio": round(x_ratio, 4),
         "y_ratio": round(y_ratio, 4),
-        "auto_mean": round(auto_mean, 2),
+        "auto_mean": round(auto_median, 2),
     }
 
 
-def estimate_ploidy_from_coverage(mosdepth_df: pd.DataFrame) -> dict:
+def estimate_ploidy_from_coverage(
+    mosdepth_df: pd.DataFrame,
+    sex_chromosomes: list[str] | tuple[str, ...] = DEFAULT_SEX_CHROMOSOMES,
+) -> dict:
     """Mode 2: estimate ploidy from mosdepth summary."""
-    contigs = mosdepth_df["chrom"].tolist()
-    has_chr = _detect_chr_prefix(contigs)
-
-    df_filtered = mosdepth_df[~mosdepth_df["chrom"].str.contains(_SKIP, regex=True, na=False)].copy()
-    df_filtered = df_filtered[~df_filtered["chrom"].str.match(_MITO, na=False)]
-    df_filtered = df_filtered[df_filtered["chrom"] != "total"]
+    df_filtered = mosdepth_df[~mosdepth_df["chrom"].apply(_is_skipped_chromosome)].copy()
 
     chr_data = {}
     for _, row in df_filtered.iterrows():
         chrom = row["chrom"]
-        if _autosome_number(chrom, has_chr=has_chr) is not None or bool(_SEX_CHR.match(chrom)):
+        if chrom not in chr_data:
             chr_data[chrom] = {"length": row["length"], "mean": row["mean"]}
 
-    result = _compute_ploidy_from_chr_data(chr_data, has_chr=has_chr)
+    result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=sex_chromosomes)
     result["source"] = "mosdepth"
     return result
 
 
 def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
-    vcf_path: str | Path, het_sample_count: int = 5000
+    vcf_path: str | Path,
+    het_sample_count: int = 5000,
+    sex_chromosomes: list[str] | tuple[str, ...] = DEFAULT_SEX_CHROMOSOMES,
 ) -> tuple[dict, dict]:
     """Mode 1: per-chr coverage from SNP DP + BAF. Returns (coverage_result, baf_result)."""
     import random  # noqa: PLC0415
 
     random.seed(42)  # noqa: S311
+    sex_chromosome_names = _normalize_sex_chromosomes(sex_chromosomes)
 
     # Validate single-sample before starting the streaming process
     header_proc = subprocess.run(
@@ -187,7 +220,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
             continue
 
         chrom = parts[0]
-        if _SKIP.search(chrom) or _MITO.match(chrom):
+        if _is_skipped_chromosome(chrom):
             continue
 
         fmt_fields = parts[8].split(":")
@@ -206,9 +239,8 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
         if dp_value is not None and dp_value > 0:
             chr_dps.setdefault(chrom, []).append(dp_value)
 
-        # BAF: reservoir sampling over autosomal het SNPs only (chr1-22)
-        has_chr_local = chrom.startswith("chr")
-        is_autosome = _autosome_number(chrom, has_chr_local) is not None
+        # BAF: reservoir sampling over autosomal het SNPs only
+        is_autosome = not _is_sex_chromosome(chrom, sex_chromosome_names)
         gt_field = sample_fields[0] if sample_fields else ""
         if is_autosome and gt_field in ("0/1", "0|1", "1|0") and ad_value:
             ad_parts = ad_value.split(",")
@@ -233,15 +265,12 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
     if proc.returncode and proc.returncode != 0:
         raise RuntimeError(f"bcftools exited with code {proc.returncode}")
 
-    contigs = list(chr_dps.keys())
-    has_chr = _detect_chr_prefix(contigs)
-
     chr_data = {}
     for chrom, dps in chr_dps.items():
-        if (_autosome_number(chrom, has_chr=has_chr) is not None or bool(_SEX_CHR.match(chrom))) and len(dps) >= 20:  # noqa: PLR2004
+        if len(dps) >= 20:  # noqa: PLR2004
             chr_data[chrom] = {"mean": float(np.median(dps))}
 
-    coverage_result = _compute_ploidy_from_chr_data(chr_data, has_chr=has_chr)
+    coverage_result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=sex_chromosomes)
     coverage_result["source"] = "VCF SNP median DP"
 
     baf_result = _classify_baf(baf_reservoir)
@@ -276,12 +305,11 @@ def write_report(
     baf_result: dict | None,
     source_path: str,
     output_dir: str | Path,
-) -> tuple[Path, Path]:
+) -> Path:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     report_path = output_dir / f"{sample_id}.ploidy_report.txt"
-    tsv_path = output_dir / f"{sample_id}.per_chromosome_ploidy.tsv"
 
     cr = coverage_result
     karyotype = cr.get("karyotype", "UNDETERMINED")
@@ -296,22 +324,21 @@ def write_report(
         f"  Karyotype:          {karyotype}",
         f"  Sex:                {cr['sex_label']} (X ratio={cr['x_ratio']:.3f}, Y ratio={cr['y_ratio']:.3f})",
         f"  Whole-genome ploidy: {wgs_ploidy}",
-        f"  Autosomal mean cov: {cr['auto_mean']:.1f}x",
+        f"  Autosomal median cov: {cr['auto_mean']:.1f}x",
         f"  Coverage source:    {coverage_source}",
         f"  Input:              {source_path}",
         "",
-        "  Per-chromosome ploidy (relative to autosome mean = 2.0):",
+        "  Per-chromosome ploidy (relative to autosome median = 2.0):",
         "  --------------------------------------------------------",
     ]
 
     for entry in cr["per_chrom"]:
-        icon = {"acro": "*", "sex": "."}.get(entry["flag"], " ")
+        icon = {"sex": "."}.get(entry["flag"], " ")
         lines.append(f"  {entry['chrom']:<6s} ploidy={entry['ploidy']:.3f}  cov={entry['mean_cov']:.2f}x  {icon}")
 
     lines.extend(
         [
             "",
-            "  (* = acrocentric, lower coverage typical in short-read WGS)",
             "  (. = sex chromosome)",
             "",
         ]
@@ -334,12 +361,7 @@ def write_report(
 
     report_path.write_text("\n".join(lines) + "\n")
 
-    with open(tsv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["chrom", "ploidy", "mean_cov", "flag"], delimiter="\t")
-        writer.writeheader()
-        writer.writerows(cr["per_chrom"])
-
-    return report_path, tsv_path
+    return report_path
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -350,6 +372,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--mosdepth-summary", default=None, help="Mode 2: mosdepth summary for coverage-only ploidy")
     parser.add_argument("--sample-id", required=True, help="Sample identifier for output files")
     parser.add_argument("--het-sample-count", type=int, default=5000, help="Max het SNPs to sample for BAF (mode 1)")
+    parser.add_argument(
+        "--sex-chromosomes",
+        nargs="+",
+        default=list(DEFAULT_SEX_CHROMOSOMES),
+        help="Sex chromosome names to exclude from autosomal baseline; defaults to chrX chrY X Y",
+    )
     parser.add_argument("--output-dir", default=".", help="Output directory")
 
     args = parser.parse_args(argv)
@@ -361,12 +389,12 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.vcf:
         print(f"[estimate_ploidy] Mode 1 (VCF): {args.vcf}", file=sys.stderr)
-        coverage_result, baf_result = estimate_ploidy_from_vcf(args.vcf, args.het_sample_count)
+        coverage_result, baf_result = estimate_ploidy_from_vcf(args.vcf, args.het_sample_count, args.sex_chromosomes)
         source_path = args.vcf
     else:
         print(f"[estimate_ploidy] Mode 2 (mosdepth): {args.mosdepth_summary}", file=sys.stderr)
         mosdepth_df = parse_mosdepth_summary(args.mosdepth_summary)
-        coverage_result = estimate_ploidy_from_coverage(mosdepth_df)
+        coverage_result = estimate_ploidy_from_coverage(mosdepth_df, args.sex_chromosomes)
         baf_result = None
         source_path = args.mosdepth_summary
 
@@ -376,10 +404,9 @@ def main(argv: list[str] | None = None) -> None:
         file=sys.stderr,
     )
 
-    report_path, tsv_path = write_report(args.sample_id, coverage_result, baf_result, source_path, args.output_dir)
+    report_path = write_report(args.sample_id, coverage_result, baf_result, source_path, args.output_dir)
     print(report_path.read_text())
     print(f"[estimate_ploidy] Report: {report_path}", file=sys.stderr)
-    print(f"[estimate_ploidy] TSV: {tsv_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":
