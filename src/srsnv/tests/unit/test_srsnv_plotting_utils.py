@@ -160,9 +160,9 @@ def test_prepare_report_with_existing_resources(tmpdir, resources_dir):
     try:
         # Just test function signature and basic setup without running full pipeline
         # which is too resource intensive for unit tests
-        import inspect
+        import inspect  # noqa: PLC0415
 
-        from ugbio_srsnv.srsnv_report import prepare_report
+        from ugbio_srsnv.srsnv_report import prepare_report  # noqa: PLC0415
 
         sig = inspect.signature(prepare_report)
         assert "featuremap_df" in sig.parameters
@@ -170,13 +170,13 @@ def test_prepare_report_with_existing_resources(tmpdir, resources_dir):
         assert "report_path" in sig.parameters
 
         # Verify the files have the expected structure
-        import pandas as pd
+        import pandas as pd  # noqa: PLC0415
 
         df = pd.read_parquet(featuremap_path)  # noqa: PD901
         assert "prob_fold_0" in df.columns, "Generated test data should have prob_fold_0 column"
 
         with open(metadata_path) as f:
-            import json
+            import json  # noqa: PLC0415
 
             metadata = json.load(f)
         assert "model_paths" in metadata, "Generated metadata should have model_paths"
@@ -528,7 +528,7 @@ def consensus_resources(test_resources_calc_run_info):
     CONSENSUS mode. Returns (featuremap_df, metadata).
     """
     featuremap_df, metadata, _ = test_resources_calc_run_info
-    consensus_df = featuremap_df.copy()
+    consensus_df = featuremap_df.copy()  # noqa: PD901
     consensus_df = consensus_df.drop(columns=[c for c in ("st", "et") if c in consensus_df.columns])
     rng = np.random.default_rng(7)
     consensus_df["fs"] = rng.integers(0, 6, len(consensus_df))
@@ -777,3 +777,70 @@ def test_mixed_report_h5_key_surface_is_stable(resources_dir):
             f"mixed h5 key surface drifted:\n  missing={MIXED_EXPECTED_H5_KEYS - keys}\n"
             f"  unexpected={keys - MIXED_EXPECTED_H5_KEYS}"
         )
+
+
+# ──────────────────── hmer-indel SNVQ section (read-type x indel-class) ────────────────────
+
+
+def _add_hmer_variant_columns(df, n_indel=300, seed=5):
+    """Set an explicit ins/del split (rest = snv) + variant_type, so the hmer section is exercised."""
+    df = df.copy()  # noqa: PD901
+    rng = np.random.default_rng(seed)
+    if "X_HMER_REF" not in df.columns:
+        df["X_HMER_REF"] = rng.integers(0, 13, len(df))
+    n_indel = min(n_indel, len(df) // 2)
+    xic = np.array([None] * len(df), dtype=object)
+    xic[: n_indel // 2] = "ins"
+    xic[n_indel // 2 : n_indel] = "del"
+    df["X_IC"] = xic
+    df["variant_type"] = np.where(pd.Series(xic).isin(["ins", "del"]).to_numpy(), "hmer_indel", "snv")
+    return df
+
+
+def test_hmer_indel_snvq_summary_and_plots(consensus_resources, real_models_calc_run_info):
+    """SNVQ hmer-indel section: cross-product summary table (read-type x indel-class), SNVQ reliability,
+    and SNVQ histogram. Validates h5 keys, table structure/margins, and figure creation."""
+    df, metadata = consensus_resources
+    df = _add_hmer_variant_columns(df)  # noqa: PD901
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        assert report._has_hmer_indel_rows()
+        report.calc_hmer_indel_run_info_table()
+        rel = os.path.join(temp_output_dir, "hmer_reliability")
+        hist = os.path.join(temp_output_dir, "hmer_hist")
+        report.plot_hmer_indel_snvq_reliability(output_filename=rel)
+        report.plot_hmer_indel_snvq_histograms(output_filename=hist)
+
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        with pd.HDFStore(h5_file, "r") as store:
+            assert "/run_quality_summary_table_hmer_indel" in store.keys()
+            assert "/hmer_indel_snvq_reliability" in store.keys()
+
+        table = pd.read_hdf(h5_file, key="run_quality_summary_table_hmer_indel")
+        assert set(table["indel_class"]) == {"snv (baseline)", "all indel", "ins", "del"}
+        assert "All reads" in set(table["read_type"])
+        assert {"single read", "consensus, one strand", "consensus, duplex"} <= set(table["read_type"])
+        for col in ["Median SNVQ", "Recall at SNVQ=50", "Recall at SNVQ=60", "Recall at SNVQ=70", "ROC AUC (Phred)"]:
+            assert col in table.columns
+        # per read_type: ins + del n_TP == all-indel n_TP (every indel is ins or del)
+        for rt in table["read_type"].unique():
+            n_tp = table[table["read_type"] == rt].set_index("indel_class")["n_TP"]
+            assert n_tp["ins"] + n_tp["del"] == n_tp["all indel"]
+        assert os.path.exists(rel + ".png")
+        assert os.path.exists(hist + ".png")
+
+
+def test_hmer_indel_section_skipped_for_snv_only(consensus_resources, real_models_calc_run_info):
+    """SNV-only run (no hmer indels): the hmer summary self-skips (no h5 key, no error)."""
+    df, metadata = consensus_resources
+    df = df.copy()  # noqa: PD901
+    df["variant_type"] = "snv"
+    df["X_IC"] = None
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        assert not report._has_hmer_indel_rows()
+        report.calc_hmer_indel_run_info_table()  # no-op
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        if os.path.exists(h5_file):
+            with pd.HDFStore(h5_file, "r") as store:
+                assert "/run_quality_summary_table_hmer_indel" not in store.keys()

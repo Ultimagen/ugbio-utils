@@ -70,6 +70,7 @@ QUAL = FeatureMapFields.SNVQ.value
 X_HMER_REF = FeatureMapFields.X_HMER_REF.value
 X_IC = "X_IC"  # snvfind indel class: "ins" | "del" (present on homopolymer-indel rows)
 X_IL = "X_IL"  # snvfind indel length (|X_IL|)
+VARIANT_TYPE_SNV = "snv"
 VARIANT_TYPE = "variant_type"  # per-row snv | hmer_indel (set by prepare_report.compute_variant_type_column)
 VARIANT_TYPE_HMER_INDEL = "hmer_indel"
 IS_MIXED = "is_mixed"
@@ -314,6 +315,9 @@ def create_srsnv_report_html(
     # file exists only when has_hmer_indels; the notebook cell is guarded on has_hmer_indels.
     hmer_indel_metrics_plot = os.path.join(out_path, f"{out_basename}hmer_indel_metrics")
     hmer_indel_by_class_plot = os.path.join(out_path, f"{out_basename}hmer_indel_by_class")
+    hmer_indel_snvq_reliability_plot = os.path.join(out_path, f"{out_basename}hmer_indel_snvq_reliability")
+    hmer_indel_snvq_hist_plot = os.path.join(out_path, f"{out_basename}hmer_indel_snvq_hist")
+    hmer_indel_fq_recall_plot = os.path.join(out_path, f"{out_basename}hmer_indel_fq_recall")
 
     [
         FQ_vs_recall_plot,  # noqa: N806
@@ -351,6 +355,9 @@ def create_srsnv_report_html(
         "has_hmer_indels": has_hmer_indels,
         "hmer_indel_metrics_plot": hmer_indel_metrics_plot,
         "hmer_indel_by_class_plot": hmer_indel_by_class_plot,
+        "hmer_indel_snvq_reliability_plot": hmer_indel_snvq_reliability_plot,
+        "hmer_indel_snvq_hist_plot": hmer_indel_snvq_hist_plot,
+        "hmer_indel_fq_recall_plot": hmer_indel_fq_recall_plot,
     }
 
     generate_report(
@@ -3412,6 +3419,206 @@ class SRSNVReport:
             rows.append({"group": name, "roc_auc": auc, "roc_auc_phred": auc_phred, "n_TP": n_tp, "n_FP": n_fp})
         pd.DataFrame(rows).to_hdf(self.output_h5_filename, key="hmer_indel_auc_table", mode="a")
 
+    def _has_hmer_indel_rows(self) -> bool:
+        """True when the report dataframe carries any hmer-indel rows (``variant_type == hmer_indel``)."""
+        return VARIANT_TYPE in self.data_df.columns and bool(
+            (self.data_df[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).any()
+        )
+
+    def _hmer_indel_class_conditions(self):
+        """Ordered ``{label: boolean mask}`` over the variant-type / indel-class axis.
+
+        ``snv`` (baseline) + ``all indel`` + ``ins`` / ``del``. Masks are plain numpy bool arrays aligned
+        to ``self.data_df``. Returns ``None`` when there are no hmer-indel rows.
+        """
+        if VARIANT_TYPE not in self.data_df.columns:
+            return None
+        data = self.data_df
+        is_indel = (data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).to_numpy()
+        if not is_indel.any():
+            return None
+        cls = data[X_IC].astype(str).str.lower().to_numpy() if X_IC in data.columns else np.array([""] * len(data))
+        return {
+            "snv (baseline)": (data[VARIANT_TYPE] == VARIANT_TYPE_SNV).to_numpy(),
+            "all indel": is_indel,
+            "ins": is_indel & (cls == "ins"),
+            "del": is_indel & (cls == "del"),
+        }
+
+    @exception_handler
+    def calc_hmer_indel_run_info_table(self):
+        """SNVQ summary metrics for hmer indels, on the full read-type x indel-class cross-product.
+
+        Mirrors the SNV ``run_quality_summary_table`` (``_calc_run_info_table_by_group``) but on the
+        variant-type / indel-class axis crossed with the read-type split (singleton / single-strand
+        consensus / duplex, from ``self._group_masks()``). For every (indel-class, read-type) cell it
+        reports, using the shared recalibrated **SNVQ** (``QUAL``): Median SNVQ, conditional
+        ``Recall at SNVQ={50,60,70}`` (= ``#(SNVQ>=q & TP & mask) / #(TP & mask)`` — the prefilter
+        ``base_recall`` cancels, so this is report-only and directly comparable to the SNV conditional
+        recall), ROC-AUC(Phred), and TP/FP counts. A ``snv (baseline)`` class row is included for
+        comparison. Self-skips SNV-only runs. Writes the tidy table to the QC h5 under
+        ``run_quality_summary_table_hmer_indel``.
+        """
+        class_conds = self._hmer_indel_class_conditions()
+        if class_conds is None:
+            logger.info("calc_hmer_indel_run_info_table: no hmer-indel rows; skipping")
+            return
+        data = self.data_df
+        label = data[LABEL].to_numpy().astype(bool)
+        snvq = pd.to_numeric(data[QUAL], errors="coerce").to_numpy()
+        snvq_thresholds = [50, 60, 70]
+        # read-type groups + an "All reads" margin (all read types together)
+        rt_masks = [("All reads", np.ones(len(data), dtype=bool))]
+        rt_masks += [(lbl, np.asarray(m, dtype=bool)) for lbl, m in self._group_masks()]
+
+        rows = []
+        for cls_name, cls_mask in class_conds.items():
+            for rt_name, rt_mask in rt_masks:
+                mask = cls_mask & rt_mask
+                tp_mask = mask & label
+                fp_mask = mask & ~label
+                n_tp, n_fp = int(tp_mask.sum()), int(fp_mask.sum())
+                median_snvq = np.nanmedian(snvq[tp_mask]) if n_tp else np.nan
+                row = {
+                    "indel_class": cls_name,
+                    "read_type": rt_name,
+                    "Median SNVQ": signif(median_snvq, SIG_DIGITS),
+                }
+                for q in snvq_thresholds:
+                    # conditional recall among prefilter-passing TP reads (base_recall cancels)
+                    rec = (tp_mask & (snvq >= q)).sum() / n_tp if n_tp else np.nan
+                    row[f"Recall at SNVQ={q}"] = signif(rec, SIG_DIGITS)
+                if n_tp > 0 and n_fp > 0:
+                    sub = data[mask]
+                    auc_phred = prob_to_phred(
+                        self._safe_roc_auc(sub[LABEL], sub[ML_PROB_1_TEST], name=f"hmer indel {cls_name}/{rt_name}"),
+                        max_value=self.max_qual,
+                    )
+                else:
+                    auc_phred = np.nan
+                row["ROC AUC (Phred)"] = signif(auc_phred, SIG_DIGITS)
+                row["n_TP"] = n_tp
+                row["n_FP"] = n_fp
+                rows.append(row)
+        table = pd.DataFrame(rows)
+        table.to_hdf(self.output_h5_filename, key="run_quality_summary_table_hmer_indel", mode="a")
+
+    @exception_handler
+    def plot_hmer_indel_snvq_reliability(self, output_filename: str = None):
+        """Per-class SNVQ reliability: empirical error-rate vs SNVQ bin for snv vs hmer-indel.
+
+        Confirms the shared MQUAL->SNVQ recalibration is valid for indels (the empirical FP-rate at a
+        given SNVQ should track between classes). Empirical error-rate is training-prior-conditional
+        (like the SNV curves); the point is that snv and indel curves overlap. Writes the per-(class,
+        SNVQ bin) table to the QC h5 under ``hmer_indel_snvq_reliability``. Self-skips SNV-only runs.
+        """
+        if not self._has_hmer_indel_rows():
+            logger.info("plot_hmer_indel_snvq_reliability: no hmer-indel rows; skipping")
+            return
+        data = self.data_df
+        snvq = pd.to_numeric(data[QUAL], errors="coerce")
+        is_fp = ~data[LABEL].astype(bool)
+        edges = np.arange(0, self.max_qual + 5, 5)
+        bins = pd.cut(snvq, edges, include_lowest=True)
+        parts = []
+        for vt in (VARIANT_TYPE_SNV, VARIANT_TYPE_HMER_INDEL):
+            m = data[VARIANT_TYPE] == vt
+            sub = pd.DataFrame({"bin": bins[m], "fp": is_fp[m]}).dropna(subset=["bin"])
+            g = sub.groupby("bin", observed=True).agg(n=("fp", "size"), fp_rate=("fp", "mean")).reset_index()
+            g["variant_type"] = vt
+            g["snvq_mid"] = g["bin"].apply(lambda b: b.mid).astype(float)
+            g["emp_phred"] = -10 * np.log10(g["fp_rate"].clip(lower=1e-9))
+            parts.append(g)
+        stats = pd.concat(parts, ignore_index=True)
+        stats.drop(columns=["bin"]).to_hdf(self.output_h5_filename, key="hmer_indel_snvq_reliability", mode="a")
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        for vt, gp in stats.groupby("variant_type"):
+            gs = gp[gp["n"] >= 20].sort_values("snvq_mid")  # noqa: PLR2004
+            ax.plot(gs["snvq_mid"], gs["emp_phred"], marker="o", label=vt)
+        lim = [0, float(self.max_qual)]
+        ax.plot(lim, lim, "k--", alpha=0.4, label="ideal (emp = SNVQ)")
+        ax.set_xlabel("SNVQ (nominal)")
+        ax.set_ylabel("empirical phred  -10*log10(FP-rate)")
+        ax.set_title("SNVQ reliability: SNV vs hmer-indel")
+        ax.legend()
+        ax.grid(visible=True, alpha=0.3)
+        self._save_plt(output_filename=output_filename, fig=fig)
+        plt.close(fig)
+
+    @exception_handler
+    def plot_hmer_indel_snvq_histograms(self, output_filename: str = None):
+        """SNVQ distribution (TP vs FP) for hmer indels, alongside SNVs for reference.
+
+        Mirrors the SNV SNVQ histogram on the hmer-indel subset. Self-skips SNV-only runs.
+        """
+        if not self._has_hmer_indel_rows():
+            logger.info("plot_hmer_indel_snvq_histograms: no hmer-indel rows; skipping")
+            return
+        data = self.data_df
+        snvq = pd.to_numeric(data[QUAL], errors="coerce")
+        label = data[LABEL].astype(bool)
+        bins = np.linspace(0, float(self.max_qual), 60)
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharex=True, sharey=True)
+        for ax, vt, title in ((axes[0], VARIANT_TYPE_SNV, "SNV"), (axes[1], VARIANT_TYPE_HMER_INDEL, "hmer-indel")):
+            m = data[VARIANT_TYPE] == vt
+            tp_vals = snvq[m & label].dropna()
+            fp_vals = snvq[m & ~label].dropna()
+            if len(tp_vals):
+                ax.hist(tp_vals, bins=bins, density=True, alpha=0.55, label="TP")
+            if len(fp_vals):
+                ax.hist(fp_vals, bins=bins, density=True, alpha=0.55, label="FP")
+            ax.axvline(60, color="k", linestyle="--", alpha=0.5, label="SNVQ=60")
+            ax.set_title(f"{title}  (n={int(m.sum()):,})")
+            ax.set_xlabel("SNVQ")
+            ax.legend()
+            ax.grid(visible=True, alpha=0.3)
+        axes[0].set_ylabel("density")
+        self._save_plt(output_filename=output_filename, fig=fig)
+        plt.close(fig)
+
+    @exception_handler
+    def plot_hmer_indel_fq_recall(self, output_filename: str = None, *, font_size: int = 20):
+        """FQ-vs-recall curves for hmer indels (all indel + ins/del), reusing the SNV threshold-based
+        estimator with an indel condition.
+
+        Uses the shared ``self.base_recall`` (set by ``plot_fq_recall``, which must run first in
+        ``create_report``); the recall axis is therefore on the combined-prefilter basis (noted on the
+        plot). Writes the curves to the QC h5 under ``FQ_recall_LoD_hmer_indel``. Self-skips SNV-only runs.
+        """
+        if not self._has_hmer_indel_rows():
+            logger.info("plot_hmer_indel_fq_recall: no hmer-indel rows; skipping")
+            return
+        if getattr(self, "base_recall", None) is None:
+            logger.info("plot_hmer_indel_fq_recall: base_recall not set (plot_fq_recall must run first); skipping")
+            return
+        data = self.data_df
+        is_indel = data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL
+        cls = data[X_IC].astype(str).str.lower() if X_IC in data.columns else pd.Series("", index=data.index)
+        conditions = {
+            "all indel": is_indel,
+            "ins": is_indel & (cls == "ins"),
+            "del": is_indel & (cls == "del"),
+        }
+        mquals = np.array(self.srsnv_metadata["quality_recalibration_table"]).T[:, 0]
+        pr_df = pd.DataFrame({"MQUAL": mquals})
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for label, cond in conditions.items():
+            cond_s = pd.Series(cond.to_numpy(), index=data.index)
+            if not cond_s.any():
+                continue
+            recall, fq = self._calc_threshold_based_fq_recall(pr_df["MQUAL"].to_numpy(), condition=cond_s)
+            pr_df[f"recall_{label}"] = recall
+            pr_df[f"FQ_{label}"] = fq
+            ax.plot(recall, fq, label=label, linewidth=2)
+        ax.set_xlabel("Recall (combined-prefilter basis)", fontsize=font_size)
+        ax.set_ylabel("Filter Quality (FQ)", fontsize=font_size)
+        ax.legend(fontsize=14, fancybox=True, framealpha=0.95)
+        ax.grid(visible=True)
+        self._save_plt(output_filename, fig)
+        plt.close(fig)
+        pr_df.to_hdf(self.output_h5_filename, key="FQ_recall_LoD_hmer_indel", mode="a")
+
     def create_report(self):
         """Generate plots for report and save data in hdf5 file."""
         logger.info("Creating report")
@@ -3469,6 +3676,21 @@ class SRSNVReport:
         )
         self.plot_hmer_indel_by_class(output_filename=hmer_indel_by_class_plot)
         self.calc_hmer_indel_auc_table()
+        # SNVQ-based hmer-indel section (parity with SNV metrics): cross-product summary table,
+        # per-class SNVQ reliability, SNVQ histograms, and FQ-vs-recall. Each self-skips SNV-only runs.
+        self.calc_hmer_indel_run_info_table()
+        hmer_indel_snvq_reliability_plot = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}hmer_indel_snvq_reliability"
+        )
+        self.plot_hmer_indel_snvq_reliability(output_filename=hmer_indel_snvq_reliability_plot)
+        hmer_indel_snvq_hist_plot = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}hmer_indel_snvq_hist"
+        )
+        self.plot_hmer_indel_snvq_histograms(output_filename=hmer_indel_snvq_hist_plot)
+        hmer_indel_fq_recall_plot = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}hmer_indel_fq_recall"
+        )
+        self.plot_hmer_indel_fq_recall(output_filename=hmer_indel_fq_recall_plot)
 
         # # Create LoD plot
         # # TODO: Update the following to new conform with new report logic
