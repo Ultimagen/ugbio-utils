@@ -1,3 +1,4 @@
+import pysam
 import pytest
 from ugbio_core.estimate_ploidy import (
     _autosome_number,
@@ -7,6 +8,7 @@ from ugbio_core.estimate_ploidy import (
     _determine_karyotype,
     _sex_label_from_karyotype,
     estimate_ploidy_from_coverage,
+    estimate_ploidy_from_vcf,
     parse_mosdepth_summary,
 )
 
@@ -162,3 +164,32 @@ class TestEstimatePloidyFromCoverage:
         assert result["karyotype"] == "XY"
         assert result["sex_label"] == "male"
         assert result["source"] == "mosdepth"
+
+
+class TestEstimatePloidyFromVcf:
+    def test_reads_pass_snps_with_pysam(self, tmp_path):
+        vcf_path = tmp_path / "calls.vcf.gz"
+        header = pysam.VariantHeader()
+        header.add_sample("SAMPLE")
+        for chrom in ("chr1", "chr2", "chrX", "chrY"):
+            header.add_line(f"##contig=<ID={chrom}>")
+        header.add_line('##FILTER=<ID=PASS,Description="All filters passed">')
+        header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
+        header.add_line('##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Depth">')
+        header.add_line('##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allele depths">')
+        with pysam.VariantFile(vcf_path, "wz", header=header) as writer:
+            chromosome_calls = (("chr1", 50, (0, 1)), ("chr2", 50, (0, 1)), ("chrX", 25, (1, 1)), ("chrY", 25, (1, 1)))
+            for chrom, depth, genotype in chromosome_calls:
+                for pos in range(1, 21):
+                    record = writer.new_record(contig=chrom, start=pos - 1, stop=pos, alleles=("A", "G"))
+                    record.filter.add("PASS")
+                    record.samples["SAMPLE"]["GT"] = genotype
+                    record.samples["SAMPLE"]["DP"] = depth
+                    record.samples["SAMPLE"]["AD"] = (depth // 2, depth // 2)
+                    writer.write(record)
+
+        coverage_result, baf_result = estimate_ploidy_from_vcf(vcf_path)
+
+        assert coverage_result["karyotype"] == "XY"
+        assert coverage_result["source"] == "VCF SNP median DP"
+        assert baf_result["label"] == "INSUFFICIENT_DATA"
