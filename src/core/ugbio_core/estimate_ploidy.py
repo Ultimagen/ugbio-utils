@@ -22,6 +22,7 @@ import pandas as pd
 import pysam
 
 DEFAULT_SEX_CHROMOSOMES = ("chrX", "chrY", "X", "Y")
+_STANDARD_BASES = {"A", "C", "G", "T"}
 
 _AUTOSOME_CHR = re.compile(r"^chr(\d+)$")
 _AUTOSOME_NOCHR = re.compile(r"^(\d+)$")
@@ -72,6 +73,10 @@ def _is_y_chromosome(chromosome: str) -> bool:
 
 def _is_skipped_chromosome(chromosome: str) -> bool:
     return chromosome == "total" or bool(_SKIP.search(chromosome)) or bool(_MITO.match(chromosome))
+
+
+def _is_standard_biallelic_snp(ref: str, alts: tuple[str, ...] | None) -> bool:
+    return ref in _STANDARD_BASES and alts is not None and len(alts) == 1 and alts[0] in _STANDARD_BASES
 
 
 def _determine_karyotype(x_ratio: float, y_ratio: float) -> str:
@@ -183,6 +188,7 @@ def estimate_ploidy_from_coverage(
 
 def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
     vcf_path: str | Path,
+    sample_id: str,
     het_sample_count: int = 5000,
     sex_chromosomes: list[str] | tuple[str, ...] = DEFAULT_SEX_CHROMOSOMES,
 ) -> tuple[dict, dict]:
@@ -193,9 +199,9 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
     sex_chromosome_names = _normalize_sex_chromosomes(sex_chromosomes)
 
     reader = pysam.VariantFile(vcf_path)
-    if len(reader.header.samples) != 1:
+    if sample_id not in reader.header.samples:
         raise ValueError(
-            f"Multi-sample VCF not supported for ploidy estimation (found {len(reader.header.samples)} samples)"
+            f"Sample {sample_id!r} is not present in VCF; available samples: {', '.join(reader.header.samples)}"
         )
     chr_dps: dict[str, list[int]] = {}
     # Reservoir sampling for BAF: uniform random sample over autosomal het SNPs
@@ -203,7 +209,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
     baf_seen = 0
 
     for variant in reader:
-        if not variant.alts or any(len(allele) != 1 for allele in variant.alleles):
+        if not _is_standard_biallelic_snp(variant.ref, variant.alts):
             continue
         if list(variant.filter.keys()) != ["PASS"]:
             continue
@@ -212,7 +218,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
         if _is_skipped_chromosome(chrom):
             continue
 
-        sample = variant.samples[0]
+        sample = variant.samples[sample_id]
         dp_value = sample.get("DP")
         ad_value = sample.get("AD")
 
@@ -362,7 +368,9 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.vcf:
         print(f"[estimate_ploidy] Mode 1 (VCF): {args.vcf}", file=sys.stderr)
-        coverage_result, baf_result = estimate_ploidy_from_vcf(args.vcf, args.het_sample_count, args.sex_chromosomes)
+        coverage_result, baf_result = estimate_ploidy_from_vcf(
+            args.vcf, args.sample_id, args.het_sample_count, args.sex_chromosomes
+        )
         source_path = args.vcf
     else:
         print(f"[estimate_ploidy] Mode 2 (mosdepth): {args.mosdepth_summary}", file=sys.stderr)
