@@ -6,6 +6,7 @@ from ugbio_core.estimate_ploidy import (
     _compute_ploidy_from_chr_data,
     _detect_chr_prefix,
     _determine_karyotype,
+    _is_standard_biallelic_snp,
     _sex_label_from_karyotype,
     estimate_ploidy_from_coverage,
     estimate_ploidy_from_vcf,
@@ -87,6 +88,15 @@ class TestClassifyBaf:
         baf = [0.33] * 60 + [0.67] * 40
         result = _classify_baf(baf)
         assert result["label"] in ("TRIPLOID", "LIKELY_DIPLOID", "INCONCLUSIVE")
+
+
+class TestStandardBiallelicSnp:
+    def test_standard_snp(self):
+        assert _is_standard_biallelic_snp("A", ("G",)) is True
+
+    @pytest.mark.parametrize("ref,alts", [("A", ("G", "T")), ("A", ("G", "<NON_REF>")), ("A", ("AT",)), ("N", ("G",))])
+    def test_nonstandard_sites_are_excluded(self, ref, alts):
+        assert _is_standard_biallelic_snp(ref, alts) is False
 
 
 class TestComputePloidyFromChrData:
@@ -188,8 +198,47 @@ class TestEstimatePloidyFromVcf:
                     record.samples["SAMPLE"]["AD"] = (depth // 2, depth // 2)
                     writer.write(record)
 
-        coverage_result, baf_result = estimate_ploidy_from_vcf(vcf_path)
+        coverage_result, baf_result = estimate_ploidy_from_vcf(vcf_path, "SAMPLE")
 
         assert coverage_result["karyotype"] == "XY"
         assert coverage_result["source"] == "VCF SNP median DP"
         assert baf_result["label"] == "INSUFFICIENT_DATA"
+
+    def test_selects_requested_sample_from_multi_sample_vcf(self, tmp_path):
+        vcf_path = tmp_path / "multi_sample.vcf.gz"
+        header = pysam.VariantHeader()
+        header.add_sample("UNSELECTED")
+        header.add_sample("SELECTED")
+        for chrom in ("chr1", "chr2", "chrX", "chrY"):
+            header.add_line(f"##contig=<ID={chrom}>")
+        header.add_line('##FILTER=<ID=PASS,Description="All filters passed">')
+        header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
+        header.add_line('##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Depth">')
+        header.add_line('##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allele depths">')
+        with pysam.VariantFile(vcf_path, "wz", header=header) as writer:
+            chromosome_calls = (("chr1", 50), ("chr2", 50), ("chrX", 25), ("chrY", 25))
+            for chrom, selected_depth in chromosome_calls:
+                for pos in range(1, 21):
+                    record = writer.new_record(contig=chrom, start=pos - 1, stop=pos, alleles=("A", "G"))
+                    record.filter.add("PASS")
+                    record.samples["UNSELECTED"]["GT"] = (0, 0)
+                    record.samples["UNSELECTED"]["DP"] = 1
+                    record.samples["UNSELECTED"]["AD"] = (1, 0)
+                    record.samples["SELECTED"]["GT"] = (0, 1) if chrom[3:].isdigit() else (1, 1)
+                    record.samples["SELECTED"]["DP"] = selected_depth
+                    record.samples["SELECTED"]["AD"] = (selected_depth // 2, selected_depth // 2)
+                    writer.write(record)
+
+        coverage_result, _ = estimate_ploidy_from_vcf(vcf_path, "SELECTED")
+
+        assert coverage_result["karyotype"] == "XY"
+
+    def test_missing_sample_raises(self, tmp_path):
+        vcf_path = tmp_path / "empty.vcf.gz"
+        header = pysam.VariantHeader()
+        header.add_sample("PRESENT")
+        with pysam.VariantFile(vcf_path, "wz", header=header):
+            pass
+
+        with pytest.raises(ValueError, match="'MISSING' is not present in VCF"):
+            estimate_ploidy_from_vcf(vcf_path, "MISSING")
