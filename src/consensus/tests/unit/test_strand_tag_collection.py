@@ -179,3 +179,41 @@ def test_mi_fallback_matches(bam_path):
     # path is the accurate one for consensus reads; MI fallback needs multi-read MI groups.
     assert res["n_families"] == 4
     assert np.isnan(res["per_category"].loc[duplex_metrics.DUPLEX, "avg_family_size"])
+
+
+def test_family_size_histogram(bam_path):
+    """The returned histogram is the family-size distribution, not a per-read list.
+
+    Memory during the scan must not grow with the number of reads: family sizes are
+    accumulated as {size: count}, which is what a whole-CRAM scan relies on.
+    """
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(bam_path, [(CHROM, 0, CHROM_LEN)], reference=None)
+    hist = res["family_size_hist"]
+    assert hist[duplex_metrics.DUPLEX] == {8: 1, 4: 1}
+    assert hist[duplex_metrics.SINGLE_STRAND] == {5: 1, 3: 1}
+    assert hist[duplex_metrics.SINGLETON] == {1: 1}
+    # Every scanned read is counted exactly once in its category's histogram.
+    for category in duplex_metrics.CATEGORIES:
+        per_cat_reads = res["per_category"].loc[category, "n_reads"]
+        assert sum(hist[category].values()) == per_cat_reads
+
+
+@pytest.mark.parametrize(
+    "sizes",
+    [
+        [1],
+        [3, 7],  # even n -> mean of the two central order statistics
+        [2, 2, 9],
+        [1, 1, 2, 300, 300, 301],  # sizes past the small-int cache
+        [5] * 10,
+    ],
+)
+def test_median_from_histogram_matches_numpy(sizes):
+    hist: dict[int, int] = {}
+    for size in sizes:
+        hist[size] = hist.get(size, 0) + 1
+    assert duplex_metrics._median_from_histogram(hist, len(sizes)) == pytest.approx(float(np.median(sizes)))
+
+
+def test_median_from_histogram_empty():
+    assert np.isnan(duplex_metrics._median_from_histogram({}, 0))

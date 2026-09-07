@@ -63,6 +63,22 @@ class OnTargetResult:
         return self.on_target_bases_seq / self.total_bases_seq
 
 
+def _run(cmd: str) -> str:
+    """Run a shell pipeline with ``pipefail`` and return its stdout.
+
+    ``pipefail`` matters: these pipelines end in ``awk``, which exits 0 even when an
+    upstream ``zcat`` or ``bedtools`` has died, so without it a truncated stream
+    would be reported as a valid, silently-too-small sum.
+    """
+    completed = subprocess.run(  # noqa: S603
+        ["bash", "-o", "pipefail", "-c", cmd],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout.strip()
+
+
 def bed_covered_size(bed_path: str) -> int:
     """Return the number of bp covered by a BED, merging overlaps.
 
@@ -132,22 +148,25 @@ def compute_coverage_from_bedgraph(
         Coverage summary for the sample.
     """
     source = f"zcat '{bedgraph}'" if bedgraph.endswith(".gz") else f"cat '{bedgraph}'"
+    # %.0f, not `print`: the sums reach ~2.5e10 and awk's default OFMT would render
+    # them in scientific notation, which int() cannot parse.
+    sum_weighted = "awk '{s+=($3-$2)*$4} END{printf \"%.0f\\n\", s+0}'"
 
-    if targets_bed_sorted is not None:
-        if target_size is None:
-            raise ValueError("target_size is required when targets_bed_sorted is given")
-        # tee: one branch totals all bases, the other totals the on-target subset.
-        cmd = (
-            f"{source} "
-            f"| tee >(awk '{{t+=($3-$2)*$4}} END{{print t+0}}' > /tmp/_consensus_tot_$$) "
-            f"| bedtools intersect -a - -b {targets_bed_sorted} -sorted 2>/dev/null "
-            f"| awk '{{o+=($3-$2)*$4}} END{{print o+0}}'; "
-            f"cat /tmp/_consensus_tot_$$; rm -f /tmp/_consensus_tot_$$"
-        )
-        out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=True).stdout.split()  # noqa: S607
-        on_target_bases, total_bases = int(out[0]), int(out[1])
-        return OnTargetResult(total_bases, on_target_bases, genome_size, target_size)
+    total_bases = int(_run(f"{source} | {sum_weighted}") or 0)
+    if targets_bed_sorted is None:
+        return OnTargetResult(total_bases, None, genome_size, None)
 
-    cmd = f"{source} | awk '{{t+=($3-$2)*$4}} END{{print t+0}}'"
-    out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=True).stdout.strip()  # noqa: S607
-    return OnTargetResult(int(out or 0), None, genome_size, None)
+    if target_size is None:
+        raise ValueError("target_size is required when targets_bed_sorted is given")
+    # A second streamed pass, deliberately not a `tee` into a process substitution:
+    # the shell does not wait for a process substitution, so its result was racy,
+    # and any early exit downstream of `tee` truncated it via EPIPE.
+    #
+    # `bedtools intersect -sorted` is NOT usable here. It requires both files in the
+    # same chromosome order, but the bedGraph is in reference/CRAM-header order while
+    # this BED is `sort -k1,1` (lexicographic), so bedtools aborts at chr10 - which,
+    # with stderr discarded and its non-zero status swallowed mid-pipeline, silently
+    # truncated both sums to their chr1 prefix. Without -sorted the BED is loaded
+    # into memory and the result is order-independent.
+    on_target_bases = int(_run(f"{source} | bedtools intersect -a - -b {targets_bed_sorted} | {sum_weighted}") or 0)
+    return OnTargetResult(total_bases, on_target_bases, genome_size, target_size)

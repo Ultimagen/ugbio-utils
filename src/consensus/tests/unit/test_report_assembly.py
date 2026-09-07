@@ -98,3 +98,34 @@ def test_consensus_table_absent_without_log(metrics_df):
 def test_on_target_figure_absent_without_targets(metrics_df):
     without_targets = metrics_df.assign(on_target_rate=None)
     assert consensus_report.build_on_target_figure(without_targets) is None
+
+
+@pytest.fixture
+def targets_bed(tmp_path):
+    path = tmp_path / "targets.bed"
+    path.write_text(
+        "track name=targets\nchr1\t100\t200\nchr20\t300\t400\nchr20\t500\t600\n",
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def test_bed_intervals_on_chrom_single(targets_bed):
+    assert consensus_report.bed_intervals_on_chrom(targets_bed, "chr20") == [
+        ("chr20", 300, 400),
+        ("chr20", 500, 600),
+    ]
+
+
+def test_bed_intervals_on_chrom_none_keeps_every_contig(targets_bed):
+    """``chrom=None`` is how --targets composes with --duplex-chrom all.
+
+    Passing the literal "all" sentinel through would match no contig and silently
+    yield an empty scan, so the caller must translate it to None.
+    """
+    assert consensus_report.bed_intervals_on_chrom(targets_bed, None) == [
+        ("chr1", 100, 200),
+        ("chr20", 300, 400),
+        ("chr20", 500, 600),
+    ]
+    assert consensus_report.bed_intervals_on_chrom(targets_bed, consensus_report.DUPLEX_CHROM_ALL) == []

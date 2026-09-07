@@ -196,7 +196,7 @@ def read_targets_bed(targets_bed: str, tmp_dir: str) -> tuple[str, int]:
     return sorted_path, bed_covered_size(targets_bed)
 
 
-def bed_intervals_on_chrom(bed_path: str, chrom: str) -> list[tuple[str, int, int]]:
+def bed_intervals_on_chrom(bed_path: str, chrom: str | None) -> list[tuple[str, int, int]]:
     """Read the BED intervals that lie on ``chrom`` as ``(chrom, start, end)`` tuples.
 
     Used to restrict the duplex scan to the parts of a single chromosome that are
@@ -206,8 +206,13 @@ def bed_intervals_on_chrom(bed_path: str, chrom: str) -> list[tuple[str, int, in
     ----------
     bed_path : str
         Path to the targets BED.
-    chrom : str
-        Chromosome to keep (e.g. ``chr20``).
+    chrom : str | None
+        Chromosome to keep (e.g. ``chr20``); ``None`` keeps every contig in the
+        BED, which is how ``--targets`` composes with ``--duplex-chrom all``.
+        Note that no BED contig is ever literally named ``all``, so the sentinel
+        must be translated to ``None`` by the caller rather than passed through -
+        otherwise the filter matches nothing and the duplex scan silently reports
+        zero reads.
 
     Returns
     -------
@@ -220,7 +225,7 @@ def bed_intervals_on_chrom(bed_path: str, chrom: str) -> list[tuple[str, int, in
             if not line.strip() or line.startswith(("#", "track", "browser")):
                 continue
             fields = line.split("\t")
-            if fields[0] == chrom:
+            if chrom is None or fields[0] == chrom:
                 intervals.append((fields[0], int(fields[1]), int(fields[2])))
     return intervals
 
@@ -360,11 +365,18 @@ def build_metrics_table(  # noqa: PLR0913
     if targets_bed:
         targets_sorted, target_size = read_targets_bed(targets_bed, os.path.join(work_dir, "targets"))
         logger.info("Targets BED: %s (%.1f Mb)", targets_bed, target_size / 1e6)
-        # Restrict the duplex scan to the targeted intervals on duplex_chrom.
-        duplex_intervals = bed_intervals_on_chrom(targets_bed, duplex_chrom)
+        # Restrict the duplex scan to the targeted intervals on duplex_chrom, or to
+        # every targeted interval when duplex_chrom is the "all" sentinel (which is
+        # not a contig name, so it must not reach the per-contig filter).
+        scan_chrom = None if scan_all else duplex_chrom
+        duplex_intervals = bed_intervals_on_chrom(targets_bed, scan_chrom)
         if not duplex_intervals:
             logger.warning("No targets on %s; duplex scan will find no reads", duplex_chrom)
-        logger.info("Duplex scan: %d targeted intervals on %s", len(duplex_intervals), duplex_chrom)
+        logger.info(
+            "Duplex scan: %d targeted intervals on %s",
+            len(duplex_intervals),
+            "all contigs" if scan_all else duplex_chrom,
+        )
     elif scan_all:
         # Whole CRAM: every contig, no region limitation (intervals=None).
         duplex_intervals = None

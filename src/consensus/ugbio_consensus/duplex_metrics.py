@@ -201,6 +201,31 @@ def _iter_primary_reads_by_chrom(samfile, merged, max_reads):
                 return
 
 
+def _median_from_histogram(hist: dict[int, int], n_reads: int) -> float:
+    """Return the median family size from a ``{size: count}`` histogram.
+
+    Matches :func:`numpy.median` semantics, including averaging the two central
+    order statistics for an even ``n_reads``. Used instead of materialising one
+    list entry per read: family sizes are small bounded integers, so the
+    histogram is a few thousand entries however many billion reads are scanned.
+    """
+    if n_reads == 0:
+        return float("nan")
+    # 0-indexed positions of the central order statistic(s).
+    targets = [n_reads // 2] if n_reads % 2 else [n_reads // 2 - 1, n_reads // 2]
+    values: list[int] = []
+    cumulative = 0
+    target_idx = 0
+    for size in sorted(hist):
+        cumulative += hist[size]
+        while target_idx < len(targets) and targets[target_idx] < cumulative:
+            values.append(size)
+            target_idx += 1
+        if target_idx == len(targets):
+            break
+    return sum(values) / len(values)
+
+
 def _classify_read(read: pysam.AlignedSegment) -> tuple[str, int] | None:
     """Return ``(category, family_size)`` for a read, or ``None`` if unclassifiable.
 
@@ -282,10 +307,19 @@ def collect_family_metrics_from_strand_tags(
         ``covered_bases``, ``coverage``), ``total_interval_bp``,
         ``n_reads_scanned``, ``n_unclassified`` (reads with malformed strand tags),
         ``n_size_mismatch`` (consensus reads where ``nf + nr`` disagreed with the
-        ``rn`` cardinality), and ``family_sizes`` (dict category -> np.ndarray of
-        sizes).
+        ``rn`` cardinality), and ``family_size_hist`` (dict category ->
+        ``{family_size: n_reads}``). The histogram replaces the former per-read
+        ``family_sizes`` arrays, whose memory grew with the number of reads scanned
+        and so could not survive a whole-CRAM scan.
     """
-    family_sizes: dict[str, list[int]] = {c: [] for c in CATEGORIES}
+    # Family sizes are accumulated as a {size: count} histogram per category, not as
+    # one list entry per read. A whole-CRAM scan (intervals=None) classifies every
+    # primary read, so a per-read list grows without bound - 198e6 reads cost ~2 GB
+    # and OOM-killed the 4 GiB report task. The histogram is bounded by the number of
+    # distinct family sizes and gives the same mean and an exact median.
+    family_size_hist: dict[str, dict[int, int]] = {c: defaultdict(int) for c in CATEGORIES}
+    n_reads_per_category: dict[str, int] = dict.fromkeys(CATEGORIES, 0)
+    size_sum_per_category: dict[str, int] = dict.fromkeys(CATEGORIES, 0)
     covered_bases: dict[str, int] = dict.fromkeys(CATEGORIES, 0)
     n_reads_scanned = 0
     n_unclassified = 0
@@ -324,15 +358,17 @@ def collect_family_metrics_from_strand_tags(
 
             covered_bases[category] += overlap
             # Count each family once, at the read start (avoids double-counting straddlers).
-            family_sizes[category].append(size)
+            family_size_hist[category][size] += 1
+            n_reads_per_category[category] += 1
+            size_sum_per_category[category] += size
 
     rows = {}
     for category in CATEGORIES:
-        sizes = np.array(family_sizes[category], dtype=float)
+        n_cat = n_reads_per_category[category]
         rows[category] = {
-            "n_reads": len(sizes),
-            "avg_family_size": float(np.mean(sizes)) if sizes.size else np.nan,
-            "median_family_size": float(np.median(sizes)) if sizes.size else np.nan,
+            "n_reads": n_cat,
+            "avg_family_size": size_sum_per_category[category] / n_cat if n_cat else np.nan,
+            "median_family_size": _median_from_histogram(family_size_hist[category], n_cat),
             "covered_bases": covered_bases[category],
             "coverage": covered_bases[category] / total_bp if total_bp else np.nan,
         }
@@ -361,7 +397,7 @@ def collect_family_metrics_from_strand_tags(
         "n_reads_scanned": n_reads_scanned,
         "n_unclassified": n_unclassified,
         "n_size_mismatch": n_size_mismatch,
-        "family_sizes": {c: np.array(family_sizes[c]) for c in CATEGORIES},
+        "family_size_hist": {c: dict(family_size_hist[c]) for c in CATEGORIES},
     }
 
 
