@@ -70,6 +70,10 @@ QUAL = FeatureMapFields.SNVQ.value
 X_HMER_REF = FeatureMapFields.X_HMER_REF.value
 X_IC = "X_IC"  # snvfind indel class: "ins" | "del" (present on homopolymer-indel rows)
 X_IL = "X_IL"  # snvfind indel length (|X_IL|)
+X_HMER_RUN = "X_HMER_RUN"  # snvfind: affected reference homopolymer run length (starts at POS+1)
+X_HMER_POST = "X_HMER_POST"  # snvfind: reference base immediately 3' of the affected run
+X_NEXT1 = FeatureMapFields.X_NEXT1.value  # base at POS+1 == first base of the affected hmer run
+REF = FeatureMapFields.REF.value
 VARIANT_TYPE_SNV = "snv"
 VARIANT_TYPE = "variant_type"  # per-row snv | hmer_indel (set by prepare_report.compute_variant_type_column)
 VARIANT_TYPE_HMER_INDEL = "hmer_indel"
@@ -318,6 +322,7 @@ def create_srsnv_report_html(
     hmer_indel_snvq_reliability_plot = os.path.join(out_path, f"{out_basename}hmer_indel_snvq_reliability")
     hmer_indel_snvq_hist_plot = os.path.join(out_path, f"{out_basename}hmer_indel_snvq_hist")
     hmer_indel_fq_recall_plot = os.path.join(out_path, f"{out_basename}hmer_indel_fq_recall")
+    hmer_indel_context_plot = os.path.join(out_path, f"{out_basename}hmer_indel_context")
 
     [
         FQ_vs_recall_plot,  # noqa: N806
@@ -358,6 +363,7 @@ def create_srsnv_report_html(
         "hmer_indel_snvq_reliability_plot": hmer_indel_snvq_reliability_plot,
         "hmer_indel_snvq_hist_plot": hmer_indel_snvq_hist_plot,
         "hmer_indel_fq_recall_plot": hmer_indel_fq_recall_plot,
+        "hmer_indel_context_plot": hmer_indel_context_plot,
     }
 
     generate_report(
@@ -3619,6 +3625,126 @@ class SRSNVReport:
         plt.close(fig)
         pr_df.to_hdf(self.output_h5_filename, key="FQ_recall_LoD_hmer_indel", mode="a")
 
+    def _hmer_indel_context_df(self) -> pd.DataFrame | None:
+        """Tidy per-context aggregation for the hmer-indel context figure.
+
+        One row per (ins/del x hmer base x hmer length[<=8] x base-before x base-after) context with
+        n_TP / n_FP and median TP SNVQ. Context dimensions:
+        - ins/del      : ``X_IC``
+        - hmer base    : ``X_NEXT1`` (base at POS+1 = first base of the affected run)
+        - hmer length  : ``X_HMER_RUN`` (snvfind; the anchor-based ``X_HMER_REF`` is NOT the run), clipped to >=8
+        - base-before  : first base of ``REF`` (the anchor base, immediately 5' of the run)
+        - base-after   : ``X_HMER_POST`` (snvfind; reference base 3' of the run)
+        Returns ``None`` for SNV-only runs or when the required snvfind columns are absent.
+        """
+        if not self._has_hmer_indel_rows():
+            return None
+        data = self.data_df
+        needed = {X_IC, X_NEXT1, X_HMER_RUN, X_HMER_POST, REF}
+        missing = needed - set(data.columns)
+        if missing:
+            logger.warning("hmer-indel context figure skipped: missing columns %s", sorted(missing))
+            return None
+        ind = data[data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL].copy()
+        if ind.empty:
+            return None
+        run_len = pd.to_numeric(ind[X_HMER_RUN], errors="coerce")
+        bases = list("ACGT")
+        ctx = pd.DataFrame(
+            {
+                "ins_del": ind[X_IC].astype(str).str.lower(),
+                "hmer_base": ind[X_NEXT1].astype(str).str.upper(),
+                "hmer_len": run_len.clip(lower=1, upper=8).round().astype("Int64"),
+                "base_before": ind[REF].astype(str).str[0].str.upper(),
+                "base_after": ind[X_HMER_POST].astype(str).str.upper(),
+                "is_tp": ind[LABEL].astype(bool).to_numpy(),
+                "snvq": pd.to_numeric(ind[QUAL], errors="coerce").to_numpy(),
+            }
+        )
+        ctx = ctx[ctx["ins_del"].isin(["ins", "del"]) & ctx["hmer_base"].isin(bases) & ctx["hmer_len"].notna()]
+        if ctx.empty:
+            return None
+        ctx["hmer_len"] = ctx["hmer_len"].astype(int)  # drop nullable Int64 (not h5-serializable)
+        ctx["snvq_tp"] = ctx["snvq"].where(ctx["is_tp"])  # NaN for FP rows; median() skips NaN
+        grp = ctx.groupby(["ins_del", "hmer_base", "hmer_len", "base_before", "base_after"], observed=True)
+        table = grp.agg(
+            n_TP=("is_tp", "sum"),
+            n_rows=("is_tp", "size"),
+            median_snvq_tp=("snvq_tp", "median"),
+        ).reset_index()
+        table["n_FP"] = table["n_rows"] - table["n_TP"]
+        return table.drop(columns=["n_rows"])
+
+    @exception_handler
+    def calc_and_plot_hmer_indel_context_plot(self, output_filename: str = None):
+        """Context figure for hmer indels (analogue of the SNV trinuc-context figure).
+
+        Two rows of heatmaps, insertions and deletions side by side:
+        - top row    : hmer base (A/C/G/T) x hmer length (1..>=8), colored by median TP SNVQ, annotated
+          with n_TP -- the core "which homopolymer" view;
+        - bottom row : base-before x base-after flank composition, colored by median TP SNVQ, annotated
+          with n_TP -- the flanking-context view.
+        Together these cover all five requested context dimensions on one figure. Self-skips SNV-only
+        runs / missing snvfind context columns. Writes the tidy per-context table to the QC h5 under
+        ``hmer_indel_context_stats``.
+        """
+        table = self._hmer_indel_context_df()
+        if table is None:
+            logger.info("calc_and_plot_hmer_indel_context_plot: no hmer-indel context; skipping")
+            return
+        table.to_hdf(self.output_h5_filename, key="hmer_indel_context_stats", mode="a")
+
+        bases = list("ACGT")
+        lengths = list(range(1, 9))
+
+        def _pivot(sub: pd.DataFrame, index: str, columns: str, index_vals, col_vals):
+            """Weighted-median SNVQ + summed n_TP grids over the requested index/column categories."""
+            snvq = sub.pivot_table(
+                index=index, columns=columns, values="median_snvq_tp", aggfunc="median", observed=True
+            ).reindex(index=index_vals, columns=col_vals)
+            ntp = (
+                sub.pivot_table(index=index, columns=columns, values="n_TP", aggfunc="sum", observed=True)
+                .reindex(index=index_vals, columns=col_vals)
+                .fillna(0)
+                .astype(int)
+            )
+            return snvq, ntp
+
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        vmax = float(self.max_qual)
+        for col, cls in enumerate(("ins", "del")):
+            sub = table[table["ins_del"] == cls]
+            # top: hmer base x hmer length
+            snvq_bl, ntp_bl = _pivot(sub, "hmer_base", "hmer_len", bases, lengths)
+            # bottom: base-before x base-after
+            snvq_fa, ntp_fa = _pivot(sub, "base_before", "base_after", bases, bases)
+            for row, (snvq_grid, ntp_grid, xlabel, ylabel, xticks) in enumerate(
+                (
+                    (snvq_bl, ntp_bl, "hmer length", "hmer base", lengths),
+                    (snvq_fa, ntp_fa, "base after", "base before", bases),
+                )
+            ):
+                ax = axes[row, col]
+                im = ax.imshow(snvq_grid.to_numpy(dtype=float), aspect="auto", cmap="viridis", vmin=0, vmax=vmax)
+                ax.set_xticks(range(len(xticks)))
+                ax.set_xticklabels([str(x) if x != 8 else "8+" for x in xticks] if row == 0 else xticks)  # noqa: PLR2004
+                ax.set_yticks(range(len(snvq_grid.index)))
+                ax.set_yticklabels(list(snvq_grid.index))
+                ax.set_xlabel(xlabel)
+                ax.set_ylabel(ylabel)
+                title_n = int(sub["n_TP"].sum()) + int(sub["n_FP"].sum())
+                ax.set_title(f"{cls}  ({'base x len' if row == 0 else 'flank'})  n={title_n:,}")
+                nvals = ntp_grid.to_numpy()
+                for i in range(nvals.shape[0]):
+                    for j in range(nvals.shape[1]):
+                        if nvals[i, j] > 0:
+                            ax.text(j, i, f"{nvals[i, j]}", ha="center", va="center", color="white", fontsize=7)
+                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="median SNVQ (TP)")
+        fig.suptitle("Hmer-indel context: median SNVQ (color) and n_TP (annotation)", fontsize=14)
+        fig.tight_layout(rect=[0, 0, 1, 0.97])
+        self._save_plt(output_filename=output_filename, fig=fig)
+        plt.close(fig)
+
     def create_report(self):
         """Generate plots for report and save data in hdf5 file."""
         logger.info("Creating report")
@@ -3691,6 +3817,8 @@ class SRSNVReport:
             self.params["workdir"], f"{self.params['data_name']}hmer_indel_fq_recall"
         )
         self.plot_hmer_indel_fq_recall(output_filename=hmer_indel_fq_recall_plot)
+        hmer_indel_context_plot = os.path.join(self.params["workdir"], f"{self.params['data_name']}hmer_indel_context")
+        self.calc_and_plot_hmer_indel_context_plot(output_filename=hmer_indel_context_plot)
 
         # # Create LoD plot
         # # TODO: Update the following to new conform with new report logic

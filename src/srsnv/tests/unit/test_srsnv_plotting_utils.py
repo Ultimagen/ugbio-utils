@@ -794,6 +794,13 @@ def _add_hmer_variant_columns(df, n_indel=300, seed=5):
     xic[n_indel // 2 : n_indel] = "del"
     df["X_IC"] = xic
     df["variant_type"] = np.where(pd.Series(xic).isin(["ins", "del"]).to_numpy(), "hmer_indel", "snv")
+    # snvfind context fields consumed by the hmer-indel context figure
+    df["X_HMER_RUN"] = rng.integers(1, 10, len(df))  # affected reference run length
+    df["X_HMER_POST"] = rng.choice(list("ACGT"), len(df))  # base 3' of the run
+    if "X_NEXT1" not in df.columns:
+        df["X_NEXT1"] = rng.choice(list("ACGT"), len(df))  # first base of the run (hmer base)
+    if "REF" not in df.columns:
+        df["REF"] = rng.choice(list("ACGT"), len(df))  # anchor base (base-before)
     return df
 
 
@@ -828,6 +835,24 @@ def test_hmer_indel_snvq_summary_and_plots(consensus_resources, real_models_calc
             assert n_tp["ins"] + n_tp["del"] == n_tp["all indel"]
         assert os.path.exists(rel + ".png")
         assert os.path.exists(hist + ".png")
+
+
+def test_hmer_indel_context_plot(consensus_resources, real_models_calc_run_info):
+    """Hmer-indel context figure: tidy per-context h5 table + PNG. Validates dimensions and counts."""
+    df, metadata = consensus_resources
+    df = _add_hmer_variant_columns(df)  # noqa: PD901
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        ctx = os.path.join(temp_output_dir, "hmer_context")
+        report.calc_and_plot_hmer_indel_context_plot(output_filename=ctx)
+
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        table = pd.read_hdf(h5_file, key="hmer_indel_context_stats")
+        assert set(table["ins_del"]) <= {"ins", "del"}
+        assert set(table["hmer_base"]) <= set("ACGT")
+        assert table["hmer_len"].max() <= 8  # clipped to >=8 bucket  # noqa: PLR2004
+        assert (table["n_TP"] >= 0).all() and (table["n_FP"] >= 0).all()
+        assert os.path.exists(ctx + ".png")
 
 
 def test_hmer_indel_section_skipped_for_snv_only(consensus_resources, real_models_calc_run_info):
