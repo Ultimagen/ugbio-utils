@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import argparse
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pysam
 
 DEFAULT_SEX_CHROMOSOMES = ("chrX", "chrY", "X", "Y")
 
@@ -192,78 +192,51 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
     random.seed(42)  # noqa: S311
     sex_chromosome_names = _normalize_sex_chromosomes(sex_chromosomes)
 
-    # Validate single-sample before starting the streaming process
-    header_proc = subprocess.run(
-        ["bcftools", "query", "-l", str(vcf_path)],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if header_proc.returncode != 0:
-        raise RuntimeError(
-            f"bcftools query -l failed (code {header_proc.returncode}): {header_proc.stderr.strip()[:200]}"
+    reader = pysam.VariantFile(vcf_path)
+    if len(reader.header.samples) != 1:
+        raise ValueError(
+            f"Multi-sample VCF not supported for ploidy estimation (found {len(reader.header.samples)} samples)"
         )
-    samples = [s for s in header_proc.stdout.splitlines() if s]
-    if len(samples) > 1:
-        raise ValueError(f"Multi-sample VCF not supported for ploidy estimation (found {len(samples)} samples)")
-
-    cmd = ["bcftools", "view", "-H", "-v", "snps", "-f", "PASS", str(vcf_path)]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     chr_dps: dict[str, list[int]] = {}
     # Reservoir sampling for BAF: uniform random sample over autosomal het SNPs
     baf_reservoir: list[float] = []
     baf_seen = 0
 
-    for line in proc.stdout:
-        parts = line.strip().split("\t")
-        if len(parts) < 10:  # noqa: PLR2004
+    for variant in reader:
+        if not variant.alts or any(len(allele) != 1 for allele in variant.alleles):
+            continue
+        if list(variant.filter.keys()) != ["PASS"]:
             continue
 
-        chrom = parts[0]
+        chrom = variant.chrom
         if _is_skipped_chromosome(chrom):
             continue
 
-        fmt_fields = parts[8].split(":")
-        sample_fields = parts[9].split(":")
-        dp_value = None
-        ad_value = None
-        for j, fmt in enumerate(fmt_fields):
-            if fmt == "DP" and j < len(sample_fields):
-                try:
-                    dp_value = int(sample_fields[j])
-                except ValueError:
-                    pass  # skip unparseable DP fields
-            if fmt == "AD" and j < len(sample_fields):
-                ad_value = sample_fields[j]
+        sample = variant.samples[0]
+        dp_value = sample.get("DP")
+        ad_value = sample.get("AD")
 
         if dp_value is not None and dp_value > 0:
             chr_dps.setdefault(chrom, []).append(dp_value)
 
         # BAF: reservoir sampling over autosomal het SNPs only
         is_autosome = not _is_sex_chromosome(chrom, sex_chromosome_names)
-        gt_field = sample_fields[0] if sample_fields else ""
-        if is_autosome and gt_field in ("0/1", "0|1", "1|0") and ad_value:
-            ad_parts = ad_value.split(",")
-            if len(ad_parts) >= 2:  # noqa: PLR2004
-                try:
-                    ref_count, alt_count = int(ad_parts[0]), int(ad_parts[1])
-                    total = ref_count + alt_count
-                    if total >= 10:  # noqa: PLR2004
-                        baf = alt_count / total
-                        if 0.1 <= baf <= 0.9:  # noqa: PLR2004
-                            baf_seen += 1
-                            if len(baf_reservoir) < het_sample_count:
-                                baf_reservoir.append(baf)
-                            else:
-                                idx = random.randint(0, baf_seen - 1)  # noqa: S311
-                                if idx < het_sample_count:
-                                    baf_reservoir[idx] = baf
-                except ValueError:
-                    pass  # skip unparseable AD fields
+        if is_autosome and sample.get("GT") in ((0, 1), (1, 0)) and ad_value and len(ad_value) >= 2:  # noqa: PLR2004
+            ref_count, alt_count = ad_value[:2]
+            if ref_count is not None and alt_count is not None:
+                total = ref_count + alt_count
+                if total >= 10:  # noqa: PLR2004
+                    baf = alt_count / total
+                    if 0.1 <= baf <= 0.9:  # noqa: PLR2004
+                        baf_seen += 1
+                        if len(baf_reservoir) < het_sample_count:
+                            baf_reservoir.append(baf)
+                        else:
+                            idx = random.randint(0, baf_seen - 1)  # noqa: S311
+                            if idx < het_sample_count:
+                                baf_reservoir[idx] = baf
 
-    proc.wait()
-    if proc.returncode and proc.returncode != 0:
-        raise RuntimeError(f"bcftools exited with code {proc.returncode}")
+    reader.close()
 
     chr_data = {}
     for chrom, dps in chr_dps.items():

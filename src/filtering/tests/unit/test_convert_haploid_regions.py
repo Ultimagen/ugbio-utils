@@ -1,35 +1,41 @@
 import pysam
 import pytest
-from ugbio_core.convert_haploid_regions import (
-    _B37_NON_PAR,
-    _HG38_NON_PAR,
+from ugbio_filtering.convert_haploid_regions import (
     _convert_to_haploid,
     _in_regions,
+    _read_par_regions,
     convert_haploid_regions,
 )
 
+_HG38_PAR = [
+    ("chrX", 10001, 2781479),
+    ("chrX", 155701383, 156030895),
+    ("chrY", 10001, 2781479),
+    ("chrY", 56887903, 57217415),
+]
+
 
 class TestInRegions:
-    def test_inside_nonpar(self):
-        assert _in_regions("chrX", 5000000, _HG38_NON_PAR) is True
+    def test_inside_par(self):
+        assert _in_regions("chrX", 50000, _HG38_PAR) is True
 
-    def test_par1_not_in_nonpar(self):
-        # PAR1 is chrX:10001-2781479 — positions inside PAR1 should NOT be in non-PAR
-        assert _in_regions("chrX", 50000, _HG38_NON_PAR) is False
-        assert _in_regions("chrX", 2000000, _HG38_NON_PAR) is False
+    def test_outside_par(self):
+        assert _in_regions("chrX", 5000000, _HG38_PAR) is False
 
-    def test_par1_region_not_in_nonpar(self):
-        # Non-PAR entry (chrX, 1, 10001) covers VCF pos 2-10001 (s < pos <= e)
-        # PAR1 starts at VCF pos 10002 (BED 10001), so 10001 is the last non-PAR base
-        assert _in_regions("chrX", 10001, _HG38_NON_PAR) is True
-        assert _in_regions("chrX", 10002, _HG38_NON_PAR) is False  # first PAR1 base
+    def test_par_start_boundary(self):
+        assert _in_regions("chrX", 10001, _HG38_PAR) is False
+        assert _in_regions("chrX", 10002, _HG38_PAR) is True
 
-    def test_autosome_not_in_nonpar(self):
-        assert _in_regions("chr1", 1000000, _HG38_NON_PAR) is False
+    def test_autosome_not_in_par(self):
+        assert _in_regions("chr1", 1000000, _HG38_PAR) is False
 
-    def test_b37_regions(self):
-        assert _in_regions("X", 5000000, _B37_NON_PAR) is True
-        assert _in_regions("chrX", 5000000, _B37_NON_PAR) is False  # wrong naming
+    def test_read_par_regions(self, tmp_path):
+        par_bed = tmp_path / "par.bed"
+        par_bed.write_text("chrX\t10001\t2781479\nchrY\t10001\t2781479\n")
+        assert _read_par_regions(str(par_bed)) == {
+            "chrX": [("chrX", 10001, 2781479)],
+            "chrY": [("chrY", 10001, 2781479)],
+        }
 
 
 class TestConvertToHaploid:
@@ -55,7 +61,6 @@ class TestConvertToHaploid:
         reader = pysam.VariantFile(vcf_path)
         variant = next(reader)
         result = _convert_to_haploid(variant)
-        # Should convert to haploid GT=1, PL should have 2 values
         assert len(result.samples[0]["PL"]) == 2
         assert result.samples[0]["GT"] == (1,)
 
@@ -69,6 +74,12 @@ class TestConvertToHaploid:
 
 
 class TestConvertHaploidRegions:
+    @staticmethod
+    def _write_par_bed(tmp_path):
+        par_bed = tmp_path / "par.bed"
+        par_bed.write_text("".join(f"{chrom}\t{start}\t{end}\n" for chrom, start, end in _HG38_PAR))
+        return str(par_bed)
+
     def _make_test_vcf(self, tmp_path, records):
         vcf_path = str(tmp_path / "input.vcf.gz")
         header = pysam.VariantHeader()
@@ -91,31 +102,28 @@ class TestConvertHaploidRegions:
 
     def test_nonpar_converted_par_preserved(self, tmp_path):
         records = [
-            ("chr1", 1000000, (0, 1), [30, 0, 40]),  # autosome — should stay diploid
-            ("chrX", 15000, (1, 1), [60, 30, 0]),  # PAR1 — should stay diploid
-            ("chrX", 5000000, (1, 1), [60, 30, 0]),  # non-PAR — should become haploid
+            ("chr1", 1000000, (0, 1), [30, 0, 40]),
+            ("chrX", 15000, (1, 1), [60, 30, 0]),
+            ("chrX", 5000000, (1, 1), [60, 30, 0]),
         ]
         input_vcf = self._make_test_vcf(tmp_path, records)
         output_vcf = str(tmp_path / "output.vcf.gz")
 
-        convert_haploid_regions(input_vcf, output_vcf, "hg38_non_par")
+        convert_haploid_regions(input_vcf, output_vcf, self._write_par_bed(tmp_path))
 
         reader = pysam.VariantFile(output_vcf)
         results = list(reader)
 
-        # chr1: diploid preserved
         assert len(results[0].samples[0]["PL"]) == 3
-        # chrX PAR: diploid preserved
         assert len(results[1].samples[0]["PL"]) == 3
-        # chrX non-PAR: haploid
         assert len(results[2].samples[0]["PL"]) == 2
 
-    def test_auto_detect_hg38(self, tmp_path):
+    def test_par_bed_defines_sex_chromosomes(self, tmp_path):
         records = [("chrX", 5000000, (1, 1), [60, 30, 0])]
         input_vcf = self._make_test_vcf(tmp_path, records)
         output_vcf = str(tmp_path / "output.vcf.gz")
 
-        convert_haploid_regions(input_vcf, output_vcf, "auto")
+        convert_haploid_regions(input_vcf, output_vcf, self._write_par_bed(tmp_path))
 
         reader = pysam.VariantFile(output_vcf)
         result = next(reader)
@@ -133,4 +141,4 @@ class TestConvertHaploidRegions:
         vcf.close()
 
         with pytest.raises(ValueError, match="Expected single-sample VCF"):
-            convert_haploid_regions(vcf_path, str(tmp_path / "out.vcf.gz"))
+            convert_haploid_regions(vcf_path, str(tmp_path / "out.vcf.gz"), self._write_par_bed(tmp_path))
