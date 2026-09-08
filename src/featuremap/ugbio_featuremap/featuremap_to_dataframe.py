@@ -86,8 +86,27 @@ from ugbio_featuremap.filter_dataframe import (
 
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
-CHUNK_BP_DEFAULT = 10_000_000  # 10 Mbp per processing chunk
+CHUNK_BP_DEFAULT = 10_000_000  # 10 Mbp per processing chunk (also the max clamp for adaptive sizing)
 MAX_DEBUG_FILES_TO_SHOW = 3  # Number of file paths to show in debug logs
+
+# --- Adaptive genome-window sizing for the VCF→Parquet region parallelism ---------------------
+# Each parallel worker streams its whole region into a single *exploded* Polars frame
+# (one row per read × ~44 list FORMAT fields), so its peak memory scales with
+# records-in-window × reads-per-locus. reads-per-locus is bounded by the pipeline's
+# max_coverage filter, so it is enough to bound the *record count* per window to keep any
+# single worker's frame bounded — regardless of how dense the featuremap is.
+#
+# We therefore size each window so it holds ~TARGET_RECORDS_PER_WINDOW records:
+#     window_bp = clamp(round(genome_bp * TARGET / max(total_records, 1)), MIN_WINDOW_BP, CHUNK_BP_DEFAULT)
+#
+# Sanity check (dense whole-genome duplex-hmer featuremap, ~349M records over a ~3.1 Gbp genome):
+#     3.1e9 * 300_000 / 3.49e8 ≈ 2.66e6  → ~2.7 Mbp windows (in the target 2-3 Mbp band).
+# A sparse featuremap stays at the 10 Mbp cap: the cap kicks in when
+#     total_records ≤ genome_bp * TARGET / CHUNK_BP_DEFAULT ≈ 3.1e9 * 300_000 / 1e7 ≈ 9.3e7,
+# i.e. below ~93M records genome-wide the window is clamped to 10 Mbp, so existing
+# small/sparse-file behavior is unchanged.
+TARGET_RECORDS_PER_WINDOW = 300_000  # aim for ~300k VCF records per parallel window
+MIN_WINDOW_BP = 250_000  # never go below 250 kbp windows (avoids pathological window explosion)
 COL_X_IC = "X_IC"  # Indel-class column emitted by snvfind: "ins"/"del" for hmer-indels, null for SNVs
 
 
@@ -566,6 +585,87 @@ def _resolve_bedtools_command() -> str:
     return path
 
 
+def _parse_vcf_contigs(vcf_path: str, bcftools_path: str) -> list[tuple[str, int]]:
+    """
+    Parse ``##contig=<ID=...,length=...>`` lines from the VCF header.
+
+    Only IDs that are strictly alphanumeric (letters / digits only) are kept, matching
+    the contigs that :func:`_generate_genomic_regions` will actually window over.
+
+    Returns
+    -------
+    list[tuple[str, int]]
+        List of ``(contig_id, length)`` tuples.
+
+    Raises
+    ------
+    RuntimeError
+        If no suitable ``##contig`` lines are found.
+    """
+    contig_re = re.compile(r"##contig=<ID=([^,>]+),length=(\d+)")
+    header = subprocess.check_output([bcftools_path, "view", "-h", vcf_path], text=True)
+    contigs: list[tuple[str, int]] = [
+        (cid, int(length))
+        for cid, length in (m.groups() for m in contig_re.finditer(header))
+        if re.fullmatch(r"[A-Za-z0-9]+", cid)
+    ]
+    if not contigs:
+        raise RuntimeError("No suitable ##contig lines found in VCF header")
+    return contigs
+
+
+def _count_vcf_records(vcf_path: str, bcftools_path: str) -> int | None:
+    """
+    Return the total number of records in a VCF, read cheaply from its index.
+
+    Uses ``bcftools index -n`` which reads the record count from the ``.tbi``/``.csi``
+    index without scanning the file body (fast even for whole-genome featuremaps).
+
+    Returns
+    -------
+    int | None
+        The record count, or ``None`` if it cannot be determined (e.g. missing index
+        or an unexpected bcftools output). Callers should fall back to a fixed window
+        size in that case rather than doing a slow ``bcftools view | wc``.
+    """
+    try:
+        out = subprocess.check_output([bcftools_path, "index", "-n", vcf_path], text=True).strip()
+        return int(out)
+    except (subprocess.CalledProcessError, ValueError, OSError) as exc:
+        log.warning(
+            f"Could not determine VCF record count via 'bcftools index -n' ({exc}); "
+            "falling back to the fixed default window size for region sizing"
+        )
+        return None
+
+
+def _choose_window_bp(
+    total_records: int,
+    genome_bp: int,
+    *,
+    target_records_per_window: int = TARGET_RECORDS_PER_WINDOW,
+    min_window_bp: int = MIN_WINDOW_BP,
+    max_window_bp: int = CHUNK_BP_DEFAULT,
+) -> int:
+    """
+    Choose a genome window size (bp) by variant-record density.
+
+    Sizes windows so each holds roughly ``target_records_per_window`` records, which bounds
+    each parallel worker's exploded frame (records × reads-per-locus) regardless of how dense
+    the featuremap is::
+
+        window_bp = clamp(round(genome_bp * target / max(total_records, 1)), min_window_bp, max_window_bp)
+
+    The result is monotonic: more records → smaller-or-equal window. A sparse featuremap is
+    clamped to ``max_window_bp`` (the historical fixed default), leaving small-file behavior
+    unchanged.
+    """
+    if genome_bp <= 0:
+        return max_window_bp
+    raw = round(genome_bp * target_records_per_window / max(total_records, 1))
+    return int(max(min_window_bp, min(raw, max_window_bp)))
+
+
 def _generate_genomic_regions(
     vcf_path: str,
     jobs: int,
@@ -580,18 +680,7 @@ def _generate_genomic_regions(
     ~10× ``jobs``.
     """
     log.debug("Extracting contig information from VCF header")
-    # Extract contig lengths from header
-    contig_re = re.compile(r"##contig=<ID=([^,>]+),length=(\d+)")
-    header = subprocess.check_output([bcftools_path, "view", "-h", vcf_path], text=True)
-    # Keep only IDs that are strictly alphanumeric (letters / digits only)
-    contigs: list[tuple[str, int]] = [
-        (cid, int(length))
-        for cid, length in (m.groups() for m in contig_re.finditer(header))
-        if re.fullmatch(r"[A-Za-z0-9]+", cid)
-    ]
-
-    if not contigs:
-        raise RuntimeError("No suitable ##contig lines found in VCF header")
+    contigs = _parse_vcf_contigs(vcf_path, bcftools_path)
     log.debug(f"Found {len(contigs)} contigs: {contigs[:5]}{'...' if len(contigs) > 5 else ''}")  # noqa PLR2004
 
     # Write genome.sizes tmp file
@@ -1201,7 +1290,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
     out: str,
     drop_info: set[str] | None = None,
     drop_format: set[str] | None = None,
-    chunk_bp: int = CHUNK_BP_DEFAULT,
+    chunk_bp: int | None = None,
     jobs: int = DEFAULT_JOBS,
     list_mode: str = "explode",
     log_level: int = logging.INFO,
@@ -1231,8 +1320,12 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
         INFO fields to exclude
     drop_format : set[str] | None
         FORMAT fields to exclude
-    chunk_bp : int
-        Maximum number of base-pairs per chunk (default 10 Mbp).
+    chunk_bp : int | None
+        Base-pairs per processing chunk (genome window). If None (default), the window is
+        sized adaptively by variant-record density (see ``_choose_window_bp``) so each parallel
+        worker's exploded frame stays bounded on dense featuremaps, clamped to
+        ``CHUNK_BP_DEFAULT`` (10 Mbp) as the maximum. If an explicit value is given, adaptive
+        sizing is disabled and that value is used verbatim.
     jobs : int
         Number of parallel jobs (0 = auto-detect CPU cores)
     list_mode : str
@@ -1354,13 +1447,32 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
             if isinstance(read_filters, dict) and KEY_FILTERS in read_filters:
                 log.info(f"Filter configuration contains {len(read_filters[KEY_FILTERS])} filter rules")
 
+        # Choose the genome window size. If chunk_bp was not explicitly overridden, size it
+        # adaptively by variant-record density so each worker's exploded frame stays bounded on
+        # dense featuremaps; an explicit chunk_bp disables adaptivity and is used verbatim.
+        if chunk_bp is None:
+            total_records = _count_vcf_records(vcf, bcftools)
+            if total_records is None:
+                window_bp = CHUNK_BP_DEFAULT
+                log.info(f"Record count unavailable; using fixed window size {window_bp:,} bp")
+            else:
+                genome_bp = sum(length for _, length in _parse_vcf_contigs(vcf, bcftools))
+                window_bp = _choose_window_bp(total_records, genome_bp)
+                log.info(
+                    f"Adaptive window sizing: total_records={total_records:,}, "
+                    f"genome_bp={genome_bp:,}, chosen window={window_bp:,} bp"
+                )
+        else:
+            window_bp = chunk_bp
+            log.info(f"Using explicit window size {window_bp:,} bp (adaptive sizing disabled)")
+
         # Generate genomic regions (fixed windows via bedtools)
         regions = _generate_genomic_regions(
             vcf,
             jobs,
             bcftools,
             bedtools,
-            window_size=chunk_bp,
+            window_size=window_bp,
         )
         log.info(f"Created {len(regions)} regions for parallel processing")
         log.debug(f"First 5 regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
@@ -1802,8 +1914,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--chunk-bp",
         type=int,
-        default=CHUNK_BP_DEFAULT,
-        help=f"Base-pairs per processing chunk (default {CHUNK_BP_DEFAULT} bp)",
+        default=None,
+        help=(
+            "Base-pairs per processing chunk (genome window). If omitted, the window is sized "
+            f"adaptively by variant-record density, capped at {CHUNK_BP_DEFAULT} bp. Passing an "
+            "explicit value disables adaptive sizing and uses that value verbatim."
+        ),
     )
     parser.add_argument(
         "--list-mode",
