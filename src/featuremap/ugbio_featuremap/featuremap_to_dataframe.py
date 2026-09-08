@@ -88,6 +88,7 @@ from ugbio_featuremap.filter_dataframe import (
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
 CHUNK_BP_DEFAULT = 10_000_000  # 10 Mbp per processing chunk
 MAX_DEBUG_FILES_TO_SHOW = 3  # Number of file paths to show in debug logs
+COL_X_IC = "X_IC"  # Indel-class column emitted by snvfind: "ins"/"del" for hmer-indels, null for SNVs
 
 
 def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> None:
@@ -707,11 +708,109 @@ def _get_awk_script_path(mode: str = "explode") -> str:
     raise FileNotFoundError(f"AWK script not found: {awk_script}")
 
 
-def _merge_parquet_files_lazy(  # noqa: PLR0912
+def _stratified_downsample_by_variant_type(
+    parquet_files: list[str],
+    output_path: str,
+    downsample_reads: int,
+    downsample_seed: int | None,
+    indel_snv_balance_fraction: float,
+) -> None:
+    """
+    Downsample the merged training set to ``downsample_reads`` rows while rebalancing the
+    mix of hmer-indel rows (``X_IC`` in {"ins", "del"}) and SNV rows so indels make up
+    approximately ``indel_snv_balance_fraction`` of the output.
+
+    This is best-effort and never upsamples/duplicates: if either pool is scarce, the
+    realized fraction drifts toward what the data can supply (the deficit is refilled from
+    the other pool up to ``downsample_reads``). Indels are rare, so they are materialized
+    fully; SNVs use the same memory-bounded per-part sampling as the uniform path. The
+    combined survivors are fully shuffled (deterministically) so types interleave.
+
+    Parameters
+    ----------
+    parquet_files : list[str]
+        Part-files to merge; assumed to share a schema containing the ``X_IC`` column.
+    output_path : str
+        Output path for the merged, rebalanced parquet file.
+    downsample_reads : int
+        Target total row count (best-effort upper bound).
+    downsample_seed : int | None
+        Random seed; all sampling/shuffling is derived from this value only (with the
+        per-part ``+ i`` offset convention used by the uniform multi-part path).
+    indel_snv_balance_fraction : float
+        Target indel fraction of the output.
+    """
+    # Null-safe predicates: SNV rows carry a null X_IC, and `null.is_in(...)` yields null
+    # (not False), so negating the raw predicate would silently drop SNV rows. fill_null(False)
+    # makes "not an indel" == "SNV" hold for null/other values.
+    pred = pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False)
+    snv_pred = ~pred
+
+    # Count indel vs SNV rows across parts lazily (bounded memory).
+    part_indel_counts = [pl.scan_parquet(f).filter(pred).select(pl.len()).collect().item() for f in parquet_files]
+    part_total_counts = [pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files]
+    n_indel = sum(part_indel_counts)
+    n_total = sum(part_total_counts)
+    n_snv = n_total - n_indel
+
+    # Best-effort targets (never exceed available supply).
+    target_total = min(downsample_reads, n_indel + n_snv)
+    want_indel = round(indel_snv_balance_fraction * target_total)
+    target_indel = min(want_indel, n_indel)
+    target_snv = min(target_total - target_indel, n_snv)
+    target_indel = min(n_indel, target_total - target_snv)  # refill if SNV-scarce
+
+    log.info(
+        f"Stratified downsample: {n_indel} indel + {n_snv} SNV rows -> "
+        f"target {target_indel} indel + {target_snv} SNV "
+        f"(target fraction {indel_snv_balance_fraction})"
+    )
+
+    # Indels are rare: collect them fully, then trim to target.
+    indel_df = pl.concat([pl.scan_parquet(f).filter(pred) for f in parquet_files], how="vertical").collect()
+    if indel_df.height > target_indel:
+        indel_df = indel_df.sample(n=target_indel, seed=downsample_seed)
+
+    # SNVs: memory-bounded per-part sampling (mirror the uniform multi-part path), then exact-trim.
+    if n_snv > 0 and target_snv > 0:
+        keep_frac = min(1.0, (target_snv / n_snv) * 1.05 + 1000.0 / n_snv)
+        sampled_parts = [
+            pl.read_parquet(f).filter(snv_pred).sample(fraction=keep_frac, seed=downsample_seed + i)
+            for i, f in enumerate(parquet_files)
+        ]
+        snv_df = pl.concat(sampled_parts, how="vertical")
+        if snv_df.height > target_snv:
+            snv_df = snv_df.sample(n=target_snv, seed=downsample_seed)
+    else:
+        # Preserve schema even when no SNVs are kept.
+        snv_df = (
+            pl.concat([pl.scan_parquet(f).filter(snv_pred) for f in parquet_files], how="vertical").head(0).collect()
+        )
+
+    # Combine and deterministically shuffle so indel/SNV rows interleave.
+    merged_df = pl.concat([indel_df, snv_df], how="vertical")
+    merged_df = merged_df.sample(fraction=1.0, shuffle=True, seed=downsample_seed)
+
+    realized_indel = merged_df.filter(pred).height
+    realized_total = merged_df.height
+    realized_fraction = (realized_indel / realized_total) if realized_total else 0.0
+    log.info(
+        f"Stratified downsample realized: {realized_indel} indel + {realized_total - realized_indel} SNV "
+        f"= {realized_total} rows (indel fraction {realized_fraction:.4f})"
+    )
+
+    merged_df.write_parquet(output_path)
+
+    for f in parquet_files:
+        Path(f).unlink(missing_ok=True)
+
+
+def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
     parquet_files: list[str],
     output_path: str,
     downsample_reads: int | None = None,
     downsample_seed: int | None = None,
+    indel_snv_balance_fraction: float | None = None,
 ) -> None:
     """
     Merge multiple Parquet files using Polars lazy evaluation for memory efficiency.
@@ -727,7 +826,38 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912
         is less than this value, all reads are returned.
     downsample_seed : int | None
         Random seed for downsampling (optional, for reproducibility)
+    indel_snv_balance_fraction : float | None
+        If specified (and downsampling is active), rebalance the downsampled set so that
+        hmer-indel rows (X_IC in {"ins", "del"}) make up this fraction of the output,
+        instead of the default uniform downsample. No-op if unset, if the X_IC column is
+        absent, if there are no indel rows, or if the dataset fits within downsample_reads.
     """
+    # Stratified (indel/SNV-balanced) downsample: opt-in and only when it can change the
+    # result. Any of the following short-circuits back to the byte-identical uniform path:
+    #   - no target fraction requested
+    #   - no downsample target (downsample_reads is None)
+    #   - the X_IC column is absent from the merged schema
+    #   - there are 0 indel rows to balance against
+    #   - the dataset already fits within downsample_reads (nothing is dropped)
+    if indel_snv_balance_fraction is not None and downsample_reads is not None and parquet_files:
+        try:
+            schema_names = pl.scan_parquet(parquet_files[0]).collect_schema().names()
+        except Exception:  # noqa: BLE001 - be conservative; fall back to uniform on any schema error
+            schema_names = []
+        if COL_X_IC in schema_names:
+            pred = pl.col(COL_X_IC).is_in(["ins", "del"])
+            n_indel = sum(pl.scan_parquet(f).filter(pred).select(pl.len()).collect().item() for f in parquet_files)
+            total_rows = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
+            if n_indel > 0 and total_rows > downsample_reads:
+                _stratified_downsample_by_variant_type(
+                    parquet_files,
+                    output_path,
+                    downsample_reads,
+                    downsample_seed,
+                    indel_snv_balance_fraction,
+                )
+                return
+
     if not parquet_files:
         log.warning("No Parquet files to merge - creating empty output file")
         empty_df = pl.DataFrame({"CHROM": [], "POS": [], "REF": [], "ALT": []})
@@ -1066,7 +1196,7 @@ def _drop_fields(
     return info_meta, fmt_meta
 
 
-def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
+def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
     vcf: str,
     out: str,
     drop_info: set[str] | None = None,
@@ -1080,6 +1210,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
     read_filter_json_key: str | None = None,
     downsample_reads: int | None = None,
     downsample_seed: int | None = None,
+    indel_snv_balance_fraction: float | None = None,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -1122,6 +1253,10 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
         is less than this value, all reads are returned.
     downsample_seed : int | None
         Random seed for downsampling (optional, for reproducibility)
+    indel_snv_balance_fraction : float | None
+        If specified, rebalance the downsampled set so hmer-indel rows make up this fraction
+        of the output (see `_merge_parquet_files_lazy`). No-op if unset or if there is no
+        X_IC column / no indels / the dataset fits within downsample_reads.
     """
     log.info(f"Input: {vcf}")
     log.info(f"Output: {out}")
@@ -1290,7 +1425,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
                     "Check log for details. If using read filters, they may be filtering out all data."
                 )
 
-            _merge_parquet_files_lazy(part_files, out, downsample_reads, downsample_seed)
+            _merge_parquet_files_lazy(part_files, out, downsample_reads, downsample_seed, indel_snv_balance_fraction)
 
         final_row_count = pl.scan_parquet(out).select(pl.len()).collect().item()
         log.info(f"Conversion completed: {out} ({final_row_count:,} rows)")
@@ -1711,6 +1846,16 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Random seed for reproducible downsampling",
     )
+    parser.add_argument(
+        "--indel-snv-balance-fraction",
+        type=float,
+        default=None,
+        help=(
+            "Target hmer-indel fraction of the downsampled training set. If set, the "
+            "downsample rebalances indel (X_IC in {ins,del}) vs SNV rows toward this "
+            "fraction instead of uniform sampling. No-op if unset or no X_IC column."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args(argv)
 
@@ -1745,6 +1890,7 @@ def main(argv: list[str] | None = None) -> None:
         read_filter_json_key=args.read_filter_json_key,
         downsample_reads=args.downsample_reads,
         downsample_seed=args.downsample_seed,
+        indel_snv_balance_fraction=args.indel_snv_balance_fraction,
     )
 
 
