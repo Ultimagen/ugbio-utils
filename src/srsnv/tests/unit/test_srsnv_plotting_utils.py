@@ -794,13 +794,11 @@ def _add_hmer_variant_columns(df, n_indel=300, seed=5):
     xic[n_indel // 2 : n_indel] = "del"
     df["X_IC"] = xic
     df["variant_type"] = np.where(pd.Series(xic).isin(["ins", "del"]).to_numpy(), "hmer_indel", "snv")
-    # snvfind context fields consumed by the hmer-indel context figure
+    # snvfind context fields consumed by the hmer-indel context figure (geometry-correct set)
     df["X_HMER_RUN"] = rng.integers(1, 10, len(df))  # affected reference run length
+    df["X_HMER_BASE"] = rng.choice(list("ACGT"), len(df))  # repeated base of the run
+    df["X_HMER_PRE"] = rng.choice(list("ACGT"), len(df))  # base 5' of the run
     df["X_HMER_POST"] = rng.choice(list("ACGT"), len(df))  # base 3' of the run
-    if "X_NEXT1" not in df.columns:
-        df["X_NEXT1"] = rng.choice(list("ACGT"), len(df))  # first base of the run (hmer base)
-    if "REF" not in df.columns:
-        df["REF"] = rng.choice(list("ACGT"), len(df))  # anchor base (base-before)
     return df
 
 
@@ -850,7 +848,8 @@ def test_hmer_indel_context_plot(consensus_resources, real_models_calc_run_info)
         table = pd.read_hdf(h5_file, key="hmer_indel_context_stats")
         assert set(table["ins_del"]) <= {"ins", "del"}
         assert set(table["hmer_base"]) <= set("ACGT")
-        assert table["hmer_len"].max() <= 8  # clipped to >=8 bucket  # noqa: PLR2004
+        assert table["hmer_len"].max() <= 6  # clipped to the >=6 bucket  # noqa: PLR2004
+        assert "read_group" in table.columns
         assert (table["n_TP"] >= 0).all() and (table["n_FP"] >= 0).all()
         assert os.path.exists(ctx + ".png")
 
