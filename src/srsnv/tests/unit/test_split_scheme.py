@@ -30,9 +30,12 @@ from ugbio_srsnv.srsnv_utils import (
     IS_CONSENSUS,
     IS_MIXED,
     MATE_PRESENT,
+    NF,
+    NR,
     READ_GROUP,
     RS,
     ReportMode,
+    add_duplex_columns_to_featuremap_df,
 )
 
 # ──────────────────────────── detection ────────────────────────────
@@ -240,6 +243,35 @@ class TestAddColumns:
             DUPLEX_MOL_SINGLE_STRAND,
             DUPLEX_MOL_PAIRED,
         ]
+
+    def test_duplex_is_consensus_derived_from_nf_nr(self):
+        # nf/nr present -> is_consensus is (nf>0 | nr>0), authoritative over any stored column.
+        # Only nf==0 & nr==0 is a singleton; single-strand (nf>0 xor nr>0) is consensus.
+        data_df = pd.DataFrame({MATE_PRESENT: [0, 0, 0, 0], NF: [0, 2, 0, 3], NR: [0, 0, 5, 1]})
+        out = add_duplex_columns_to_featuremap_df(data_df.copy())
+        assert out[IS_CONSENSUS].tolist() == [False, True, True, True]
+        g = ss._duplex_groups(out)
+        assert list(g) == [
+            DUPLEX_MOL_SINGLETON,  # nf==0 & nr==0
+            DUPLEX_MOL_SINGLE_STRAND,  # nf>0
+            DUPLEX_MOL_SINGLE_STRAND,  # nr>0
+            DUPLEX_MOL_SINGLE_STRAND,  # both counts >0 (still one read/one strand-family)
+        ]
+
+    def test_duplex_nan_is_consensus_not_misfiled_as_singleton(self):
+        # Regression: held-out reads have is_consensus == NaN but are genuine consensus reads
+        # (nf>0 or nr>0). Must NOT be bucketed as singleton (the old fillna(0) bug).
+        data_df = pd.DataFrame({MATE_PRESENT: [np.nan, np.nan], IS_CONSENSUS: [np.nan, np.nan], NF: [4, 0], NR: [0, 6]})
+        out = add_duplex_columns_to_featuremap_df(data_df.copy())
+        assert out[IS_CONSENSUS].tolist() == [True, True]
+        assert list(ss._duplex_groups(out)) == [DUPLEX_MOL_SINGLE_STRAND, DUPLEX_MOL_SINGLE_STRAND]
+
+    def test_duplex_nf_nr_override_stored_is_consensus(self):
+        # A stored is_consensus==0 on a read that actually carries nf/nr is corrected to consensus.
+        data_df = pd.DataFrame({MATE_PRESENT: [0], IS_CONSENSUS: [0], NF: [2], NR: [0]})
+        out = add_duplex_columns_to_featuremap_df(data_df.copy())
+        assert out[IS_CONSENSUS].tolist() == [True]
+        assert list(ss._duplex_groups(out)) == [DUPLEX_MOL_SINGLE_STRAND]
 
     def test_duplex_two_way_without_is_consensus_regression(self):
         # No is_consensus column -> previous 2-way behavior; read_group has no singleton members.

@@ -80,6 +80,8 @@ ET_FILLNA = "et_fillna"  # end tag with NAs filled in
 FS = "fs"  # forward-strand read count (consensus data)
 RS = "rs"  # reverse-strand read count (consensus data)
 IS_CONSENSUS = "is_consensus"  # read is a consensus read (fs >= 1 and rs >= 1)
+NF = "nf"  # per-read forward-strand consensus count (duplex path); raw singleton has nf==0 & nr==0
+NR = "nr"  # per-read reverse-strand consensus count (duplex path)
 
 # Duplex per-molecule data: one prediction row is a MOLECULE built from two consensus reads
 # (opposite strands, same molecular id MI). ``mate_present`` = 1 when the molecule had a real
@@ -185,26 +187,36 @@ def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
 
     In a duplex run each row is a molecule; ``mate_present`` marks whether the molecule had a real
     partner (both strand-mates, 1) or is a single-strand molecule / singleton (0). The per-row
-    ``is_consensus`` flag (1 = a consensus read with nf/nr strand counts, 0 = a raw singleton), when
-    present, further separates singletons from single-strand consensus reads. This coerces both to
-    plain booleans so the duplex group function can split on them directly. ``is_consensus`` may be
-    absent in older 2-column data, in which case the split falls back to the 2-way behavior.
+    ``is_consensus`` flag (1 = a consensus read with nf/nr strand counts, 0 = a raw singleton)
+    further separates singletons from single-strand consensus reads.
+
+    ``is_consensus`` is derived directly from ``nf``/``nr`` (a read is a consensus read iff it
+    carries a strand-count tag, i.e. ``nf > 0`` or ``nr > 0``; a raw singleton has ``nf == 0`` and
+    ``nr == 0``). This is the DNN tensorizer's own definition and, unlike a stored ``is_consensus``
+    column, is well-defined for every row: in the DNN path the stored ``is_consensus`` is only
+    computed for tensorized/scored reads and is NaN for reads that were never tensorized (e.g. the
+    held-out chromosome), so a naive ``fillna(0)`` would misclassify those genuine consensus reads
+    as singletons. When ``nf``/``nr`` are absent we fall back to coercing the stored ``is_consensus``
+    column (older data); if that is absent too, the split degrades to the 2-way behavior.
 
     Parameters
     ----------
     data_df : pd.DataFrame
-        The featuremap dataframe, expected to contain the ``mate_present`` column (and optionally
-        the ``is_consensus`` column).
+        The featuremap dataframe, expected to contain the ``mate_present`` column (and ``nf``/``nr``
+        or a stored ``is_consensus`` column).
 
     Returns
     -------
     pd.DataFrame
-        The same dataframe with ``mate_present`` (and ``is_consensus`` when present) coerced to
+        The same dataframe with ``mate_present`` (and ``is_consensus`` when derivable) coerced to
         boolean columns.
     """
     logger.info("Adding duplex per-molecule columns to featuremap")
     data_df[MATE_PRESENT] = data_df[MATE_PRESENT].fillna(0).astype(bool)
-    if IS_CONSENSUS in data_df.columns:
+    if NF in data_df.columns and NR in data_df.columns:
+        # authoritative: consensus iff a strand-count tag is present (nf>0 or nr>0)
+        data_df[IS_CONSENSUS] = (data_df[NF].fillna(0) > 0) | (data_df[NR].fillna(0) > 0)
+    elif IS_CONSENSUS in data_df.columns:
         data_df[IS_CONSENSUS] = data_df[IS_CONSENSUS].fillna(0).astype(bool)
     return data_df
 
