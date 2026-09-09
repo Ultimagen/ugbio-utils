@@ -36,6 +36,7 @@ KEY_FIELDS = "fields"
 OP_IS_NULL = "is_null"
 OP_IS_NOT_NULL = "is_not_null"
 OP_ANY_NOT_NULL = "any_not_null"
+OP_ANY_OF = "any_of"  # composite OR of sub-rules (each a standard rule dict under KEY_FILTERS)
 
 # Filter types
 TYPE_QUALITY = "quality"
@@ -96,6 +97,8 @@ _OPS = {
 }
 
 _UNARY_OPS = {OP_IS_NULL, OP_IS_NOT_NULL, OP_ANY_NOT_NULL}
+# Composite ops carry a nested KEY_FILTERS list of sub-rules instead of a scalar RHS.
+_COMPOSITE_OPS = {OP_ANY_OF}
 
 
 def _get_filter_name(rule: dict[str, Any]) -> str:
@@ -106,12 +109,32 @@ def _get_filter_name(rule: dict[str, Any]) -> str:
 def _validate_filter_op(rule: dict[str, Any], index: int) -> None:
     """Validate operator and its required value keys."""
     op = rule[KEY_OP]
-    all_ops = {*_OPS, *_UNARY_OPS}
+    all_ops = {*_OPS, *_UNARY_OPS, *_COMPOSITE_OPS}
     if op not in all_ops:
         raise ValueError(f"Filter {index} has unsupported operator: {op}")
-    if op not in _UNARY_OPS:
+    # Composite ops (e.g. any_of) carry a nested filters list, and unary ops need no RHS.
+    if op not in _UNARY_OPS and op not in _COMPOSITE_OPS:
         if KEY_VALUE not in rule and KEY_VALUES not in rule and KEY_VALUE_FIELD not in rule:
             raise ValueError(f"Filter {index} must have either '{KEY_VALUE}', '{KEY_VALUES}', or '{KEY_VALUE_FIELD}'")
+
+
+def _validate_any_of(rule: dict[str, Any], index: int) -> None:
+    """Validate an ``any_of`` composite rule and its ORed sub-rules.
+
+    Sub-rules need ``op`` + ``field``/``fields`` (validated by ``_validate_filter_op``) but not
+    their own ``type`` — the composite rule carries the ``type``.
+    """
+    sub_rules = rule.get(KEY_FILTERS)
+    if not isinstance(sub_rules, list) or len(sub_rules) == 0:
+        raise ValueError(f"Filter {index} with '{OP_ANY_OF}' op requires a non-empty '{KEY_FILTERS}' list")
+    for j, sub in enumerate(sub_rules):
+        if not isinstance(sub, dict):
+            raise ValueError(f"Filter {index} '{OP_ANY_OF}' sub-rule {j} must be a dictionary")
+        if KEY_OP not in sub:
+            raise ValueError(f"Filter {index} '{OP_ANY_OF}' sub-rule {j} missing required '{KEY_OP}' key")
+        if sub[KEY_OP] != OP_ANY_NOT_NULL and KEY_FIELD not in sub:
+            raise ValueError(f"Filter {index} '{OP_ANY_OF}' sub-rule {j} missing required '{KEY_FIELD}' key")
+        _validate_filter_op(sub, index)
 
 
 def _validate_filter(rule: dict[str, Any], index: int) -> None:
@@ -127,7 +150,9 @@ def _validate_filter(rule: dict[str, Any], index: int) -> None:
     if rule[KEY_TYPE] not in valid_types:
         raise ValueError(f"Filter {index} has invalid type '{rule[KEY_TYPE]}'. Must be one of: {valid_types}")
 
-    if rule[KEY_OP] == OP_ANY_NOT_NULL:
+    if rule[KEY_OP] == OP_ANY_OF:
+        _validate_any_of(rule, index)
+    elif rule[KEY_OP] == OP_ANY_NOT_NULL:
         if KEY_FIELDS not in rule or not isinstance(rule[KEY_FIELDS], list) or len(rule[KEY_FIELDS]) == 0:
             raise ValueError(f"Filter {index} with '{OP_ANY_NOT_NULL}' op requires a non-empty '{KEY_FIELDS}' list")
     elif KEY_FIELD not in rule:
@@ -323,6 +348,15 @@ def validate_filter_config(cfg: dict[str, Any]) -> None:
 def _mask_for_rule(rule: dict[str, Any]) -> pl.Expr:
     """Return a boolean expression for a single rule."""
     op = rule[KEY_OP]
+
+    if op == OP_ANY_OF:
+        # OR-combine the sub-rule masks. Recurses so any existing op works inside the OR.
+        # fill_null(False): a row null under every sub-rule does not pass (matches AND-mask semantics).
+        sub_rules = rule[KEY_FILTERS]
+        expr = _mask_for_rule(sub_rules[0])
+        for sub in sub_rules[1:]:
+            expr = expr | _mask_for_rule(sub)
+        return expr.fill_null(value=False)
 
     if op == OP_ANY_NOT_NULL:
         fields = rule[KEY_FIELDS]

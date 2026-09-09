@@ -176,6 +176,64 @@ class TestMaskForRule:
         result = lf.select(expr).collect().to_series()
         assert result.to_list() == [False, False, False]
 
+    def test_any_of_or_semantics(self):
+        """any_of ORs its sub-rules. Singleton-exclusion example: keep nf>0 OR nr>0.
+
+        Rows (nf, nr): singleton(0,0), ssc-fwd(2,0), ssc-rev(0,3), duplex(2,2), singleton(0,0).
+        Keeps every consensus read (ssc + duplex), drops only nf==0 & nr==0.
+        """
+        lf = pl.DataFrame({"nf": [0, 2, 0, 2, 0], "nr": [0, 0, 3, 2, 0]}).lazy()
+        rule = {
+            fd.KEY_OP: fd.OP_ANY_OF,
+            fd.KEY_TYPE: fd.TYPE_QUALITY,
+            fd.KEY_NAME: "exclude_singletons",
+            fd.KEY_FILTERS: [
+                {fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+                {fd.KEY_FIELD: "nr", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+            ],
+        }
+        expr = fd._mask_for_rule(rule)
+        result = lf.select(expr).collect().to_series()
+        assert result.to_list() == [False, True, True, True, False]
+
+    def test_any_of_differs_from_and_of_subrules(self):
+        """OR (any_of) keeps ssc reads that AND-ing the two sub-rules would drop."""
+        lf = pl.DataFrame({"nf": [2, 0, 2], "nr": [0, 3, 2]}).lazy()
+        or_rule = {
+            fd.KEY_OP: fd.OP_ANY_OF,
+            fd.KEY_TYPE: fd.TYPE_QUALITY,
+            fd.KEY_FILTERS: [
+                {fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+                {fd.KEY_FIELD: "nr", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+            ],
+        }
+        or_mask = lf.select(fd._mask_for_rule(or_rule)).collect().to_series().to_list()
+        and_mask = (
+            lf.select(
+                fd._mask_for_rule({fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: 0})
+                & fd._mask_for_rule({fd.KEY_FIELD: "nr", fd.KEY_OP: "gt", fd.KEY_VALUE: 0})
+            )
+            .collect()
+            .to_series()
+            .to_list()
+        )
+        assert or_mask == [True, True, True]  # all consensus kept
+        assert and_mask == [False, False, True]  # AND drops both ssc reads
+
+    def test_any_of_fill_null_all_null_dropped(self):
+        """A row null under every sub-rule field does not pass (fill_null False)."""
+        lf = pl.DataFrame({"nf": [None, 2], "nr": [None, 0]}).lazy()
+        rule = {
+            fd.KEY_OP: fd.OP_ANY_OF,
+            fd.KEY_TYPE: fd.TYPE_QUALITY,
+            fd.KEY_FILTERS: [
+                {fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+                {fd.KEY_FIELD: "nr", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+            ],
+        }
+        result = lf.select(fd._mask_for_rule(rule)).collect().to_series()
+        assert result.to_list() == [False, True]
+
     def test_value_field_comparison(self, sample_lf):
         """Compare two columns using value_field."""
         rule = {fd.KEY_FIELD: "ref", fd.KEY_OP: "eq", fd.KEY_VALUE_FIELD: "alt"}
@@ -464,6 +522,56 @@ class TestValidateFilterConfig:
         with pytest.raises(ValueError, match="requires a non-empty 'fields' list"):
             fd.validate_filter_config(
                 {fd.KEY_FILTERS: [{fd.KEY_OP: fd.OP_ANY_NOT_NULL, fd.KEY_FIELDS: [], fd.KEY_TYPE: fd.TYPE_REGION}]}
+            )
+
+    def test_valid_any_of(self):
+        cfg = {
+            fd.KEY_FILTERS: [
+                {
+                    fd.KEY_OP: fd.OP_ANY_OF,
+                    fd.KEY_TYPE: fd.TYPE_QUALITY,
+                    fd.KEY_NAME: "exclude_singletons",
+                    fd.KEY_FILTERS: [
+                        {fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+                        {fd.KEY_FIELD: "nr", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+                    ],
+                }
+            ]
+        }
+        fd.validate_filter_config(cfg)  # Should not raise (sub-rules need no 'type')
+
+    def test_any_of_empty_filters_raises(self):
+        with pytest.raises(ValueError, match="requires a non-empty 'filters' list"):
+            fd.validate_filter_config(
+                {fd.KEY_FILTERS: [{fd.KEY_OP: fd.OP_ANY_OF, fd.KEY_TYPE: fd.TYPE_QUALITY, fd.KEY_FILTERS: []}]}
+            )
+
+    def test_any_of_subrule_missing_op_raises(self):
+        with pytest.raises(ValueError, match="sub-rule 0 missing required 'op' key"):
+            fd.validate_filter_config(
+                {
+                    fd.KEY_FILTERS: [
+                        {
+                            fd.KEY_OP: fd.OP_ANY_OF,
+                            fd.KEY_TYPE: fd.TYPE_QUALITY,
+                            fd.KEY_FILTERS: [{fd.KEY_FIELD: "nf", fd.KEY_VALUE: 0}],
+                        }
+                    ]
+                }
+            )
+
+    def test_any_of_subrule_bad_op_raises(self):
+        with pytest.raises(ValueError, match="unsupported operator"):
+            fd.validate_filter_config(
+                {
+                    fd.KEY_FILTERS: [
+                        {
+                            fd.KEY_OP: fd.OP_ANY_OF,
+                            fd.KEY_TYPE: fd.TYPE_QUALITY,
+                            fd.KEY_FILTERS: [{fd.KEY_FIELD: "nf", fd.KEY_OP: "bad_op", fd.KEY_VALUE: 0}],
+                        }
+                    ]
+                }
             )
 
     def test_valid_downsample(self):
