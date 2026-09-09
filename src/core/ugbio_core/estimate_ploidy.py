@@ -262,7 +262,7 @@ def _classify_baf(baf_values: list[float]) -> dict:
         return {"label": "INSUFFICIENT_DATA", "confidence": f"(<50 het SNPs, found {n_het})", "n_het": n_het}
 
     di_count = sum(1 for b in baf_values if 0.40 <= b <= 0.60)  # noqa: PLR2004
-    tri_count = sum(1 for b in baf_values if (0.25 <= b <= 0.35) or (0.65 <= b <= 0.75))  # noqa: PLR2004
+    tri_count = sum(1 for b in baf_values if (0.25 <= b <= 0.4) or (0.60 <= b <= 0.75))  # noqa: PLR2004
     di_frac = round(di_count / n_het * 100, 1)
     tri_frac = round(tri_count / n_het * 100, 1)
 
