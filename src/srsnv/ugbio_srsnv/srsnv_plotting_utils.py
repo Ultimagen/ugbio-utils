@@ -44,6 +44,7 @@ from ugbio_srsnv.split_scheme import (
     resolve_scheme_and_add_columns,
 )
 from ugbio_srsnv.srsnv_utils import (
+    DUPLEX_MOL_PAIRED,
     ET,
     ET_FILLNA,
     FS,
@@ -85,6 +86,9 @@ IS_MIXED_START = "is_mixed_start"
 IS_MIXED_END = "is_mixed_end"
 MATE_PRESENT = "mate_present"  # duplex per-molecule flag (read by the DUPLEX group_fn)
 IS_CONSENSUS = "is_consensus"  # duplex per-read consensus flag (read by the DUPLEX group_fn)
+# per-molecule strand-concordance code emitted by the duplex tensorizer (1=concordant,
+# 0=single-strand difference, 2=other, -1=no mate). Absent in older runs -> no sub-split.
+DUPLEX_CONCORDANT = "duplex_concordant"
 FOLD_ID = "fold_id"
 
 EDIST = FeatureMapFields.EDIST.value
@@ -3479,9 +3483,22 @@ class SRSNVReport:
         label = data[LABEL].to_numpy().astype(bool)
         snvq = pd.to_numeric(data[QUAL], errors="coerce").to_numpy()
         snvq_thresholds = [50, 60, 70]
-        # read-type groups + an "All reads" margin (all read types together)
+        # read-type groups + an "All reads" margin (all read types together). When the duplex
+        # tensorizer emitted a per-molecule concordance code, split the aggregate "duplex molecule"
+        # row into two extra sub-rows: concordant (both strands carry the variant) and single-strand
+        # difference (opposite strand carries reference). The aggregate duplex row is kept as-is.
+        dc_codes = (
+            pd.to_numeric(data[DUPLEX_CONCORDANT], errors="coerce").to_numpy()
+            if DUPLEX_CONCORDANT in data.columns
+            else None
+        )
         rt_masks = [("All reads", np.ones(len(data), dtype=bool))]
-        rt_masks += [(lbl, np.asarray(m, dtype=bool)) for lbl, m in self._group_masks()]
+        for lbl, raw_mask in self._group_masks():
+            grp_mask = np.asarray(raw_mask, dtype=bool)
+            rt_masks.append((lbl, grp_mask))
+            if dc_codes is not None and lbl == DUPLEX_MOL_PAIRED:
+                rt_masks.append((f"{lbl} — concordant", grp_mask & (dc_codes == 1)))
+                rt_masks.append((f"{lbl} — single-strand difference", grp_mask & (dc_codes == 0)))
 
         rows = []
         for cls_name, cls_mask in class_conds.items():
