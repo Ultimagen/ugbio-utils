@@ -83,6 +83,8 @@ VARIANT_TYPE_HMER_INDEL = "hmer_indel"
 IS_MIXED = "is_mixed"
 IS_MIXED_START = "is_mixed_start"
 IS_MIXED_END = "is_mixed_end"
+MATE_PRESENT = "mate_present"  # duplex per-molecule flag (read by the DUPLEX group_fn)
+IS_CONSENSUS = "is_consensus"  # duplex per-read consensus flag (read by the DUPLEX group_fn)
 FOLD_ID = "fold_id"
 
 EDIST = FeatureMapFields.EDIST.value
@@ -3203,9 +3205,10 @@ class SRSNVReport:
         """Columns (besides read_group) that the active scheme's variant group_fns read, so the
         logit-histogram slice includes them. Only columns present in data_df are returned.
 
-        Covers every scheme's raw group inputs (mixed: is_mixed/_start; consensus: fs/rs); a new
-        scheme should add its raw group columns here so its group_fn can run on the sliced frame."""
-        candidates = [IS_MIXED, IS_MIXED_START, FS, RS]
+        Covers every scheme's raw group inputs (mixed: is_mixed/_start; consensus: fs/rs; duplex:
+        mate_present/is_consensus); a new scheme should add its raw group columns here so its group_fn
+        can run on the sliced frame."""
+        candidates = [IS_MIXED, IS_MIXED_START, FS, RS, MATE_PRESENT, IS_CONSENSUS]
         return [c for c in candidates if c in self.data_df.columns]
 
     def _plot_logit_variant(self, plot_df, ax, variant, alpha=0.4):
@@ -3696,12 +3699,15 @@ class SRSNVReport:
     def calc_and_plot_hmer_indel_context_plot(self, output_filename: str = None):  # noqa: C901, PLR0915
         """Context figure for hmer indels, laid out like the SNV trinuc-context figure.
 
-        Two stacked panel PAIRS (INS on top, DEL below; the analogue of the trinuc fwd/rev pairs). Each
-        pair is a median-SNVQ quality panel on top of a TP-vs-FP overlaid density panel, sharing a
-        4-level context axis: hmer base (A/C/G/T, titled blocks) -> base-before -> base-after -> hmer
-        length (1..6, innermost ticks). The quality panel draws one median-SNVQ step-line per read type
-        (singleton / single-strand consensus / duplex). Writes the tidy per-context table to the QC h5
-        under ``hmer_indel_context_stats``. Self-skips SNV-only runs / missing snvfind context columns.
+        One titled BAND per hmer base (A/C/G/T), stacked vertically so each base gets the full figure
+        width (the single-figure version was too cramped). Each band is an INS panel-pair over a DEL
+        panel-pair (the analogue of the trinuc fwd/rev pairs): a median-SNVQ quality panel on top of a
+        TP-vs-FP overlaid density panel, sharing a 3-level context axis: base-before -> base-after ->
+        hmer length (1..6, innermost ticks). For a given hmer base the flanking bases cannot equal it
+        (a maximal homopolymer run is bounded by a different base), so base-before / base-after range
+        only over the OTHER three bases. The quality panel draws one median-SNVQ step-line per read
+        type (singleton / single-strand consensus / duplex). Writes the tidy per-context table to the
+        QC h5 under ``hmer_indel_context_stats``. Self-skips SNV-only runs / missing snvfind columns.
         """
         table = self._hmer_indel_context_df()
         if table is None:
@@ -3711,109 +3717,118 @@ class SRSNVReport:
 
         bases = list("ACGT")
         lens = self._HMER_CTX_LENS
-        w_ba, w_bb = len(lens), len(bases) * len(lens)
-        w_hb = len(bases) * w_bb
-        n_cols = len(bases) * w_hb
-        contexts = [(hb, bb, ba, ln) for hb in bases for bb in bases for ba in bases for ln in lens]
-        kidx = {c: i for i, c in enumerate(contexts)}
-        xs = np.arange(n_cols)
-        xext = np.concatenate([[-0.5], xs, [n_cols - 0.5]])
-        # ordered read-groups present (for the quality step-lines), colored by the scheme palette
         palette = self._variant_palette()
         groups = [g for g in [lbl for lbl, _ in self._group_masks()] if g in set(table["read_group"])]
-
-        def _ci(row):
-            return kidx.get((row["hmer_base"], row["base_before"], row["base_after"], int(row["hmer_len"])))
-
-        table = table.assign(ci=table.apply(_ci, axis=1)).dropna(subset=["ci"])
-        table["ci"] = table["ci"].astype(int)
-
-        fig = plt.figure(figsize=(30, 12))
-        gs_top = gridspec.GridSpec(2, 1, height_ratios=[1, 2], hspace=0.0, top=0.93, bottom=0.56)
-        gs_bot = gridspec.GridSpec(2, 1, height_ratios=[1, 2], hspace=0.0, top=0.47, bottom=0.12)
         hist_colors = {"TP": "#3B76AF", "FP": "#C7382F"}
+        w_ba = len(lens)  # columns per base-after block (one per hmer length)
+        w_bb = 3 * w_ba  # columns per base-before block (3 possible base-after values, != hmer base)
+        n_cols = 3 * w_bb  # 3 base-before values (base-before / base-after cannot equal the hmer base)
+        xs = np.arange(n_cols)
+        xext = np.concatenate([[-0.5], xs, [n_cols - 0.5]])
 
-        def _seps(ax, *, titles):
-            for i in range(len(bases)):
-                x0 = i * w_hb - 0.5
+        # one titled band per hmer base, each a full-width INS pair over DEL pair
+        fig = plt.figure(figsize=(22, 40))
+        n_bands = len(bases)
+        top0, bot0, band_gap, pair_gap = 0.965, 0.045, 0.028, 0.014
+        band_h = (top0 - bot0 - band_gap * (n_bands - 1)) / n_bands
+        pair_h = (band_h - pair_gap) / 2.0
+
+        def _seps(ax, *, base_title=None):
+            for ib in range(3):
+                x0 = ib * w_bb - 0.5
                 ax.axvline(x0, color="k", ls="--", lw=1.0, alpha=0.8)
-                if titles:
-                    ax.annotate(
-                        f"hmer {bases[i]}",
-                        xy=(x0 + w_hb / 2, 1.0),
-                        xytext=(0, 6),
-                        xycoords=("data", "axes fraction"),
-                        textcoords="offset points",
-                        ha="center",
-                        fontsize=12,
-                        fontweight="bold",
-                    )
-                for j in range(1, len(bases)):
-                    ax.axvline(x0 + j * w_bb, color="grey", lw=0.6, alpha=0.5)
+                for ja in range(1, 3):
+                    ax.axvline(x0 + ja * w_ba, color="grey", lw=0.6, alpha=0.5)
+            if base_title is not None:
+                ax.annotate(
+                    f"hmer {base_title}",
+                    xy=(0.5, 1.0),
+                    xytext=(0, 8),
+                    xycoords="axes fraction",
+                    textcoords="offset points",
+                    ha="center",
+                    fontsize=15,
+                    fontweight="bold",
+                )
 
-        def _draw_pair(gs, cls):
-            sub = table[table["ins_del"] == cls]
+        def _draw_pair(base, cls, gs):  # noqa: C901
+            others = [b for b in bases if b != base]
+            ctx_order = [(bb, ba, ln) for bb in others for ba in others for ln in lens]
+            kidx = {c: idx for idx, c in enumerate(ctx_order)}
+
+            def _ci(row):
+                return kidx.get((row["base_before"], row["base_after"], int(row["hmer_len"])))
+
+            sub_all = table[table["hmer_base"] == base]
+            sub = sub_all[sub_all["ins_del"] == cls]
             qax = fig.add_subplot(gs[0])
             hax = fig.add_subplot(gs[1], sharex=qax)
-            # quality: median-SNVQ step-line per read group
             for g in groups:
-                gs_sub = sub[sub["read_group"] == g]
+                gs_sub = sub[sub["read_group"] == g].copy()
+                if gs_sub.empty:
+                    continue
+                gs_sub["ci"] = gs_sub.apply(_ci, axis=1)
+                gs_sub = gs_sub.dropna(subset=["ci"])
                 if gs_sub.empty:
                     continue
                 med = np.full(n_cols, np.nan)
-                # median-of-medians across the (finer) rows collapsed into each context column
-                for ci, rows in gs_sub.groupby("ci", observed=True):
-                    med[ci] = np.nanmedian(rows["median_snvq_tp"].to_numpy())
-                color = palette.get(g, "grey")
-                qax.step(xext, np.concatenate([[med[0]], med, [med[-1]]]), where="mid", color=color, alpha=0.9, lw=1.1)
+                for ci, rows in gs_sub.groupby("ci"):
+                    med[int(ci)] = np.nanmedian(rows["median_snvq_tp"].to_numpy())
+                qax.step(
+                    xext,
+                    np.concatenate([[med[0]], med, [med[-1]]]),
+                    where="mid",
+                    color=palette.get(g, "grey"),
+                    alpha=0.9,
+                    lw=1.1,
+                )
             qax.axhline(60, color="k", ls=":", lw=0.8, alpha=0.5)
-            qax.set_ylabel(f"SNVQ ({cls})", fontsize=12)
+            qax.set_ylabel(f"SNVQ ({cls})", fontsize=11)
             qax.set_ylim(30, float(self.max_qual) + 2)
             qax.set_xlim(-0.5, n_cols - 0.5)
             qax.grid(visible=True, axis="y", alpha=0.4, ls=":")
             plt.setp(qax.get_xticklabels(), visible=False)
             qax.tick_params(axis="x", length=0)
-            _seps(qax, titles=True)
-            # density: TP vs FP overlaid, each normalized within this class
+            _seps(qax, base_title=(base if cls == "ins" else None))
             tp, fp = np.zeros(n_cols), np.zeros(n_cols)
-            for ci, rows in sub.groupby("ci", observed=True):
-                tp[ci] = rows["n_TP"].sum()
-                fp[ci] = rows["n_FP"].sum()
+            for _, row in sub.iterrows():
+                ci = _ci(row)
+                if ci is None:
+                    continue
+                tp[int(ci)] += row["n_TP"]
+                fp[int(ci)] += row["n_FP"]
             tp = tp / tp.sum() if tp.sum() else tp
             fp = fp / fp.sum() if fp.sum() else fp
             hax.bar(xs, tp, color=hist_colors["TP"], width=1.0, alpha=0.5, label="TP")
             hax.bar(xs, fp, color=hist_colors["FP"], width=1.0, alpha=0.5, label="FP")
-            hax.set_ylabel(f"Density ({cls})", fontsize=12)
+            hax.set_ylabel(f"Density ({cls})", fontsize=11)
             hax.set_xlim(-0.5, n_cols - 0.5)
             hax.set_ylim(0, max(tp.max(), fp.max(), 1e-6) * 1.05)
             hax.grid(visible=True, axis="y", alpha=0.4, ls=":")
-            _seps(hax, titles=False)
-            # 4-level axis labels
+            _seps(hax, base_title=None)
             hax.set_xticks(xs)
-            hax.set_xticklabels([str(ln) for (_, _, _, ln) in contexts], fontsize=6)
+            hax.set_xticklabels([str(ln) for _bb in others for _ba in others for ln in lens], fontsize=7)
             hax.tick_params(axis="x", length=0, pad=1)
-            for i in range(len(bases)):
-                for jb, bb in enumerate(bases):
-                    bbx = i * w_hb + jb * w_bb
+            for ib, bb in enumerate(others):
+                hax.annotate(
+                    bb,
+                    xy=(ib * w_bb + w_bb / 2, -0.115),
+                    xycoords=("data", "axes fraction"),
+                    ha="center",
+                    va="top",
+                    fontsize=12,
+                    fontweight="bold",
+                )
+                for ja, ba in enumerate(others):
                     hax.annotate(
-                        bb,
-                        xy=(bbx + w_bb / 2, -0.115),
+                        ba,
+                        xy=(ib * w_bb + ja * w_ba + w_ba / 2, -0.06),
                         xycoords=("data", "axes fraction"),
                         ha="center",
                         va="top",
-                        fontsize=11,
-                        fontweight="bold",
+                        fontsize=9,
+                        color="#555",
                     )
-                    for ja, ba in enumerate(bases):
-                        hax.annotate(
-                            ba,
-                            xy=(bbx + ja * w_ba + w_ba / 2, -0.06),
-                            xycoords=("data", "axes fraction"),
-                            ha="center",
-                            va="top",
-                            fontsize=8,
-                            color="#555",
-                        )
             for yf, txt, fs, cc, wt in (
                 (-0.02, "hmer length →", 8, "black", "normal"),
                 (-0.06, "base-after →", 8, "#555", "normal"),
@@ -3830,8 +3845,15 @@ class SRSNVReport:
                     fontweight=wt,
                 )
 
-        _draw_pair(gs_top, "ins")
-        _draw_pair(gs_bot, "del")
+        for k, base in enumerate(bases):
+            band_top = top0 - k * (band_h + band_gap)
+            ins_top, ins_bot = band_top, band_top - pair_h
+            del_top, del_bot = ins_bot - pair_gap, ins_bot - pair_gap - pair_h
+            gs_ins = gridspec.GridSpec(2, 1, height_ratios=[1, 2], hspace=0.0, top=ins_top, bottom=ins_bot)
+            gs_del = gridspec.GridSpec(2, 1, height_ratios=[1, 2], hspace=0.0, top=del_top, bottom=del_bot)
+            _draw_pair(base, "ins", gs_ins)
+            _draw_pair(base, "del", gs_del)
+
         grp_handles = [mlines.Line2D([0], [0], color=palette.get(g, "grey"), lw=2, label=g) for g in groups]
         hist_handles = [
             Patch(facecolor=hist_colors["TP"], alpha=0.5, label="TP"),
@@ -3841,7 +3863,7 @@ class SRSNVReport:
             handles=grp_handles,
             title="median SNVQ by read type",
             loc="lower center",
-            bbox_to_anchor=(0.35, 0.005),
+            bbox_to_anchor=(0.35, 0.008),
             ncol=len(groups) or 1,
             frameon=False,
             fontsize=11,
@@ -3849,18 +3871,19 @@ class SRSNVReport:
         )
         fig.legend(
             handles=hist_handles,
-            title="density (normalized within ins / del)",
+            title="density (normalized within each hmer base × ins/del)",
             loc="lower center",
-            bbox_to_anchor=(0.72, 0.005),
+            bbox_to_anchor=(0.72, 0.008),
             ncol=2,
             frameon=False,
             fontsize=11,
             title_fontsize=11,
         )
         fig.suptitle(
-            "Hmer-indel context — quality (top) & density (bottom) per context; INS pair over DEL pair", fontsize=15
+            "Hmer-indel context per hmer base — INS pair over DEL pair; base-before/after exclude the hmer base",
+            fontsize=16,
         )
-        self._save_plt(output_filename=output_filename, fig=fig)
+        self._save_plt(output_filename=output_filename, fig=fig, tight_layout=False)
         plt.close(fig)
 
     def create_report(self):
