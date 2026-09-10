@@ -203,8 +203,9 @@ def _r1_is_reverse(r1: tuple, r2: tuple) -> bool:
     is not: on this library the two disagree for 10.5 % of pairs (94,030 of 899,185 in the
     first 2 M records of 606174-L15806-Z0229), 77,591 of them F2R1 pairs, and 65,199 with
     both mates starting at the *same* position. Fragments shorter than the read length
-    dovetail, so the reverse mate can start at or before the forward one. Using the
-    positional proxy in assign_cs lost 5,815 of Doron's 55,884 cross-strand links.
+    dovetail, so the reverse mate can start at or before the forward one. A variant of
+    assign_cs that used the positional proxy was measured, and lost 5,815 of the 55,884
+    cross-strand links this version finds.
 
     Only assign_cs uses this. It is a property of the *pair*, not of the cluster: two
     pairs can share a dedup key and disagree here, because the key records
