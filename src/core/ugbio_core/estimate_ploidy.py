@@ -83,14 +83,14 @@ def _is_standard_biallelic_snp(ref: str, alts: tuple[str, ...] | None) -> bool:
 
 
 def _update_reservoir(
-    reservoir: list[int | float], value: int | float, seen_count: int, sample_count: int
+    reservoir: list[int | float], value: int | float, seen_count: int, sample_count: int, rng: random.Random
 ) -> int:
     """Add a value to a fixed-size uniform reservoir sample."""
     seen_count += 1
     if len(reservoir) < sample_count:
         reservoir.append(value)
     else:
-        index = random.randint(0, seen_count - 1)  # noqa: S311
+        index = rng.randint(0, seen_count - 1)  # noqa: S311
         if index < sample_count:
             reservoir[index] = value
     return seen_count
@@ -228,7 +228,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
     sex_chromosomes: list[str] | tuple[str, ...] = DEFAULT_SEX_CHROMOSOMES,
 ) -> tuple[dict, dict]:
     """Mode 1: per-chr coverage from SNP DP + BAF. Returns (coverage_result, baf_result)."""
-    random.seed(42)  # noqa: S311
+    rng = random.Random(42)  # noqa: S311
     sex_chromosome_names = _normalize_sex_chromosomes(sex_chromosomes)
 
     reader = pysam.VariantFile(vcf_path)
@@ -263,6 +263,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
                 dp_value,
                 chr_dp_seen.get(chrom, 0),
                 _COVERAGE_SAMPLE_COUNT,
+                rng,
             )
 
         # BAF: reservoir sampling over autosomal het SNPs only
@@ -274,7 +275,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
                 if total >= 10:  # noqa: PLR2004
                     baf = alt_count / total
                     if 0.1 <= baf <= 0.9:  # noqa: PLR2004
-                        baf_seen = _update_reservoir(baf_reservoir, baf, baf_seen, het_sample_count)
+                        baf_seen = _update_reservoir(baf_reservoir, baf, baf_seen, het_sample_count, rng)
 
     reader.close()
 

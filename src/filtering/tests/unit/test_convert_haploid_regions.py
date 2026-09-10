@@ -72,6 +72,15 @@ class TestConvertToHaploid:
         assert result.samples[0]["PL"] == (30, 0)
         assert result.samples[0]["GT"] == (1,)
 
+    def test_tied_haploid_pls_select_first_minimum(self, tmp_path):
+        vcf_path = self._make_vcf_with_variant(tmp_path, (0, 1), [0, 50, 0])
+        reader = pysam.VariantFile(vcf_path)
+        variant = next(reader)
+        result = _convert_to_haploid(variant)
+        assert result.samples[0]["PL"] == (0, 0)
+        assert result.samples[0]["GT"] == (0,)
+        assert result.samples[0]["GQ"] == 0
+
 
 class TestConvertHaploidRegions:
     @staticmethod

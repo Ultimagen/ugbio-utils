@@ -1,3 +1,5 @@
+import random
+
 import pysam
 import pytest
 from ugbio_core.estimate_ploidy import (
@@ -11,6 +13,7 @@ from ugbio_core.estimate_ploidy import (
     _update_reservoir,
     estimate_ploidy_from_coverage,
     estimate_ploidy_from_vcf,
+    main,
     parse_mosdepth_summary,
 )
 
@@ -97,7 +100,7 @@ class TestUpdateReservoir:
         seen_count = 0
 
         for value in range(100):
-            seen_count = _update_reservoir(reservoir, value, seen_count, sample_count=10)
+            seen_count = _update_reservoir(reservoir, value, seen_count, sample_count=10, rng=random.Random(42))
 
         assert seen_count == 100
         assert len(reservoir) == 10
@@ -202,10 +205,11 @@ class TestEstimatePloidyFromCoverage:
 
 
 class TestEstimatePloidyFromVcf:
-    def test_reads_unfiltered_snps_with_pysam(self, tmp_path):
+    @staticmethod
+    def _make_ploidy_vcf(tmp_path, sample_name="SAMPLE"):
         vcf_path = tmp_path / "calls.vcf.gz"
         header = pysam.VariantHeader()
-        header.add_sample("SAMPLE")
+        header.add_sample(sample_name)
         for chrom in ("chr1", "chr2", "chrX", "chrY"):
             header.add_line(f"##contig=<ID={chrom}>")
         header.add_line('##FILTER=<ID=PASS,Description="All filters passed">')
@@ -217,16 +221,30 @@ class TestEstimatePloidyFromVcf:
             for chrom, depth, genotype in chromosome_calls:
                 for pos in range(1, 21):
                     record = writer.new_record(contig=chrom, start=pos - 1, stop=pos, alleles=("A", "G"))
-                    record.samples["SAMPLE"]["GT"] = genotype
-                    record.samples["SAMPLE"]["DP"] = depth
-                    record.samples["SAMPLE"]["AD"] = (depth // 2, depth // 2)
+                    record.samples[sample_name]["GT"] = genotype
+                    record.samples[sample_name]["DP"] = depth
+                    record.samples[sample_name]["AD"] = (depth // 2, depth // 2)
                     writer.write(record)
+        return vcf_path
+
+    def test_reads_unfiltered_snps_with_pysam(self, tmp_path):
+        vcf_path = self._make_ploidy_vcf(tmp_path)
 
         coverage_result, baf_result = estimate_ploidy_from_vcf(vcf_path, "SAMPLE")
 
         assert coverage_result["karyotype"] == "XY"
         assert coverage_result["source"] == "VCF SNP median DP"
         assert baf_result["label"] == "INSUFFICIENT_DATA"
+
+    def test_estimate_ploidy_from_vcf_does_not_mutate_global_random_state(self, tmp_path):
+        vcf_path = self._make_ploidy_vcf(tmp_path)
+
+        random.seed(123)
+        expected = random.random()
+        random.seed(123)
+        estimate_ploidy_from_vcf(vcf_path, "SAMPLE")
+
+        assert random.random() == expected
 
     def test_selects_requested_sample_from_multi_sample_vcf(self, tmp_path):
         vcf_path = tmp_path / "multi_sample.vcf.gz"
@@ -266,3 +284,50 @@ class TestEstimatePloidyFromVcf:
 
         with pytest.raises(ValueError, match="'MISSING' is not present in VCF"):
             estimate_ploidy_from_vcf(vcf_path, "MISSING")
+
+
+class TestEstimatePloidyCli:
+    def test_vcf_mode_writes_report(self, tmp_path):
+        vcf_path = TestEstimatePloidyFromVcf._make_ploidy_vcf(tmp_path)
+
+        main(["--vcf", str(vcf_path), "--sample-id", "SAMPLE", "--output-dir", str(tmp_path)])
+
+        report = tmp_path / "SAMPLE.ploidy_report.txt"
+        report_text = report.read_text()
+        assert report.exists()
+        assert "Karyotype:" in report_text
+        assert "Coverage source:    VCF SNP median DP" in report_text
+
+    def test_mosdepth_summary_mode_writes_report(self, tmp_path):
+        summary_path = tmp_path / "summary.txt"
+        lines = ["chrom\tlength\tbases\tmean\tmin_cov\tmax_cov\n"]
+        for i in range(1, 23):
+            lines.append(f"chr{i}\t100000000\t5000000000\t50.0\t0\t200\n")
+        lines.append("chrX\t100000000\t2500000000\t25.0\t0\t100\n")
+        lines.append("chrY\t50000000\t1250000000\t25.0\t0\t100\n")
+        summary_path.write_text("".join(lines))
+
+        main(["--mosdepth-summary", str(summary_path), "--sample-id", "SAMPLE", "--output-dir", str(tmp_path)])
+
+        report = tmp_path / "SAMPLE.ploidy_report.txt"
+        report_text = report.read_text()
+        assert report.exists()
+        assert "Karyotype:          XY" in report_text
+        assert "Coverage source:    mosdepth" in report_text
+
+    def test_vcf_and_mosdepth_summary_are_mutually_exclusive(self, tmp_path):
+        vcf_path = TestEstimatePloidyFromVcf._make_ploidy_vcf(tmp_path)
+        summary_path = tmp_path / "summary.txt"
+        summary_path.write_text("chrom\tlength\tbases\tmean\tmin_cov\tmax_cov\n")
+
+        with pytest.raises(SystemExit):
+            main(
+                [
+                    "--vcf",
+                    str(vcf_path),
+                    "--mosdepth-summary",
+                    str(summary_path),
+                    "--sample-id",
+                    "SAMPLE",
+                ]
+            )
