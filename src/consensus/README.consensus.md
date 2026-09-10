@@ -1,7 +1,82 @@
 # ugbio_consensus
 
-Performance & duplex reports for the **ReadFuserAlignSort** (consensus tool)
-pipeline at Ultima Genomics.
+Duplicate marking and performance & duplex reports for the **ReadFuserAlignSort**
+(consensus tool) pipeline at Ultima Genomics.
+
+| Entry point | Runs | Role |
+|-------------|------|------|
+| `mark_duplicates_mi` | *before* `read_fuser` | Assign `MI`/`DS` duplicate families, and with `--use-umi` the `CS` cross-strand duplex tag. |
+| `consensus_report` | *after* the pipeline | Per-sample HTML report of alignment, duplication, coverage and duplex family metrics. |
+
+## mark_duplicates_mi
+
+Marks duplicate families on a coordinate-sorted BAM/CRAM and writes, on every
+record of a family:
+
+```
+MI:Z:<run-id>-<10-digit family id>    the duplicate family (molecular identifier)
+DS:i:<family size>                    number of pairs in that family
+CS:Z:<run-id>-<10-digit family id>    --use-umi only: the cross-strand duplex group
+```
+
+`--use-umi` adds `(R1.u5, R2.u3)` to the dedup key alongside the position, so the
+two strands of one duplex molecule land in **separate** `MI` families — which is
+what we want, since each strand is consensus-called on its own. The cost is that
+the duplex relationship is erased: `read_fuser` groups strictly on `MI`, so
+`duplex_consensus` would be 0 by construction. `CS` restores the link.
+
+Two clusters are cross-strand partners iff they share the positional key, their
+UMI pairs are exact mutual reverses, **and** they sit on opposite strands. That
+last term is read off the FLAG (`read.is_reverse`), not off which mate starts
+further left: on a real library the two disagree for 10.5 % of pairs, because
+fragments shorter than the read dovetail.
+
+`CS` is **total** — a cluster with no partner gets `CS` equal to its own `MI`
+rather than no tag at all. That matters downstream, because `demux --umi=CS`
+treats a missing tag as the empty value, and every `CS`-less read at a position
+would then collapse into one duplicate family. So `CS == MI` reads as "clustered,
+but no cross-strand partner was found", and `CS != MI` as "duplex partner found".
+
+```bash
+# whole-file
+mark_duplicates_mi input.bam output.bam --use-umi
+
+# sharded, which is what the WDL task runs (--jobs = cpu, shards = panel intervals)
+mark_duplicates_mi input.cram output.cram --use-umi \
+    --reference Homo_sapiens_assembly38.fasta \
+    --jobs 16 --regions xgen-pan-cancer-targets.hg38.bed
+```
+
+Family-size histogram goes to stdout; `--stats-only` skips writing the output file.
+Re-marking is idempotent, and re-marking **without** `--use-umi` strips any `CS`
+the input carried (a stale `CS` claims a duplex link the current key does not
+support, which is worse than no `CS`).
+
+### Downstream contract (BIOIN-3068)
+
+`CS` only reaches the consensus reads if every stage is told to carry it:
+
+1. `read_fuser --umi-tags u3,u5,CS` — the default list is `u5,u3`, so **without
+   this `CS` is silently dropped** and the run still completes green.
+2. `sorter_params`: `umi_tag: "CS"` and `mark_duplicates_ends_read_uncertainty: 50`.
+   `umi_tag` must be `CS` **alone** — `read_fuser` copies `u5`/`u3` onto each
+   consensus read from its own strand's original read, and the two strands carry
+   them swapped, so adding them to the key splits exactly the pair `CS` exists to
+   join. The wide 50 bp window is needed because the two strands' consensus reads
+   routinely end ~27 bp apart, and it is safe only because `CS` is in the key: no
+   `(CS, alignment strand)` cell holds more than 2 reads, so there is nothing to
+   over-merge. Measured on 36,591 consensus reads: default recovers 424 of 3,423
+   true pairs (12.4 %), `ends_read_uncertainty: 50` recovers 3,307 (96.6 %),
+   precision 100 % both ways.
+3. For SRSNV/DeepSRSNV, add `"CS:Z"` to `cram_tags_to_copy`.
+
+> ⚠️ This module is verified byte-for-byte against a 12,670,749-record baseline
+> (`MI`/`DS` identical to the pre-`CS` output, 55,884 `CS` links, 0 gained / 0
+> lost). Do not refactor it — including "just" reordering the `set_tag` calls,
+> which fixes the emitted aux order as `MI, DS, CS` — without re-running
+> `/data/Runs/BIOIN-3068/cmp_stream.py` and `cs_links.py`.
+
+## consensus_report
 
 The consensus step (`read_fuser`) fuses the reads of each UMI/MI family into a
 single consensus read and records, on that read:
@@ -104,6 +179,7 @@ Outputs (alongside `--output`):
 
 | Module | Role |
 |--------|------|
+| `mark_duplicates_mi.py` | Duplicate families (`MI`/`DS`) and the `CS` cross-strand duplex tag; whole-file and sharded writers. |
 | `duplex_metrics.py` | Parse `rn`/`nf`/`nr`, classify families, family size + coverage per category (with an `MI`-tag fallback). |
 | `on_target.py` | Genome-wide and optional on-target coverage from a bedGraph + targets BED. |
 | `consensus_log.py` | Parse the consensus tool stdout log for performance counters. |

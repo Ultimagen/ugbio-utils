@@ -1,8 +1,8 @@
 [project]
 name = "ugbio_consensus"
-version = "1.28.2-0"
+version = "1.29.0-0"
 requires-python = ">=3.11"
-description = "Ultima Genomics consensus (ReadFuserAlignSort) performance & duplex reports"
+description = "Ultima Genomics consensus (ReadFuserAlignSort) duplicate marking, performance & duplex reports"
 authors = [
     { name = "Gat Krieger", email = "gat.krieger@ultimagen.com" },
 ]
@@ -20,6 +20,7 @@ text = "Apache-2.0"
 [project.scripts]
 run_tests = "pytest:main"
 consensus_report = "ugbio_consensus.consensus_report:main"
+mark_duplicates_mi = "ugbio_consensus.mark_duplicates_mi:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true
