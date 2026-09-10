@@ -3236,7 +3236,9 @@ class SRSNVReport:
             for label in variant.groups:
                 plot_df.loc[plot_df[LABEL] & (grp == label), ""] = f"TP {label}"
             group_colors = list(sns.color_palette(n_colors=len(variant.groups)))
-            palette = {"FP": "tab:blue", **dict(zip(tp_labels, group_colors, strict=False))}
+            # FP is the negative baseline -> neutral gray, so it never collides with the first TP
+            # group (the seaborn palette starts at tab:blue, which previously matched FP's blue).
+            palette = {"FP": "tab:gray", **dict(zip(tp_labels, group_colors, strict=False))}
             hue_order = ["FP", *tp_labels]
         sns.histplot(
             data=plot_df,
