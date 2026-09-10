@@ -45,6 +45,7 @@ from ugbio_srsnv.split_scheme import (
 )
 from ugbio_srsnv.srsnv_utils import (
     DUPLEX_MOL_PAIRED,
+    DUPLEX_MOL_SINGLE_STRAND,
     ET,
     ET_FILLNA,
     FS,
@@ -53,6 +54,7 @@ from ugbio_srsnv.srsnv_utils import (
     RS,
     ST,
     ST_FILLNA,
+    ReportMode,
     construct_trinuc_context_with_alt,
     get_base_recall_from_filters,
     phred_to_prob,
@@ -326,12 +328,10 @@ def create_srsnv_report_html(
     report_html = Path(out_path) / f"{out_basename}report.html"
     # hmer-indel section plot path (reconstructed by the same convention create_report uses). The plot
     # file exists only when has_hmer_indels; the notebook cell is guarded on has_hmer_indels.
-    hmer_indel_metrics_plot = os.path.join(out_path, f"{out_basename}hmer_indel_metrics")
     hmer_indel_by_class_plot = os.path.join(out_path, f"{out_basename}hmer_indel_by_class")
-    hmer_indel_snvq_reliability_plot = os.path.join(out_path, f"{out_basename}hmer_indel_snvq_reliability")
-    hmer_indel_snvq_hist_plot = os.path.join(out_path, f"{out_basename}hmer_indel_snvq_hist")
     hmer_indel_fq_recall_plot = os.path.join(out_path, f"{out_basename}hmer_indel_fq_recall")
     hmer_indel_context_plot = os.path.join(out_path, f"{out_basename}hmer_indel_context")
+    logit_histogram_hmer_indel = os.path.join(out_path, f"{out_basename}logit_histogram_hmer_indel")
 
     [
         FQ_vs_recall_plot,  # noqa: N806
@@ -363,14 +363,12 @@ def create_srsnv_report_html(
         "output_qual_per_feature": output_qual_per_feature,
         "qual_histogram": qual_histogram,
         "logit_histogram": logit_histogram,
+        "logit_histogram_hmer_indel": logit_histogram_hmer_indel,
         "calibration_fn_with_hist": calibration_fn_with_hist,
         "split_mode": split_mode,
         "display_suffix": display_suffix,
         "has_hmer_indels": has_hmer_indels,
-        "hmer_indel_metrics_plot": hmer_indel_metrics_plot,
         "hmer_indel_by_class_plot": hmer_indel_by_class_plot,
-        "hmer_indel_snvq_reliability_plot": hmer_indel_snvq_reliability_plot,
-        "hmer_indel_snvq_hist_plot": hmer_indel_snvq_hist_plot,
         "hmer_indel_fq_recall_plot": hmer_indel_fq_recall_plot,
         "hmer_indel_context_plot": hmer_indel_context_plot,
     }
@@ -2040,7 +2038,7 @@ class SRSNVReport:
             self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="run info total"),
             max_value=self.max_qual,
         )
-        snvq_thresholds = [50, 60, 70]
+        snvq_thresholds = self._snvq_thresholds()
         # Per-group stats keyed by group label
         grp_median, grp_recall0, grp_recall, grp_roc = {}, {}, {}, {}
         for label, mask in self._group_masks():
@@ -2133,7 +2131,7 @@ class SRSNVReport:
         recall_at_0 = self._get_recall_at_snvq(snvq=0)
         recall_at_0_mixed_start = self._get_recall_at_snvq(snvq=0, condition=self.data_df[display_col])
         recall_at_0_mixed_both = self._get_recall_at_snvq(snvq=0, condition=self.data_df[legacy_col])
-        snvq_thresholds = [50, 60, 70]
+        snvq_thresholds = self._snvq_thresholds()
         recalls = {}
         for snvq in snvq_thresholds:
             recalls[snvq] = {
@@ -3253,106 +3251,87 @@ class SRSNVReport:
             ax=ax,
         )
 
-    @exception_handler
-    def plot_logit_histograms(self, *, plot_by_fold: bool = True, output_filename: str = None):
-        """Plot a histogram of logit values, by: FP + one TP series per group.
-        If plot_by_fold is True, overlay histograms for each fold.
-        """
-        # label_fontsize = 12
-        # ticklabelsfontsize = 12
-        logger.info("Plotting logit histogram")
+    def _render_logit_figure(self, plot_df_all, output_filename, *, write_h5, plot_by_fold):
+        """Render one logit histogram (FP + per-group TP), optionally writing the legacy+display h5 keys.
 
-        plot_df_all = self.data_df[[ML_LOGIT_TEST, LABEL, READ_GROUP, FOLD_ID, *self._logit_extra_cols()]].copy()
+        Shared by the SNV and hmer-indel logit figures; ``write_h5`` is True only for the SNV figure so
+        the legacy ``logit_histogram`` h5 keys keep their historical meaning.
+        """
         legacy_variant = self.scheme.legacy_variant
         display_variant = self._display_variant
 
-        # Legacy histogram (legacy variant) for backward-compatible h5 storage.
-        fig_legacy, ax_legacy = plt.subplots(figsize=(12, 7))
-        self._plot_logit_variant(plot_df_all.copy(), ax_legacy, legacy_variant)
-        hist_data_df_legacy = self._get_histogram_data(ax_legacy, col_name="")
-        hist_data_df_legacy.to_hdf(self.output_h5_filename, key="logit_histogram", mode="a")
-        plt.close(fig_legacy)
+        if write_h5:
+            # Legacy histogram (legacy variant) for backward-compatible h5 storage.
+            fig_legacy, ax_legacy = plt.subplots(figsize=(12, 7))
+            self._plot_logit_variant(plot_df_all.copy(), ax_legacy, legacy_variant)
+            self._get_histogram_data(ax_legacy, col_name="").to_hdf(
+                self.output_h5_filename, key="logit_histogram", mode="a"
+            )
+            plt.close(fig_legacy)
 
-        # New histogram (display variant) for display and new h5 key
         fig, ax = plt.subplots(figsize=(12, 7))
         self._plot_logit_variant(plot_df_all.copy(), ax, display_variant)
-        hist_data_df = self._get_histogram_data(ax, col_name="")
-        hist_data_df.to_hdf(self.output_h5_filename, key=split_h5_key("logit_histogram", display_variant), mode="a")
+        if write_h5:
+            self._get_histogram_data(ax, col_name="").to_hdf(
+                self.output_h5_filename, key=split_h5_key("logit_histogram", display_variant), mode="a"
+            )
 
         if plot_by_fold:
             plt.close(fig)
             fig, ax = plt.subplots(figsize=(12, 7))
-            plot_dfs = [plot_df_all[plot_df_all[FOLD_ID] == k] for k in range(len(self.models))]
-            for plot_df in plot_dfs:
-                self._plot_logit_variant(plot_df.copy(), ax, display_variant, alpha=0.15)
+            for k in range(len(self.models)):
+                self._plot_logit_variant(plot_df_all[plot_df_all[FOLD_ID] == k].copy(), ax, display_variant, alpha=0.15)
 
-        sns.move_legend(
-            ax,
-            "upper left",
-        )
-        ax.set_ylabel("Density")  # , fontsize=label_fontsize)
+        sns.move_legend(ax, "upper left")
+        ax.set_ylabel("Density")
         ax.grid(visible=True)
-        xmin, xmax = [0.99 * self.data_df[ML_LOGIT_TEST].min(), self.data_df[ML_LOGIT_TEST].max() * 1.01]
-        ax.set_xlabel("ML logit")  # , fontsize=label_fontsize)
+        ax.set_xlabel("ML logit")
+        xmin, xmax = 0.99 * self.data_df[ML_LOGIT_TEST].min(), self.data_df[ML_LOGIT_TEST].max() * 1.01
         ax.set_xlim([xmin, xmax])
         fig.tight_layout()
-        # plt.show()
-        self._save_plt(output_filename=output_filename, fig=fig)
-
-    @exception_handler
-    def plot_hmer_indel_metrics(self, output_filename: str = None):
-        """Joint SNV vs hmer-indel figure: model quality and TP count by reference homopolymer length.
-
-        Only produced when the featuremap carries homopolymer indels (``variant_type`` == "hmer_indel",
-        set by ``prepare_report``); for SNV-only runs the method returns without writing a file and the
-        report notebook skips the section. Metrics are computed on TP rows and split by variant type so
-        SNV and hmer-indel behaviour can be compared across homopolymer lengths (0..12). Also writes the
-        per-(variant_type, hmer_length) table to the QC h5 under key ``hmer_indel_stats``.
-        """
-        if VARIANT_TYPE not in self.data_df.columns or X_HMER_REF not in self.data_df.columns:
-            logger.info("plot_hmer_indel_metrics: variant_type / X_HMER_REF missing; skipping")
-            return
-        data = self.data_df
-        if not (data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).any():
-            logger.info("plot_hmer_indel_metrics: no hmer-indel rows; skipping")
-            return
-
-        tp = data[data[LABEL].astype(bool)]
-        hmer_len = pd.to_numeric(tp[X_HMER_REF], errors="coerce").clip(lower=0, upper=12)
-        stats = (
-            pd.DataFrame({"hmer_length": hmer_len, VARIANT_TYPE: tp[VARIANT_TYPE], "mqual": tp[ML_QUAL_1_TEST]})
-            .dropna(subset=["hmer_length"])
-            .groupby([VARIANT_TYPE, "hmer_length"])
-            .agg(median_mqual=("mqual", "median"), count=("mqual", "size"))
-            .reset_index()
-        )
-        stats.to_hdf(self.output_h5_filename, key="hmer_indel_stats", mode="a")
-
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-        for grp, grp_rows in stats.groupby(VARIANT_TYPE):
-            grp_sorted = grp_rows.sort_values("hmer_length")
-            axes[0].plot(grp_sorted["hmer_length"], grp_sorted["median_mqual"], marker="o", label=grp)
-            axes[1].plot(grp_sorted["hmer_length"], grp_sorted["count"], marker="o", label=grp)
-        axes[0].set_xlabel("reference homopolymer length")
-        axes[0].set_ylabel("median MQUAL (TP)")
-        axes[0].set_title("Model quality vs homopolymer length")
-        axes[1].set_xlabel("reference homopolymer length")
-        axes[1].set_ylabel("TP count")
-        axes[1].set_title("TP count vs homopolymer length")
-        axes[1].set_yscale("log")
-        for ax in axes:
-            ax.legend(title="variant type")
-            ax.grid(visible=True, alpha=0.3)
         self._save_plt(output_filename=output_filename, fig=fig)
         plt.close(fig)
 
     @exception_handler
-    def plot_hmer_indel_by_class(self, output_filename: str = None):
-        """Homopolymer-indel TP metrics split by indel class (insertion vs deletion) and hmer length.
+    def plot_logit_histograms(
+        self, *, plot_by_fold: bool = True, output_filename: str = None, output_filename_hmer_indel: str = None
+    ):
+        """Plot logit-value histograms (FP + one TP series per group), overlaid per fold if requested.
 
-        Complements :func:`plot_hmer_indel_metrics` (which splits SNV vs hmer-indel) by breaking the
-        hmer-indel TPs into insertions vs deletions. Writes the per-(indel_class, hmer_length) table to
-        the QC h5 under ``hmer_indel_class_stats``. Self-skips when there are no hmer-indel TP rows.
+        When the per-row ``variant_type`` column is present the figure is split in two: an SNV figure
+        (``output_filename``, which also carries the legacy/display ``logit_histogram`` h5 keys) and, for
+        runs that contain hmer-indel rows, a separate hmer-indel figure (``output_filename_hmer_indel``,
+        figure only). SNV-only runs (no ``variant_type`` column) behave exactly as before.
+        """
+        logger.info("Plotting logit histogram")
+        cols = [ML_LOGIT_TEST, LABEL, READ_GROUP, FOLD_ID, *self._logit_extra_cols()]
+        if VARIANT_TYPE in self.data_df.columns and VARIANT_TYPE not in cols:
+            cols = [*cols, VARIANT_TYPE]
+        plot_df_all = self.data_df[cols].copy()
+
+        if VARIANT_TYPE in plot_df_all.columns:
+            snv_df = plot_df_all[plot_df_all[VARIANT_TYPE] == VARIANT_TYPE_SNV]
+        else:
+            snv_df = plot_df_all
+        self._render_logit_figure(snv_df, output_filename, write_h5=True, plot_by_fold=plot_by_fold)
+
+        if output_filename_hmer_indel is not None and self._has_hmer_indel_rows():
+            hmer_df = plot_df_all[plot_df_all[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL]
+            self._render_logit_figure(hmer_df, output_filename_hmer_indel, write_h5=False, plot_by_fold=plot_by_fold)
+
+    @exception_handler
+    def plot_hmer_indel_by_class(self, output_filename: str = None):
+        """Homopolymer-indel TP SNVQ + count by indel class (ins/del) and reference homopolymer length.
+
+        Plots median SNVQ (not MQUAL) and TP count vs reference homopolymer length, one line per indel
+        class. For duplex runs the lines are also split by read-type via
+        :func:`_duplex_concordance_group_masks` (single-strand consensus / duplex concordant / duplex
+        discordant): color encodes the read-type group, linestyle encodes ins vs del. For non-duplex
+        runs (or when ``duplex_concordant`` is absent) it falls back to ins/del-only lines. Writes the
+        per-(read_group, indel_class, hmer_length) table to the QC h5 under ``hmer_indel_class_stats``.
+        Self-skips when there are no hmer-indel TP rows. (Note: reference length 1 is expected to carry
+        data; a homopolymer *deletion* has X_HMER_REF>=1, and only the context figure's X_HMER_RUN is
+        legitimately >=2 for deletions.)
         """
         if VARIANT_TYPE not in self.data_df.columns or X_IC not in self.data_df.columns:
             logger.info("plot_hmer_indel_by_class: variant_type / X_IC missing; skipping")
@@ -3363,34 +3342,53 @@ class SRSNVReport:
             logger.info("plot_hmer_indel_by_class: no hmer-indel TP rows; skipping")
             return
         hmer_len = pd.to_numeric(ind[X_HMER_REF], errors="coerce").clip(lower=0, upper=12)
+        base = pd.DataFrame(
+            {
+                "hmer_length": hmer_len.to_numpy(),
+                "indel_class": ind[X_IC].astype(str).str.lower().to_numpy(),
+                "snvq": pd.to_numeric(ind[QUAL], errors="coerce").to_numpy(),
+            },
+            index=ind.index,
+        )
+        # Optional read-type (duplex concordance) split; None for non-duplex runs -> single "all" group.
+        group_masks = self._duplex_concordance_group_masks(data_df=ind)
+        if group_masks is None:
+            base["read_group"] = "all"
+            groups = ["all"]
+        else:
+            rg = pd.Series("", index=ind.index, dtype=object)
+            for lbl, mask in group_masks:
+                rg[np.asarray(mask, dtype=bool)] = lbl
+            base["read_group"] = rg.to_numpy()
+            base = base[base["read_group"] != ""]  # drop rows in no group (e.g. singletons)
+            groups = [lbl for lbl, _ in group_masks]
         stats = (
-            pd.DataFrame(
-                {
-                    "hmer_length": hmer_len,
-                    "indel_class": ind[X_IC].astype(str).str.lower(),
-                    "mqual": ind[ML_QUAL_1_TEST],
-                }
-            )
-            .dropna(subset=["hmer_length"])
-            .groupby(["indel_class", "hmer_length"])
-            .agg(median_mqual=("mqual", "median"), count=("mqual", "size"))
+            base.dropna(subset=["hmer_length"])
+            .groupby(["read_group", "indel_class", "hmer_length"], observed=True)
+            .agg(median_snvq=("snvq", "median"), count=("snvq", "size"))
             .reset_index()
         )
         stats.to_hdf(self.output_h5_filename, key="hmer_indel_class_stats", mode="a")
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-        for cls_name, cls_rows in stats.groupby("indel_class"):
-            cls_sorted = cls_rows.sort_values("hmer_length")
-            axes[0].plot(cls_sorted["hmer_length"], cls_sorted["median_mqual"], marker="o", label=cls_name)
-            axes[1].plot(cls_sorted["hmer_length"], cls_sorted["count"], marker="o", label=cls_name)
+        fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+        group_colors = dict(zip(groups, sns.color_palette(n_colors=len(groups)), strict=False))
+        class_ls = {"ins": "-", "del": "--"}
+        for (g, cls_name), grp_rows in stats.groupby(["read_group", "indel_class"], observed=True):
+            srt = grp_rows.sort_values("hmer_length")
+            color = group_colors.get(g, "black")
+            ls = class_ls.get(cls_name, "-")
+            lbl = cls_name if groups == ["all"] else f"{g} · {cls_name}"
+            axes[0].plot(srt["hmer_length"], srt["median_snvq"], marker="o", ls=ls, color=color, label=lbl)
+            axes[1].plot(srt["hmer_length"], srt["count"], marker="o", ls=ls, color=color, label=lbl)
         axes[0].set_xlabel("reference homopolymer length")
-        axes[0].set_ylabel("median MQUAL (TP)")
-        axes[0].set_title("Homopolymer-indel model quality by class")
+        axes[0].set_ylabel("median SNVQ (TP)")
+        axes[0].set_title("median SNVQ by class")
         axes[1].set_xlabel("reference homopolymer length")
         axes[1].set_ylabel("TP count")
-        axes[1].set_title("Homopolymer-indel TP count by class")
+        axes[1].set_title("TP count by class")
         axes[1].set_yscale("log")
+        fig.suptitle("Homopolymer-indel by indel class and read-type")
         for ax in axes:
-            ax.legend(title="indel class")
+            ax.legend(fontsize=8)
             ax.grid(visible=True, alpha=0.3)
         self._save_plt(output_filename=output_filename, fig=fig)
         plt.close(fig)
@@ -3441,6 +3439,45 @@ class SRSNVReport:
             (self.data_df[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).any()
         )
 
+    def _snvq_thresholds(self) -> list[int]:
+        """SNVQ thresholds for the Recall@SNVQ rows. Duplex runs also report the high-quality
+        Recall@SNVQ80 / Recall@SNVQ90 (duplex consensus reaches much higher SNVQ)."""
+        thresholds = [50, 60, 70]
+        if self.report_mode == ReportMode.DUPLEX:
+            thresholds = [*thresholds, 80, 90]
+        return thresholds
+
+    def _duplex_concordance_group_masks(self, data_df=None):
+        """Yield ``(label, boolean_mask)`` for the duplex concordance read-types:
+        ``single-strand consensus`` / ``duplex concordant`` (duplex_concordant==1) /
+        ``duplex discordant`` (duplex_concordant==0).
+
+        Returns ``None`` when this is not a duplex run or the ``duplex_concordant`` column is absent, so
+        callers can fall back to no read-type split. Singletons (no consensus) are intentionally not a
+        group here (this split is about consensus/duplex reads).
+        """
+        if data_df is None:
+            data_df = self.data_df
+        if self.report_mode != ReportMode.DUPLEX or DUPLEX_CONCORDANT not in data_df.columns:
+            return None
+        n = len(data_df)
+        mate = (
+            data_df[MATE_PRESENT].fillna(0).astype(bool).to_numpy()
+            if MATE_PRESENT in data_df.columns
+            else np.zeros(n, dtype=bool)
+        )
+        is_cons = (
+            data_df[IS_CONSENSUS].fillna(0).astype(bool).to_numpy()
+            if IS_CONSENSUS in data_df.columns
+            else np.zeros(n, dtype=bool)
+        )
+        dc = pd.to_numeric(data_df[DUPLEX_CONCORDANT], errors="coerce").to_numpy()
+        return [
+            (DUPLEX_MOL_SINGLE_STRAND, is_cons & ~mate),
+            ("duplex concordant", mate & (dc == 1)),
+            ("duplex discordant", mate & (dc == 0)),
+        ]
+
     def _hmer_indel_class_conditions(self):
         """Ordered ``{label: boolean mask}`` over the variant-type / indel-class axis.
 
@@ -3482,7 +3519,7 @@ class SRSNVReport:
         data = self.data_df
         label = data[LABEL].to_numpy().astype(bool)
         snvq = pd.to_numeric(data[QUAL], errors="coerce").to_numpy()
-        snvq_thresholds = [50, 60, 70]
+        snvq_thresholds = self._snvq_thresholds()
         # read-type groups + an "All reads" margin (all read types together). When the duplex
         # tensorizer emitted a per-molecule concordance code, split the aggregate "duplex molecule"
         # row into two extra sub-rows: concordant (both strands carry the variant) and single-strand
@@ -3531,80 +3568,6 @@ class SRSNVReport:
                 rows.append(row)
         table = pd.DataFrame(rows)
         table.to_hdf(self.output_h5_filename, key="run_quality_summary_table_hmer_indel", mode="a")
-
-    @exception_handler
-    def plot_hmer_indel_snvq_reliability(self, output_filename: str = None):
-        """Per-class SNVQ reliability: empirical error-rate vs SNVQ bin for snv vs hmer-indel.
-
-        Confirms the shared MQUAL->SNVQ recalibration is valid for indels (the empirical FP-rate at a
-        given SNVQ should track between classes). Empirical error-rate is training-prior-conditional
-        (like the SNV curves); the point is that snv and indel curves overlap. Writes the per-(class,
-        SNVQ bin) table to the QC h5 under ``hmer_indel_snvq_reliability``. Self-skips SNV-only runs.
-        """
-        if not self._has_hmer_indel_rows():
-            logger.info("plot_hmer_indel_snvq_reliability: no hmer-indel rows; skipping")
-            return
-        data = self.data_df
-        snvq = pd.to_numeric(data[QUAL], errors="coerce")
-        is_fp = ~data[LABEL].astype(bool)
-        edges = np.arange(0, self.max_qual + 5, 5)
-        bins = pd.cut(snvq, edges, include_lowest=True)
-        parts = []
-        for vt in (VARIANT_TYPE_SNV, VARIANT_TYPE_HMER_INDEL):
-            m = data[VARIANT_TYPE] == vt
-            sub = pd.DataFrame({"bin": bins[m], "fp": is_fp[m]}).dropna(subset=["bin"])
-            g = sub.groupby("bin", observed=True).agg(n=("fp", "size"), fp_rate=("fp", "mean")).reset_index()
-            g["variant_type"] = vt
-            g["snvq_mid"] = g["bin"].apply(lambda b: b.mid).astype(float)
-            g["emp_phred"] = -10 * np.log10(g["fp_rate"].clip(lower=1e-9))
-            parts.append(g)
-        stats = pd.concat(parts, ignore_index=True)
-        stats.drop(columns=["bin"]).to_hdf(self.output_h5_filename, key="hmer_indel_snvq_reliability", mode="a")
-
-        fig, ax = plt.subplots(figsize=(8, 6))
-        for vt, gp in stats.groupby("variant_type"):
-            gs = gp[gp["n"] >= 20].sort_values("snvq_mid")  # noqa: PLR2004
-            ax.plot(gs["snvq_mid"], gs["emp_phred"], marker="o", label=vt)
-        lim = [0, float(self.max_qual)]
-        ax.plot(lim, lim, "k--", alpha=0.4, label="ideal (emp = SNVQ)")
-        ax.set_xlabel("SNVQ (nominal)")
-        ax.set_ylabel("empirical phred  -10*log10(FP-rate)")
-        ax.set_title("SNVQ reliability: SNV vs hmer-indel")
-        ax.legend()
-        ax.grid(visible=True, alpha=0.3)
-        self._save_plt(output_filename=output_filename, fig=fig)
-        plt.close(fig)
-
-    @exception_handler
-    def plot_hmer_indel_snvq_histograms(self, output_filename: str = None):
-        """SNVQ distribution (TP vs FP) for hmer indels, alongside SNVs for reference.
-
-        Mirrors the SNV SNVQ histogram on the hmer-indel subset. Self-skips SNV-only runs.
-        """
-        if not self._has_hmer_indel_rows():
-            logger.info("plot_hmer_indel_snvq_histograms: no hmer-indel rows; skipping")
-            return
-        data = self.data_df
-        snvq = pd.to_numeric(data[QUAL], errors="coerce")
-        label = data[LABEL].astype(bool)
-        bins = np.linspace(0, float(self.max_qual), 60)
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharex=True, sharey=True)
-        for ax, vt, title in ((axes[0], VARIANT_TYPE_SNV, "SNV"), (axes[1], VARIANT_TYPE_HMER_INDEL, "hmer-indel")):
-            m = data[VARIANT_TYPE] == vt
-            tp_vals = snvq[m & label].dropna()
-            fp_vals = snvq[m & ~label].dropna()
-            if len(tp_vals):
-                ax.hist(tp_vals, bins=bins, density=True, alpha=0.55, label="TP")
-            if len(fp_vals):
-                ax.hist(fp_vals, bins=bins, density=True, alpha=0.55, label="FP")
-            ax.axvline(60, color="k", linestyle="--", alpha=0.5, label="SNVQ=60")
-            ax.set_title(f"{title}  (n={int(m.sum()):,})")
-            ax.set_xlabel("SNVQ")
-            ax.legend()
-            ax.grid(visible=True, alpha=0.3)
-        axes[0].set_ylabel("density")
-        self._save_plt(output_filename=output_filename, fig=fig)
-        plt.close(fig)
 
     @exception_handler
     def plot_hmer_indel_fq_recall(self, output_filename: str = None, *, font_size: int = 20):
@@ -3680,6 +3643,9 @@ class SRSNVReport:
         group = pd.Series(index=ind.index, dtype=object)
         for label, mask in self._group_masks(data_df=ind):
             group[np.asarray(mask, dtype=bool)] = label
+        # hmer_len bins by X_HMER_RUN, the affected *reference* homopolymer run length. Expect no 1-mer
+        # DEL bin (a deletion shortens a ref run, so its affected run is >=2) and no 0-mer bin at all
+        # (run is always >=1; a 0-run insertion isn't classified as an hmer-indel) -- empty by construction.
         ctx = pd.DataFrame(
             {
                 "ins_del": ind[X_IC].astype(str).str.lower(),
@@ -3801,7 +3767,8 @@ class SRSNVReport:
                 )
             qax.axhline(60, color="k", ls=":", lw=0.8, alpha=0.5)
             qax.set_ylabel(f"SNVQ ({cls})", fontsize=11)
-            qax.set_ylim(30, float(self.max_qual) + 2)
+            qax.set_ylim(40, 100)
+            qax.set_yticks(range(40, 101, 10))
             qax.set_xlim(-0.5, n_cols - 0.5)
             qax.grid(visible=True, axis="y", alpha=0.4, ls=":")
             plt.setp(qax.get_xticklabels(), visible=False)
@@ -3929,8 +3896,14 @@ class SRSNVReport:
         # ROC AUC stats
         self.calc_roc_auc_table()
 
-        # ML_qual histograms
-        self.plot_logit_histograms(output_filename=logit_histogram)
+        # ML_qual histograms: SNV logit figure at logit_histogram; a separate hmer-indel logit figure
+        # when hmer indels are present (path reconstructed by create_srsnv_report_html).
+        logit_histogram_hmer_indel = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}logit_histogram_hmer_indel"
+        )
+        self.plot_logit_histograms(
+            output_filename=logit_histogram, output_filename_hmer_indel=logit_histogram_hmer_indel
+        )
         self.plot_interpolating_function_with_histograms(output_filename=calibration_fn_with_hist)
 
         # Training progress
@@ -3951,26 +3924,16 @@ class SRSNVReport:
         for col in self.params["numerical_features"]:
             self.plot_numerical_feature_hist_and_qual(col, output_filename=output_qual_per_feature + col)
 
-        # Joint SNV + hmer-indel metrics (only writes a file when hmer indels are present). Path follows
-        # the same naming convention create_srsnv_report_html reconstructs, so _get_plot_paths is untouched.
-        hmer_indel_metrics_plot = os.path.join(self.params["workdir"], f"{self.params['data_name']}hmer_indel_metrics")
-        self.plot_hmer_indel_metrics(output_filename=hmer_indel_metrics_plot)
+        # hmer-indel section (only writes files when hmer indels are present). Paths follow the same
+        # naming convention create_srsnv_report_html reconstructs, so _get_plot_paths is untouched.
         hmer_indel_by_class_plot = os.path.join(
             self.params["workdir"], f"{self.params['data_name']}hmer_indel_by_class"
         )
         self.plot_hmer_indel_by_class(output_filename=hmer_indel_by_class_plot)
         self.calc_hmer_indel_auc_table()
-        # SNVQ-based hmer-indel section (parity with SNV metrics): cross-product summary table,
-        # per-class SNVQ reliability, SNVQ histograms, and FQ-vs-recall. Each self-skips SNV-only runs.
+        # SNVQ-based hmer-indel section: cross-product summary table + FQ-vs-recall. Each self-skips
+        # SNV-only runs.
         self.calc_hmer_indel_run_info_table()
-        hmer_indel_snvq_reliability_plot = os.path.join(
-            self.params["workdir"], f"{self.params['data_name']}hmer_indel_snvq_reliability"
-        )
-        self.plot_hmer_indel_snvq_reliability(output_filename=hmer_indel_snvq_reliability_plot)
-        hmer_indel_snvq_hist_plot = os.path.join(
-            self.params["workdir"], f"{self.params['data_name']}hmer_indel_snvq_hist"
-        )
-        self.plot_hmer_indel_snvq_histograms(output_filename=hmer_indel_snvq_hist_plot)
         hmer_indel_fq_recall_plot = os.path.join(
             self.params["workdir"], f"{self.params['data_name']}hmer_indel_fq_recall"
         )

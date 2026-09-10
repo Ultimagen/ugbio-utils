@@ -803,23 +803,21 @@ def _add_hmer_variant_columns(df, n_indel=300, seed=5):
 
 
 def test_hmer_indel_snvq_summary_and_plots(consensus_resources, real_models_calc_run_info):
-    """SNVQ hmer-indel section: cross-product summary table (read-type x indel-class), SNVQ reliability,
-    and SNVQ histogram. Validates h5 keys, table structure/margins, and figure creation."""
+    """SNVQ hmer-indel section: cross-product summary table (read-type x indel-class) + by-class figure.
+    Validates h5 keys, table structure/margins, and figure creation."""
     df, metadata = consensus_resources
     df = _add_hmer_variant_columns(df)  # noqa: PD901
     with tempfile.TemporaryDirectory() as temp_output_dir:
         report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
         assert report._has_hmer_indel_rows()
         report.calc_hmer_indel_run_info_table()
-        rel = os.path.join(temp_output_dir, "hmer_reliability")
-        hist = os.path.join(temp_output_dir, "hmer_hist")
-        report.plot_hmer_indel_snvq_reliability(output_filename=rel)
-        report.plot_hmer_indel_snvq_histograms(output_filename=hist)
+        by_class = os.path.join(temp_output_dir, "hmer_by_class")
+        report.plot_hmer_indel_by_class(output_filename=by_class)
 
         h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
         with pd.HDFStore(h5_file, "r") as store:
             assert "/run_quality_summary_table_hmer_indel" in store.keys()
-            assert "/hmer_indel_snvq_reliability" in store.keys()
+            assert "/hmer_indel_class_stats" in store.keys()
 
         table = pd.read_hdf(h5_file, key="run_quality_summary_table_hmer_indel")
         assert set(table["indel_class"]) == {"snv (baseline)", "all indel", "ins", "del"}
@@ -827,12 +825,16 @@ def test_hmer_indel_snvq_summary_and_plots(consensus_resources, real_models_calc
         assert {"single read", "consensus, one strand", "consensus, duplex"} <= set(table["read_type"])
         for col in ["Median SNVQ", "Recall at SNVQ=50", "Recall at SNVQ=60", "Recall at SNVQ=70", "ROC AUC (Phred)"]:
             assert col in table.columns
+        # consensus (non-duplex) run: no Recall at SNVQ=80/90 columns (duplex-only)
+        assert "Recall at SNVQ=80" not in table.columns
         # per read_type: ins + del n_TP == all-indel n_TP (every indel is ins or del)
         for rt in table["read_type"].unique():
             n_tp = table[table["read_type"] == rt].set_index("indel_class")["n_TP"]
             assert n_tp["ins"] + n_tp["del"] == n_tp["all indel"]
-        assert os.path.exists(rel + ".png")
-        assert os.path.exists(hist + ".png")
+        # by-class figure uses SNVQ (median_snvq column, not median_mqual)
+        class_stats = pd.read_hdf(h5_file, key="hmer_indel_class_stats")
+        assert "median_snvq" in class_stats.columns
+        assert os.path.exists(by_class + ".png")
 
 
 def test_hmer_indel_snvq_summary_duplex_concordance_split(consensus_resources, real_models_calc_run_info):
@@ -890,6 +892,114 @@ def test_hmer_indel_snvq_summary_duplex_concordance_split(consensus_resources, r
             conc = sub["duplex molecule — concordant"]
             ssd = sub["duplex molecule — single-strand difference"]
             assert conc + ssd <= agg
+
+
+def _make_duplex_report(df, metadata, temp_output_dir, models):
+    """A duplex-mode SRSNVReport (report_mode='duplex_molecule'); df should carry mate_present +
+    duplex_concordant."""
+    temp_metadata_file = os.path.join(temp_output_dir, "test_metadata.json")
+    with open(temp_metadata_file, "w") as f:
+        json.dump(metadata, f)
+    categorical_features = [feat for feat in metadata["features"] if feat["type"] == "c"]
+    numerical_features = [feat for feat in metadata["features"] if feat["type"] != "c"]
+    params = {
+        "workdir": temp_output_dir,
+        "data_name": "test_run",
+        "categorical_features_names": [feat["name"] for feat in categorical_features],
+        "categorical_features_dict": {feat["name"]: list(feat["values"].keys()) for feat in categorical_features},
+        "numerical_features": [feat["name"] for feat in numerical_features],
+        "fp_regions_bed_file": 1,
+        "num_CV_folds": len(models),
+        "report_mode": "duplex_molecule",
+    }
+    return SRSNVReport(
+        models=models,
+        data_df=df.copy(),
+        params=params,
+        out_path=temp_output_dir,
+        srsnv_metadata=temp_metadata_file,
+        base_name="test_",
+        raise_exceptions=True,
+    )
+
+
+def _add_duplex_concordance_columns(df, seed=7):
+    rng = np.random.default_rng(seed)
+    df["mate_present"] = rng.integers(0, 2, len(df))
+    dc = np.full(len(df), -1, dtype=int)
+    idx = np.flatnonzero(df["mate_present"].to_numpy() == 1)
+    dc[idx] = rng.choice([0, 1, 2], size=len(idx))
+    df["duplex_concordant"] = dc
+    return df
+
+
+def test_snvq_thresholds_duplex_adds_80_90(consensus_resources, real_models_calc_run_info):
+    """_snvq_thresholds() returns [50,60,70] for a consensus run and adds 80/90 only for duplex runs;
+    the duplex hmer-indel SNVQ table then carries Recall at SNVQ=80/90 columns."""
+    df, metadata = consensus_resources
+    df = _add_hmer_variant_columns(df)  # noqa: PD901
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        assert report._snvq_thresholds() == [50, 60, 70]
+    dfd = _add_duplex_concordance_columns(_add_hmer_variant_columns(consensus_resources[0].copy()))
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
+        assert report._snvq_thresholds() == [50, 60, 70, 80, 90]
+        report.calc_hmer_indel_run_info_table()
+        table = pd.read_hdf(
+            os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5"),
+            key="run_quality_summary_table_hmer_indel",
+        )
+        for col in ["Recall at SNVQ=70", "Recall at SNVQ=80", "Recall at SNVQ=90"]:
+            assert col in table.columns
+
+
+def test_by_class_duplex_concordance_groups(consensus_resources, real_models_calc_run_info):
+    """plot_hmer_indel_by_class splits by the duplex concordance read-types (concordant / discordant)
+    for a duplex run, recorded in the hmer_indel_class_stats h5 (with a median_snvq column)."""
+    df, metadata = consensus_resources
+    dfd = _add_duplex_concordance_columns(_add_hmer_variant_columns(df))  # noqa: PD901
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
+        masks = report._duplex_concordance_group_masks()
+        assert [lbl for lbl, _ in masks] == ["single-strand consensus", "duplex concordant", "duplex discordant"]
+        by_class = os.path.join(temp_output_dir, "by_class")
+        report.plot_hmer_indel_by_class(output_filename=by_class)
+        stats = pd.read_hdf(
+            os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5"), key="hmer_indel_class_stats"
+        )
+        assert "median_snvq" in stats.columns
+        assert {"duplex concordant", "duplex discordant"} <= set(stats["read_group"])
+        assert os.path.exists(by_class + ".png")
+
+
+def test_removed_hmer_methods_absent():
+    """The removed figures are gone (SNV-vs-hmer metrics, SNVQ reliability, SNVQ histogram)."""
+    for name in ("plot_hmer_indel_metrics", "plot_hmer_indel_snvq_reliability", "plot_hmer_indel_snvq_histograms"):
+        assert not hasattr(SRSNVReport, name)
+
+
+def test_logit_histograms_split_hmer_indel(consensus_resources, real_models_calc_run_info):
+    """The logit histogram splits into an SNV figure and a separate hmer-indel figure when hmer rows
+    are present; an SNV-only run produces only the SNV figure."""
+    df, metadata = consensus_resources
+    dfh = _add_hmer_variant_columns(df.copy())  # noqa: PD901
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(dfh, metadata, temp_output_dir, real_models_calc_run_info)
+        snv = os.path.join(temp_output_dir, "logit_snv")
+        hmer = os.path.join(temp_output_dir, "logit_hmer")
+        report.plot_logit_histograms(output_filename=snv, output_filename_hmer_indel=hmer, plot_by_fold=False)
+        assert os.path.exists(snv + ".png")
+        assert os.path.exists(hmer + ".png")
+    # SNV-only run: hmer-indel figure not produced
+    df_snv, metadata2 = consensus_resources
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df_snv.copy(), metadata2, temp_output_dir, real_models_calc_run_info)
+        snv = os.path.join(temp_output_dir, "logit_snv")
+        hmer = os.path.join(temp_output_dir, "logit_hmer")
+        report.plot_logit_histograms(output_filename=snv, output_filename_hmer_indel=hmer, plot_by_fold=False)
+        assert os.path.exists(snv + ".png")
+        assert not os.path.exists(hmer + ".png")
 
 
 def test_hmer_indel_context_plot(consensus_resources, real_models_calc_run_info):
