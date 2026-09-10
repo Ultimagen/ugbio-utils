@@ -421,11 +421,7 @@ def main(argv: list[str] | None = None) -> None:
         baf_result = None
         source_path = args.mosdepth_summary
 
-    print(
-        f"[estimate_ploidy] Karyotype={coverage_result['karyotype']}, "
-        f"sex={coverage_result['sex_label']}, auto_mean={coverage_result['auto_mean']:.1f}x",
-        file=sys.stderr,
-    )
+    print("[estimate_ploidy] Ploidy estimation completed.", file=sys.stderr)
 
     report_path = write_report(args.sample_id, coverage_result, baf_result, source_path, args.output_dir)
     print(report_path.read_text())
