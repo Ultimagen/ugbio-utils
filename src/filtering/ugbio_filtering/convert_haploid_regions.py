@@ -1,4 +1,5 @@
-"""Convert non-PAR sex-chromosome genotypes to haploid for male samples."""
+"""Convert non-PAR sex-chromosome genotypes to haploid for male samples.
+Caller must ensure that the input VCF is of male samples."""
 
 from __future__ import annotations
 
@@ -42,12 +43,9 @@ def _convert_to_haploid(variant: pysam.VariantRecord) -> pysam.VariantRecord:
     min_pl = min(haploid_pls)
     haploid_pls = [pl - min_pl for pl in haploid_pls]
 
-    called = 0
-    for i, pl in enumerate(haploid_pls):
-        if pl == 0:
-            called = i
-    nonzero_pls = [pl for pl in haploid_pls if pl > 0]
-    gq = min(nonzero_pls) if nonzero_pls else 0
+    sorted_pls = sorted((pl, allele) for allele, pl in enumerate(haploid_pls))
+    called = sorted_pls[0][1]
+    gq = sorted_pls[1][0] if len(sorted_pls) > 1 else 0
 
     if call["GT"][0] is None:
         called = None
