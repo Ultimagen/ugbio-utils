@@ -226,7 +226,13 @@ jobs:
       - name: Check ECR scan results
         id: ecr-scan
         continue-on-error: true
-        uses: Ultimagen/ugbio-utils/.github/actions/ecr-scan@main
+        # Was pinned to @main, which no longer has this action: main renamed it to
+        # trivy-image-scan with a different input set. Resolving the action failed during
+        # "Prepare all required actions", i.e. before any step ran, so continue-on-error
+        # did not help and every docker build off this branch failed in 44 s. Point at the
+        # copy in this checkout instead; when this branch catches up with main, take main's
+        # trivy-image-scan step rather than keeping this.
+        uses: ./.github/actions/ecr-scan
         with:
           repository: ${{ inputs.docker-image }}
           tag: ${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
