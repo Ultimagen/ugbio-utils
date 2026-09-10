@@ -340,7 +340,7 @@ def write_report(
         "======================================================",
         "",
         f"  Karyotype:          {karyotype}",
-        f"  Sex:                {cr['sex_label']} (X ratio={cr['x_ratio']:.3f}, Y ratio={cr['y_ratio']:.3f})",
+        f"  X/Y coverage ratios: X={cr['x_ratio']:.3f}, Y={cr['y_ratio']:.3f}",
         f"  Whole-genome ploidy: {wgs_ploidy}",
         f"  Autosomal median cov: {cr['auto_mean']:.1f}x",
         f"  Coverage source:    {coverage_source}",
