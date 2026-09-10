@@ -3709,6 +3709,19 @@ class SRSNVReport:
         xs = np.arange(n_cols)
         xext = np.concatenate([[-0.5], xs, [n_cols - 0.5]])
 
+        # data-driven SNVQ y-range for the quality panels: min/max of the median SNVQ across all
+        # contexts + a small pad, shared across all bands so panels stay comparable. Falls back to
+        # 40-100 when there are no scored values.
+        _snvq_vals = pd.to_numeric(table["median_snvq_tp"], errors="coerce").dropna()
+        _pad, _min_span = 3.0, 10.0
+        if len(_snvq_vals):
+            y_lo = max(0.0, float(np.floor(_snvq_vals.min())) - _pad)
+            y_hi = min(float(self.max_qual) + 2, float(np.ceil(_snvq_vals.max())) + _pad)
+            if y_hi - y_lo < _min_span:  # widen a near-flat range downward
+                y_lo = max(0.0, y_hi - _min_span)
+        else:
+            y_lo, y_hi = 40.0, 100.0
+
         # one titled band per hmer base, each a full-width INS pair over DEL pair
         fig = plt.figure(figsize=(22, 40))
         n_bands = len(bases)
@@ -3767,10 +3780,10 @@ class SRSNVReport:
                 )
             qax.axhline(60, color="k", ls=":", lw=0.8, alpha=0.5)
             qax.set_ylabel(f"SNVQ ({cls})", fontsize=11)
-            qax.set_ylim(40, 100)
-            qax.set_yticks(range(40, 101, 10))
+            qax.set_ylim(y_lo, y_hi)
+            qax.locator_params(axis="y", nbins=8)  # ~8 auto ticks over the data-driven range
             qax.set_xlim(-0.5, n_cols - 0.5)
-            qax.grid(visible=True, axis="y", alpha=0.4, ls=":")
+            qax.grid(visible=True, axis="y", alpha=0.5, ls=":")
             plt.setp(qax.get_xticklabels(), visible=False)
             qax.tick_params(axis="x", length=0)
             _seps(qax, base_title=(base if cls == "ins" else None))
