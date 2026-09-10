@@ -3441,10 +3441,12 @@ class SRSNVReport:
 
     def _snvq_thresholds(self) -> list[int]:
         """SNVQ thresholds for the Recall@SNVQ rows. Duplex runs also report the high-quality
-        Recall@SNVQ80 / Recall@SNVQ90 (duplex consensus reaches much higher SNVQ)."""
+        Recall@SNVQ80 (duplex consensus reaches higher SNVQ). SNVQ90 is intentionally omitted: the
+        recalibrated SNVQ ceiling is counting-LUT-limited (~84 on typical runs), so Recall@SNVQ90
+        would be structurally 0 rather than informative."""
         thresholds = [50, 60, 70]
         if self.report_mode == ReportMode.DUPLEX:
-            thresholds = [*thresholds, 80, 90]
+            thresholds = [*thresholds, 80]
         return thresholds
 
     def _duplex_concordance_group_masks(self, data_df=None):

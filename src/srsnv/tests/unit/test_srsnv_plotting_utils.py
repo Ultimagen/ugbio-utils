@@ -933,9 +933,10 @@ def _add_duplex_concordance_columns(df, seed=7):
     return df
 
 
-def test_snvq_thresholds_duplex_adds_80_90(consensus_resources, real_models_calc_run_info):
-    """_snvq_thresholds() returns [50,60,70] for a consensus run and adds 80/90 only for duplex runs;
-    the duplex hmer-indel SNVQ table then carries Recall at SNVQ=80/90 columns."""
+def test_snvq_thresholds_duplex_adds_80(consensus_resources, real_models_calc_run_info):
+    """_snvq_thresholds() returns [50,60,70] for a consensus run and adds only 80 for duplex runs
+    (SNVQ90 omitted — the recalibrated SNVQ ceiling is ~84, so Recall@SNVQ90 would be structurally 0);
+    the duplex hmer-indel SNVQ table then carries a Recall at SNVQ=80 column but not =90."""
     df, metadata = consensus_resources
     df = _add_hmer_variant_columns(df)  # noqa: PD901
     with tempfile.TemporaryDirectory() as temp_output_dir:
@@ -944,14 +945,15 @@ def test_snvq_thresholds_duplex_adds_80_90(consensus_resources, real_models_calc
     dfd = _add_duplex_concordance_columns(_add_hmer_variant_columns(consensus_resources[0].copy()))
     with tempfile.TemporaryDirectory() as temp_output_dir:
         report = _make_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
-        assert report._snvq_thresholds() == [50, 60, 70, 80, 90]
+        assert report._snvq_thresholds() == [50, 60, 70, 80]
         report.calc_hmer_indel_run_info_table()
         table = pd.read_hdf(
             os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5"),
             key="run_quality_summary_table_hmer_indel",
         )
-        for col in ["Recall at SNVQ=70", "Recall at SNVQ=80", "Recall at SNVQ=90"]:
+        for col in ["Recall at SNVQ=70", "Recall at SNVQ=80"]:
             assert col in table.columns
+        assert "Recall at SNVQ=90" not in table.columns
 
 
 def test_by_class_duplex_concordance_groups(consensus_resources, real_models_calc_run_info):
