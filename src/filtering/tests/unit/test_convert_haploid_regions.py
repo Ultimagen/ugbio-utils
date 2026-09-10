@@ -8,9 +8,9 @@ from ugbio_filtering.convert_haploid_regions import (
 )
 
 _HG38_PAR = [
-    ("chrX", 10001, 2781479),
+    ("chrX", 10000, 2781479),
     ("chrX", 155701383, 156030895),
-    ("chrY", 10001, 2781479),
+    ("chrY", 10000, 2781479),
     ("chrY", 56887903, 57217415),
 ]
 
@@ -23,18 +23,18 @@ class TestInRegions:
         assert _in_regions("chrX", 5000000, _HG38_PAR) is False
 
     def test_par_start_boundary(self):
-        assert _in_regions("chrX", 10001, _HG38_PAR) is False
-        assert _in_regions("chrX", 10002, _HG38_PAR) is True
+        assert _in_regions("chrX", 10000, _HG38_PAR) is False
+        assert _in_regions("chrX", 10001, _HG38_PAR) is True
 
     def test_autosome_not_in_par(self):
         assert _in_regions("chr1", 1000000, _HG38_PAR) is False
 
     def test_read_par_regions(self, tmp_path):
         par_bed = tmp_path / "par.bed"
-        par_bed.write_text("chrX\t10001\t2781479\nchrY\t10001\t2781479\n")
+        par_bed.write_text("chrX\t10000\t2781479\nchrY\t10000\t2781479\n")
         assert _read_par_regions(str(par_bed)) == {
-            "chrX": [("chrX", 10001, 2781479)],
-            "chrY": [("chrY", 10001, 2781479)],
+            "chrX": [("chrX", 10000, 2781479)],
+            "chrY": [("chrY", 10000, 2781479)],
         }
 
 
