@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import random
 import re
 import sys
 from pathlib import Path
@@ -20,9 +21,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pysam
+from ugbio_core.vcfbed.vcftools import is_pass_record
 
 DEFAULT_SEX_CHROMOSOMES = ("chrX", "chrY", "X", "Y")
 _STANDARD_BASES = {"A", "C", "G", "T"}
+_COVERAGE_SAMPLE_COUNT = 5000
 
 _AUTOSOME_CHR = re.compile(r"^chr(\d+)$")
 _AUTOSOME_NOCHR = re.compile(r"^(\d+)$")
@@ -79,11 +82,40 @@ def _is_standard_biallelic_snp(ref: str, alts: tuple[str, ...] | None) -> bool:
     return ref in _STANDARD_BASES and alts is not None and len(alts) == 1 and alts[0] in _STANDARD_BASES
 
 
+def _update_reservoir(
+    reservoir: list[int | float], value: int | float, seen_count: int, sample_count: int
+) -> int:
+    """Add a value to a fixed-size uniform reservoir sample."""
+    seen_count += 1
+    if len(reservoir) < sample_count:
+        reservoir.append(value)
+    else:
+        index = random.randint(0, seen_count - 1)  # noqa: S311
+        if index < sample_count:
+            reservoir[index] = value
+    return seen_count
+
+
 def _determine_karyotype(x_ratio: float, y_ratio: float) -> str:
     for x_min, x_max, y_min, y_max, label in _KARYOTYPE_TABLE:
         if x_min <= x_ratio <= x_max and y_min <= y_ratio <= y_max:
             return label
     return "UNDETERMINED"
+
+
+def _autosomal_baseline_coverage(auto_chroms: dict[str, dict]) -> tuple[float, list[str]]:
+    """Calculate length-weighted autosomal coverage, falling back when lengths are missing."""
+    warnings = []
+    lengths = [data.get("length") for data in auto_chroms.values()]
+    if lengths and all(length is not None and length > 0 for length in lengths):
+        total_length = sum(lengths)
+        return (
+            sum(data["coverage"] * data["length"] for data in auto_chroms.values()) / total_length,
+            warnings,
+        )
+
+    warnings.append("Missing contig lengths for autosomal coverage baseline; using unweighted median.")
+    return float(np.median([data["coverage"] for data in auto_chroms.values()])), warnings
 
 
 def _sex_label_from_karyotype(karyotype: str) -> str:
@@ -118,14 +150,14 @@ def _compute_ploidy_from_chr_data(
     if not auto_chroms:
         raise ValueError("No autosomal contigs found")
 
-    auto_median = float(np.median([d["mean"] for d in auto_chroms.values()]))
+    auto_median, warnings = _autosomal_baseline_coverage(auto_chroms)
 
     if auto_median == 0:
         raise ValueError("Autosomal median coverage is 0; cannot compute ploidy")
 
     x_mean = next(
         (
-            data["mean"]
+            data["coverage"]
             for chrom, data in chr_data.items()
             if _is_sex_chromosome(chrom, sex_chromosome_names) and _is_x_chromosome(chrom)
         ),
@@ -133,7 +165,7 @@ def _compute_ploidy_from_chr_data(
     )
     y_mean = next(
         (
-            data["mean"]
+            data["coverage"]
             for chrom, data in chr_data.items()
             if _is_sex_chromosome(chrom, sex_chromosome_names) and _is_y_chromosome(chrom)
         ),
@@ -148,14 +180,16 @@ def _compute_ploidy_from_chr_data(
     per_chrom = []
     for chrom in auto_chroms:
         data = chr_data[chrom]
-        ploidy = 2 * data["mean"] / auto_median
-        per_chrom.append({"chrom": chrom, "ploidy": round(ploidy, 3), "mean_cov": round(data["mean"], 2), "flag": ""})
+        coverage = data["coverage"]
+        ploidy = 2 * coverage / auto_median
+        per_chrom.append({"chrom": chrom, "ploidy": round(ploidy, 3), "mean_cov": round(coverage, 2), "flag": ""})
 
     for sex_chrom, data in chr_data.items():
         if _is_sex_chromosome(sex_chrom, sex_chromosome_names):
-            ploidy = 2 * data["mean"] / auto_median
+            coverage = data["coverage"]
+            ploidy = 2 * coverage / auto_median
             per_chrom.append(
-                {"chrom": sex_chrom, "ploidy": round(ploidy, 3), "mean_cov": round(data["mean"], 2), "flag": "sex"}
+                {"chrom": sex_chrom, "ploidy": round(ploidy, 3), "mean_cov": round(coverage, 2), "flag": "sex"}
             )
 
     return {
@@ -165,6 +199,7 @@ def _compute_ploidy_from_chr_data(
         "x_ratio": round(x_ratio, 4),
         "y_ratio": round(y_ratio, 4),
         "auto_mean": round(auto_median, 2),
+        "warnings": warnings,
     }
 
 
@@ -179,7 +214,7 @@ def estimate_ploidy_from_coverage(
     for _, row in df_filtered.iterrows():
         chrom = row["chrom"]
         if chrom not in chr_data:
-            chr_data[chrom] = {"length": row["length"], "mean": row["mean"]}
+            chr_data[chrom] = {"length": row["length"], "coverage": row["mean"]}
 
     result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=sex_chromosomes)
     result["source"] = "mosdepth"
@@ -193,8 +228,6 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
     sex_chromosomes: list[str] | tuple[str, ...] = DEFAULT_SEX_CHROMOSOMES,
 ) -> tuple[dict, dict]:
     """Mode 1: per-chr coverage from SNP DP + BAF. Returns (coverage_result, baf_result)."""
-    import random  # noqa: PLC0415
-
     random.seed(42)  # noqa: S311
     sex_chromosome_names = _normalize_sex_chromosomes(sex_chromosomes)
 
@@ -203,7 +236,9 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
         raise ValueError(
             f"Sample {sample_id!r} is not present in VCF; available samples: {', '.join(reader.header.samples)}"
         )
+    contig_lengths = {contig: reader.header.contigs[contig].length for contig in reader.header.contigs}
     chr_dps: dict[str, list[int]] = {}
+    chr_dp_seen: dict[str, int] = {}
     # Reservoir sampling for BAF: uniform random sample over autosomal het SNPs
     baf_reservoir: list[float] = []
     baf_seen = 0
@@ -211,7 +246,7 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
     for variant in reader:
         if not _is_standard_biallelic_snp(variant.ref, variant.alts):
             continue
-        if list(variant.filter.keys()) != ["PASS"]:
+        if not is_pass_record(variant):
             continue
 
         chrom = variant.chrom
@@ -223,7 +258,12 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
         ad_value = sample.get("AD")
 
         if dp_value is not None and dp_value > 0:
-            chr_dps.setdefault(chrom, []).append(dp_value)
+            chr_dp_seen[chrom] = _update_reservoir(
+                chr_dps.setdefault(chrom, []),
+                dp_value,
+                chr_dp_seen.get(chrom, 0),
+                _COVERAGE_SAMPLE_COUNT,
+            )
 
         # BAF: reservoir sampling over autosomal het SNPs only
         is_autosome = not _is_sex_chromosome(chrom, sex_chromosome_names)
@@ -234,20 +274,18 @@ def estimate_ploidy_from_vcf(  # noqa: C901, PLR0912, PLR0915
                 if total >= 10:  # noqa: PLR2004
                     baf = alt_count / total
                     if 0.1 <= baf <= 0.9:  # noqa: PLR2004
-                        baf_seen += 1
-                        if len(baf_reservoir) < het_sample_count:
-                            baf_reservoir.append(baf)
-                        else:
-                            idx = random.randint(0, baf_seen - 1)  # noqa: S311
-                            if idx < het_sample_count:
-                                baf_reservoir[idx] = baf
+                        baf_seen = _update_reservoir(baf_reservoir, baf, baf_seen, het_sample_count)
 
     reader.close()
 
     chr_data = {}
     for chrom, dps in chr_dps.items():
         if len(dps) >= 20:  # noqa: PLR2004
-            chr_data[chrom] = {"mean": float(np.median(dps))}
+            median_dp = float(np.median(dps))
+            chr_data[chrom] = {
+                "length": contig_lengths.get(chrom),
+                "coverage": median_dp,
+            }
 
     coverage_result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=sex_chromosomes)
     coverage_result["source"] = "VCF SNP median DP"
@@ -261,7 +299,7 @@ def _classify_baf(baf_values: list[float]) -> dict:
     if n_het < 50:  # noqa: PLR2004
         return {"label": "INSUFFICIENT_DATA", "confidence": f"(<50 het SNPs, found {n_het})", "n_het": n_het}
 
-    di_count = sum(1 for b in baf_values if 0.40 <= b <= 0.60)  # noqa: PLR2004
+    di_count = sum(1 for b in baf_values if 0.40 < b < 0.60)  # noqa: PLR2004
     tri_count = sum(1 for b in baf_values if (0.25 <= b <= 0.4) or (0.60 <= b <= 0.75))  # noqa: PLR2004
     di_frac = round(di_count / n_het * 100, 1)
     tri_frac = round(tri_count / n_het * 100, 1)
@@ -310,6 +348,9 @@ def write_report(
         "  Per-chromosome ploidy (relative to autosome median = 2.0):",
         "  --------------------------------------------------------",
     ]
+
+    for warning in cr.get("warnings", []):
+        lines.extend(["", f"  [WARNING] {warning}"])
 
     for entry in cr["per_chrom"]:
         icon = {"sex": "."}.get(entry["flag"], " ")

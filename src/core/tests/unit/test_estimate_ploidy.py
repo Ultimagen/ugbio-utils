@@ -8,6 +8,7 @@ from ugbio_core.estimate_ploidy import (
     _determine_karyotype,
     _is_standard_biallelic_snp,
     _sex_label_from_karyotype,
+    _update_reservoir,
     estimate_ploidy_from_coverage,
     estimate_ploidy_from_vcf,
     parse_mosdepth_summary,
@@ -90,6 +91,18 @@ class TestClassifyBaf:
         assert result["label"] in ("TRIPLOID", "LIKELY_DIPLOID", "INCONCLUSIVE")
 
 
+class TestUpdateReservoir:
+    def test_bounds_sample_size(self):
+        reservoir = []
+        seen_count = 0
+
+        for value in range(100):
+            seen_count = _update_reservoir(reservoir, value, seen_count, sample_count=10)
+
+        assert seen_count == 100
+        assert len(reservoir) == 10
+
+
 class TestStandardBiallelicSnp:
     def test_standard_snp(self):
         assert _is_standard_biallelic_snp("A", ("G",)) is True
@@ -101,9 +114,9 @@ class TestStandardBiallelicSnp:
 
 class TestComputePloidyFromChrData:
     def test_male_hg38(self):
-        chr_data = {f"chr{i}": {"mean": 50.0, "length": 1e8} for i in range(1, 23)}
-        chr_data["chrX"] = {"mean": 25.0, "length": 1e8}
-        chr_data["chrY"] = {"mean": 25.0, "length": 5e7}
+        chr_data = {f"chr{i}": {"coverage": 50.0, "length": 1e8} for i in range(1, 23)}
+        chr_data["chrX"] = {"coverage": 25.0, "length": 1e8}
+        chr_data["chrY"] = {"coverage": 25.0, "length": 5e7}
         result = _compute_ploidy_from_chr_data(chr_data, has_chr=True)
         assert result["karyotype"] == "XY"
         assert result["sex_label"] == "male"
@@ -111,49 +124,61 @@ class TestComputePloidyFromChrData:
         assert 0.4 < result["y_ratio"] < 0.6
 
     def test_female_hg38(self):
-        chr_data = {f"chr{i}": {"mean": 50.0, "length": 1e8} for i in range(1, 23)}
-        chr_data["chrX"] = {"mean": 50.0, "length": 1e8}
-        chr_data["chrY"] = {"mean": 0.1, "length": 5e7}
+        chr_data = {f"chr{i}": {"coverage": 50.0, "length": 1e8} for i in range(1, 23)}
+        chr_data["chrX"] = {"coverage": 50.0, "length": 1e8}
+        chr_data["chrY"] = {"coverage": 0.1, "length": 5e7}
         result = _compute_ploidy_from_chr_data(chr_data, has_chr=True)
         assert result["karyotype"] == "XX"
         assert result["sex_label"] == "female"
 
     def test_male_b37(self):
-        chr_data = {str(i): {"mean": 40.0, "length": 1e8} for i in range(1, 23)}
-        chr_data["X"] = {"mean": 20.0, "length": 1e8}
-        chr_data["Y"] = {"mean": 20.0, "length": 5e7}
+        chr_data = {str(i): {"coverage": 40.0, "length": 1e8} for i in range(1, 23)}
+        chr_data["X"] = {"coverage": 20.0, "length": 1e8}
+        chr_data["Y"] = {"coverage": 20.0, "length": 5e7}
         result = _compute_ploidy_from_chr_data(chr_data, has_chr=False)
         assert result["karyotype"] == "XY"
 
     def test_non_numeric_autosomes_from_header(self):
         chr_data = {
-            "scaffold_a": {"mean": 50.0, "length": 1e8},
-            "scaffold_b": {"mean": 50.0, "length": 1e8},
-            "chrX": {"mean": 25.0, "length": 1e8},
-            "chrY": {"mean": 25.0, "length": 5e7},
+            "scaffold_a": {"coverage": 50.0, "length": 1e8},
+            "scaffold_b": {"coverage": 50.0, "length": 1e8},
+            "chrX": {"coverage": 25.0, "length": 1e8},
+            "chrY": {"coverage": 25.0, "length": 5e7},
         }
         result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=("chrX", "chrY"))
         assert result["karyotype"] == "XY"
         assert {entry["flag"] for entry in result["per_chrom"] if entry["chrom"].startswith("scaffold_")} == {""}
 
-    def test_autosomal_baseline_uses_median(self):
+    def test_autosomal_baseline_uses_length_weighted_coverage(self):
         chr_data = {
-            "chr1": {"mean": 50.0, "length": 1e8},
-            "chr2": {"mean": 50.0, "length": 1e8},
-            "chr3": {"mean": 1000.0, "length": 1e8},
-            "chrX": {"mean": 25.0, "length": 1e8},
-            "chrY": {"mean": 25.0, "length": 5e7},
+            "chr1": {"coverage": 40.0, "length": 200},
+            "chr2": {"coverage": 80.0, "length": 100},
+            "chrX": {"coverage": 20.0, "length": 100},
+            "chrY": {"coverage": 20.0, "length": 50},
+        }
+        result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=("chrX", "chrY"))
+        assert result["auto_mean"] == 53.33
+        assert result["warnings"] == []
+
+    def test_autosomal_baseline_falls_back_to_unweighted_median_without_lengths(self):
+        chr_data = {
+            "chr1": {"coverage": 50.0},
+            "chr2": {"coverage": 50.0},
+            "chr3": {"coverage": 1000.0},
+            "chrX": {"coverage": 25.0},
+            "chrY": {"coverage": 25.0},
         }
         result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=("chrX", "chrY"))
         assert result["auto_mean"] == 50.0
         assert result["karyotype"] == "XY"
+        assert "using unweighted median" in result["warnings"][0]
 
     def test_no_autosomes_raises(self):
         with pytest.raises(ValueError, match="No autosomal contigs"):
-            _compute_ploidy_from_chr_data({"chrX": {"mean": 25.0}}, has_chr=True)
+            _compute_ploidy_from_chr_data({"chrX": {"coverage": 25.0}}, has_chr=True)
 
     def test_zero_coverage_raises(self):
-        chr_data = {f"chr{i}": {"mean": 0.0, "length": 1e8} for i in range(1, 23)}
+        chr_data = {f"chr{i}": {"coverage": 0.0, "length": 1e8} for i in range(1, 23)}
         with pytest.raises(ValueError, match="Autosomal median coverage is 0"):
             _compute_ploidy_from_chr_data(chr_data, has_chr=True)
 
@@ -177,7 +202,7 @@ class TestEstimatePloidyFromCoverage:
 
 
 class TestEstimatePloidyFromVcf:
-    def test_reads_pass_snps_with_pysam(self, tmp_path):
+    def test_reads_unfiltered_snps_with_pysam(self, tmp_path):
         vcf_path = tmp_path / "calls.vcf.gz"
         header = pysam.VariantHeader()
         header.add_sample("SAMPLE")
@@ -192,7 +217,6 @@ class TestEstimatePloidyFromVcf:
             for chrom, depth, genotype in chromosome_calls:
                 for pos in range(1, 21):
                     record = writer.new_record(contig=chrom, start=pos - 1, stop=pos, alleles=("A", "G"))
-                    record.filter.add("PASS")
                     record.samples["SAMPLE"]["GT"] = genotype
                     record.samples["SAMPLE"]["DP"] = depth
                     record.samples["SAMPLE"]["AD"] = (depth // 2, depth // 2)
