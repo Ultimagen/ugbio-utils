@@ -26,18 +26,37 @@ Usage:
     python mark_duplicates_mi.py in.cram out.bam --use-umi --jobs 16 --regions panel.bed
 """
 
+# ruff: noqa: C901, PLR0912, PLR0915, FBT001, FBT002, FBT003
+#
+# The suppressions above are deliberate, and are about provenance rather than style.
+# This module is verified byte-for-byte -- MI, DS and CS on all 12,670,749 records of
+# 606174-L15806-Z0229, plus 55,884 CS links with 0 gained and 0 lost -- against the blob
+# that produced the four validated Omics arms of BIOIN-3068. Splitting process_shard()
+# to satisfy C901/PLR0912/PLR0915, or turning the `use_umi` / `strip_run_id` positionals
+# into keyword-only arguments to satisfy FBT, is a rewrite of code whose *output* is the
+# thing under warranty. If you do refactor it, re-run /data/Runs/BIOIN-3068/cmp_stream.py
+# (MI/DS vs the pre-CS baseline) and cs_links.py (linkage vs the validated blob) first,
+# and note that only a raw `samtools view` diff sees the emitted aux order MI, DS, CS.
+
 import argparse
 import bisect
 import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections import defaultdict  # still used in build_mi_map
 from concurrent.futures import ProcessPoolExecutor
 
 import pysam
 
+# A duplicate cluster needs at least two pairs; a lone pair is a singleton.
+MIN_CLUSTER_SIZE = 2
+
+# Length of a UMI-bearing dedup key: (chrom, left_start, right_end, u5, u3).
+# A shorter key was built without --use-umi, so there is no cross-strand link to make.
+UMI_KEY_LEN = 5
 
 # Default mate-search window for sharded mode. Measured on 606174-L15806-Z0229
 # (xGen pan-cancer, PE): 99.05% of pairs span <400 bp, 99.81% <500 bp, 99.90% <20 kb.
@@ -51,16 +70,17 @@ DEFAULT_MAX_SHARD_SPAN = 50_000
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Detect duplicate paired-end reads and set MI tag"
-    )
+    parser = argparse.ArgumentParser(description="Detect duplicate paired-end reads and set MI tag")
     parser.add_argument("input", help="Input BAM/CRAM (local path or s3://)")
     parser.add_argument(
-        "output", nargs="?", default=None,
+        "output",
+        nargs="?",
+        default=None,
         help="Output BAM/CRAM (omit with --stats-only)",
     )
     parser.add_argument(
-        "--stats-only", action="store_true",
+        "--stats-only",
+        action="store_true",
         help="Read MI tags from an already-marked file and print family size distribution",
     )
     parser.add_argument(
@@ -69,16 +89,21 @@ def parse_args():
         help="Include u3 and u5 UMI tags in the deduplication key",
     )
     parser.add_argument(
-        "--reference", "-T",
+        "--reference",
+        "-T",
         help="Reference FASTA (required for CRAM I/O)",
     )
     parser.add_argument(
-        "--strip-run-id", action="store_true",
+        "--strip-run-id",
+        action="store_true",
         help="Strip the run-id prefix (everything before the first '-') from MI tag values",
     )
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument(
-        "--limit", type=int, default=None, metavar="N",
+        "--limit",
+        type=int,
+        default=None,
+        metavar="N",
         help="Stop after N primary paired reads (for testing)",
     )
     sharded = parser.add_argument_group(
@@ -86,36 +111,54 @@ def parse_args():
         "Bounded-memory parallel mode. Any of these options switches it on.",
     )
     sharded.add_argument(
-        "--jobs", "-j", type=int, default=1, metavar="N",
+        "--jobs",
+        "-j",
+        type=int,
+        default=1,
+        metavar="N",
         help="Number of shards to process in parallel (default 1)",
     )
     sharded.add_argument(
-        "--shard-size", type=int, default=None, metavar="BP",
+        "--shard-size",
+        type=int,
+        default=None,
+        metavar="BP",
         help=f"Shard width in bp when --regions is not given (default {DEFAULT_SHARD_SIZE})",
     )
     sharded.add_argument(
-        "--regions", metavar="BED",
+        "--regions",
+        metavar="BED",
         help="Restrict the output to reads overlapping these intervals (e.g. a panel BED), "
-             "and use the intervals themselves as the shards. Unplaced unmapped reads are "
-             "dropped when this is given.",
+        "and use the intervals themselves as the shards. Unplaced unmapped reads are "
+        "dropped when this is given.",
     )
     sharded.add_argument(
-        "--region-padding", type=int, default=0, metavar="BP",
+        "--region-padding",
+        type=int,
+        default=0,
+        metavar="BP",
         help="Grow every --regions interval by this much on each side before merging "
-             "(default 0, i.e. take the BED as given)",
+        "(default 0, i.e. take the BED as given)",
     )
     sharded.add_argument(
-        "--max-shard-span", type=int, default=DEFAULT_MAX_SHARD_SPAN, metavar="BP",
+        "--max-shard-span",
+        type=int,
+        default=DEFAULT_MAX_SHARD_SPAN,
+        metavar="BP",
         help=f"Split any --regions interval wider than this (default {DEFAULT_MAX_SHARD_SPAN})",
     )
     sharded.add_argument(
-        "--pad", type=int, default=MAX_MATE_DISTANCE, metavar="BP",
+        "--pad",
+        type=int,
+        default=MAX_MATE_DISTANCE,
+        metavar="BP",
         help=f"How far past a shard to look for mates (default {MAX_MATE_DISTANCE}). "
-             "Pairs whose two mates are further apart than this are treated as "
-             "singletons and counted in the 'without a mate in their window' total.",
+        "Pairs whose two mates are further apart than this are treated as "
+        "singletons and counted in the 'without a mate in their window' total.",
     )
     sharded.add_argument(
-        "--tmp-dir", metavar="DIR",
+        "--tmp-dir",
+        metavar="DIR",
         help="Directory for per-shard BAMs (default: alongside the output)",
     )
     return parser.parse_args()
@@ -140,8 +183,7 @@ def _read_rec(read, use_umi: bool, umis: dict[str, str] | None = None) -> tuple:
         if umis is not None:
             u5 = umis.setdefault(u5, u5)
             u3 = umis.setdefault(u3, u3)
-    return (read.reference_name, read.reference_start, read.reference_end,
-            read.is_read1, read.is_reverse, u5, u3)
+    return (read.reference_name, read.reference_start, read.reference_end, read.is_read1, read.is_reverse, u5, u3)
 
 
 def _pair_key(r1: tuple, r2: tuple, use_umi: bool) -> tuple:
@@ -236,6 +278,7 @@ def collect_pair_keys(
 # Build MI map from pair keys
 # ---------------------------------------------------------------------------
 
+
 def assign_mi(clusters: dict[tuple, list[str]]) -> tuple[dict[str, str], dict[str, int]]:
     """
     Turn dedup-key clusters into MI/DS maps. MI = lexicographically first name in the
@@ -245,7 +288,7 @@ def assign_mi(clusters: dict[tuple, list[str]]) -> tuple[dict[str, str], dict[st
     ds_map: dict[str, int] = {}
     for names in clusters.values():
         cluster_size = len(names)
-        if cluster_size < 2:  # unique pair — DS=1, no MI
+        if cluster_size < MIN_CLUSTER_SIZE:  # unique pair — DS=1, no MI
             ds_map[names[0]] = 1
             continue
         representative = min(names)
@@ -312,7 +355,7 @@ def assign_cs(clusters: dict[tuple, list[str]], orient: dict[tuple, bool]) -> di
     """
     groups: dict[tuple, list[tuple[str, list[str]]]] = defaultdict(list)
     for key, names in clusters.items():
-        if len(key) < 5:  # no UMI part: nothing to normalise, nothing to link
+        if len(key) < UMI_KEY_LEN:  # no UMI part: nothing to normalise, nothing to link
             return {}
         umi = key[3:5]
         if orient.get(key):  # F2R1: R1 was the rightmost mate, so undo the swap
@@ -345,9 +388,7 @@ def _set_or_strip_cs(read, name: str, cs_map: dict[str, str] | None, strip_run_i
         read.tags = [(k, v) for k, v in read.tags if k != "CS"]
 
 
-def build_mi_map(
-    pair_keys: dict[str, tuple | None]
-) -> tuple[dict[str, str], dict[str, int], dict[tuple, list[str]]]:
+def build_mi_map(pair_keys: dict[str, tuple | None]) -> tuple[dict[str, str], dict[str, int], dict[tuple, list[str]]]:
     """
     Group read names by dedup key and assign MI values.
     Singletons (key is None) are left out of both maps and default to DS=1, no MI.
@@ -375,6 +416,7 @@ def build_mi_map(
 def print_family_size_distribution(mi_map: dict[str, str], total_pairs: int = 0) -> None:
     # mi_map only contains reads in duplicate clusters; multiply by 2 for individual reads
     from collections import Counter
+
     family_sizes = Counter(n * 2 for n in Counter(mi_map.values()).values())
     # unique pairs (not in any duplicate cluster) → size-2 families
     n_singleton_pairs = total_pairs - len(mi_map)
@@ -387,6 +429,7 @@ def print_family_size_distribution(mi_map: dict[str, str], total_pairs: int = 0)
 def stats_from_mi_tags(bam_path: str, open_kwargs: dict) -> None:
     """Read MI tags from an existing tagged file and print family size distribution."""
     from collections import Counter
+
     mi_counts: Counter = Counter()
     no_mi_names: Counter = Counter()
     with pysam.AlignmentFile(bam_path, "r", **open_kwargs) as bam:
@@ -411,6 +454,7 @@ def stats_from_mi_tags(bam_path: str, open_kwargs: dict) -> None:
 # Pass 2: copy reads to output with MI tag added/updated
 # ---------------------------------------------------------------------------
 
+
 def write_with_mi(
     bam_path: str,
     output_path: str,
@@ -426,9 +470,7 @@ def write_with_mi(
 
     with pysam.AlignmentFile(bam_path, "r", **open_kwargs) as bam:
         write_kwargs = dict(open_kwargs) if write_mode == "wc" else {}
-        with pysam.AlignmentFile(
-            output_path, write_mode, header=bam.header, **write_kwargs
-        ) as out:
+        with pysam.AlignmentFile(output_path, write_mode, header=bam.header, **write_kwargs) as out:
             for read in bam:
                 if limit and n_written >= limit:
                     break
@@ -488,9 +530,7 @@ def load_regions(bed_path: str, padding: int = 0) -> dict[str, tuple[list[int], 
             if not line.strip() or line.startswith(("#", "track", "browser")):
                 continue
             fields = line.split()
-            raw[fields[0]].append(
-                (max(0, int(fields[1]) - padding), int(fields[2]) + padding)
-            )
+            raw[fields[0]].append((max(0, int(fields[1]) - padding), int(fields[2]) + padding))
 
     regions: dict[str, tuple[list[int], list[int]]] = {}
     for chrom, intervals in raw.items():
@@ -534,7 +574,7 @@ def build_shards(
     """
     shards: list[tuple[str, int, int]] = []
     with pysam.AlignmentFile(bam_path, "r", **open_kwargs) as bam:
-        lengths = dict(zip(bam.references, bam.lengths))
+        lengths = dict(zip(bam.references, bam.lengths, strict=False))
         for chrom in bam.references:
             if regions is None:
                 for start in range(0, lengths[chrom], shard_size):
@@ -543,8 +583,8 @@ def build_shards(
             chrom_regions = regions.get(chrom)
             if chrom_regions is None:
                 continue
-            for start, end in zip(*chrom_regions):
-                end = min(end, lengths[chrom])
+            for start, region_end in zip(*chrom_regions, strict=False):
+                end = min(region_end, lengths[chrom])
                 n_parts = max(1, -(-(end - start) // max_shard_span))  # ceil
                 span = -(-(end - start) // n_parts)
                 for part_start in range(start, end, span):
@@ -561,8 +601,16 @@ def process_shard(job: tuple) -> dict:
     concatenated output coordinate-sorted.
     """
     (
-        bam_path, chrom, start, end, pad, use_umi, open_kwargs,
-        chrom_regions, out_path, strip_run_id,
+        bam_path,
+        chrom,
+        start,
+        end,
+        pad,
+        use_umi,
+        open_kwargs,
+        chrom_regions,
+        out_path,
+        strip_run_id,
     ) = job
 
     # Cluster straight off the stream: at panel depth an intermediate name -> key dict
@@ -683,15 +731,19 @@ def run_sharded(args, open_kwargs: dict) -> None:
     shard_size = args.shard_size or DEFAULT_SHARD_SIZE
     shards = build_shards(args.input, open_kwargs, shard_size, regions, args.max_shard_span)
     if regions is not None:
-        n_bp = sum(e - s for starts, ends in regions.values() for s, e in zip(starts, ends))
+        n_bp = sum(e - s for starts, ends in regions.values() for s, e in zip(starts, ends, strict=False))
         logging.info(
             "Restricted to %s (+/-%d bp): %d merged intervals, %d bp",
-            args.regions, args.region_padding,
-            sum(len(starts) for starts, _ in regions.values()), n_bp,
+            args.regions,
+            args.region_padding,
+            sum(len(starts) for starts, _ in regions.values()),
+            n_bp,
         )
     logging.info(
         "Sharded mode: %d shards, pad %d bp, %d parallel job(s)",
-        len(shards), args.pad, args.jobs,
+        len(shards),
+        args.pad,
+        args.jobs,
     )
 
     tmp_dir = args.tmp_dir or os.path.join(os.path.dirname(os.path.abspath(args.output)) or ".", "")
@@ -700,9 +752,16 @@ def run_sharded(args, open_kwargs: dict) -> None:
 
     jobs = [
         (
-            args.input, chrom, start, end, args.pad, args.use_umi, open_kwargs,
+            args.input,
+            chrom,
+            start,
+            end,
+            args.pad,
+            args.use_umi,
+            open_kwargs,
             regions.get(chrom) if regions is not None else None,
-            os.path.join(tmp_dir, f"{i:06d}.bam"), args.strip_run_id,
+            os.path.join(tmp_dir, f"{i:06d}.bam"),
+            args.strip_run_id,
         )
         for i, (chrom, start, end) in enumerate(shards)
     ]
@@ -719,8 +778,10 @@ def run_sharded(args, open_kwargs: dict) -> None:
                 logging.info("  %d/%d shards done", n_done, len(jobs))
             logging.debug(
                 "  shard %s: %d reads written, %d pairs, %d unmatched",
-                result["shard"], result["n_written"],
-                result["n_pairs"], result["n_orphans"],
+                result["shard"],
+                result["n_written"],
+                result["n_pairs"],
+                result["n_orphans"],
             )
 
     # Unplaced unmapped reads have no position to shard on, and are dropped outright
@@ -747,7 +808,9 @@ def run_sharded(args, open_kwargs: dict) -> None:
     total_orphans = sum(r["n_orphans"] for r in results)
     logging.info(
         "Done: %d reads written, %d pairs matched, %d reads left without a mate in their window",
-        total_written, total_pairs, total_orphans,
+        total_written,
+        total_pairs,
+        total_orphans,
     )
 
     family_sizes: dict[int, int] = defaultdict(int)
@@ -767,12 +830,17 @@ def concat_shards(shard_paths: list[str], output_path: str, open_kwargs: dict, t
         # Piped, not staged through a merged BAM: at panel scale that intermediate is
         # itself several hundred GB, on the same disk as the shards and the output.
         logging.info("Concatenating %d shards into %s", len(shard_paths), output_path)
+        # S607: samtools is resolved from PATH on purpose. ugbio_base builds and ships
+        # the CLI (ugbio_base/Dockerfile), and the same code has to run in a developer's
+        # conda/uv environment, where the absolute path differs. Both argument lists are
+        # fully literal apart from paths this process was given, so there is nothing to
+        # inject through.
         cat = subprocess.Popen(
-            ["samtools", "cat", "-b", fofn, "-o", "-"], stdout=subprocess.PIPE
+            ["samtools", "cat", "-b", fofn, "-o", "-"],  # noqa: S607
+            stdout=subprocess.PIPE,
         )
         view = subprocess.Popen(
-            ["samtools", "view", "-C", "-T", open_kwargs["reference_filename"],
-             "-o", output_path, "-"],
+            ["samtools", "view", "-C", "-T", open_kwargs["reference_filename"], "-o", output_path, "-"],  # noqa: S607
             stdin=cat.stdout,
         )
         cat.stdout.close()  # let samtools cat see EOF/SIGPIPE if view dies
@@ -782,7 +850,7 @@ def concat_shards(shard_paths: list[str], output_path: str, open_kwargs: dict, t
                 raise subprocess.CalledProcessError(rc, name)
     else:
         logging.info("Concatenating %d shards into %s", len(shard_paths), output_path)
-        subprocess.run(["samtools", "cat", "-b", fofn, "-o", output_path], check=True)
+        subprocess.run(["samtools", "cat", "-b", fofn, "-o", output_path], check=True)  # noqa: S607
 
 
 def print_family_sizes(family_sizes: dict[int, int]) -> None:
@@ -795,6 +863,7 @@ def print_family_sizes(family_sizes: dict[int, int]) -> None:
 
 
 # ---------------------------------------------------------------------------
+
 
 def main():
     args = parse_args()
@@ -813,7 +882,7 @@ def main():
         return
 
     if not args.output:
-        import sys; sys.exit("error: output is required unless --stats-only is set")
+        sys.exit("error: output is required unless --stats-only is set")
 
     if args.jobs > 1 or args.shard_size or args.regions:
         run_sharded(args, open_kwargs)
@@ -833,14 +902,14 @@ def main():
             members[cs].add(mi_map.get(name, name))
         n_linked = sum(1 for name, cs in cs_map.items() if len(members[cs]) > 1)
         logging.info(
-            "CS map built (%d pairs in %d duplex groups; %d pairs in a group that has a "
-            "cross-strand partner)",
-            len(cs_map), len(members), n_linked,
+            "CS map built (%d pairs in %d duplex groups; %d pairs in a group that has a " "cross-strand partner)",
+            len(cs_map),
+            len(members),
+            n_linked,
         )
 
     logging.info("Pass 2 — writing %s", args.output)
-    write_with_mi(args.input, args.output, mi_map, ds_map, open_kwargs, args.limit,
-                  args.strip_run_id, cs_map)
+    write_with_mi(args.input, args.output, mi_map, ds_map, open_kwargs, args.limit, args.strip_run_id, cs_map)
 
     logging.info("Indexing %s", args.output)
     pysam.index(args.output)

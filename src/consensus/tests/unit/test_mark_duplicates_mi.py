@@ -36,9 +36,7 @@ TAGS = ("MI", "DS", "CS")
 
 # Sharded mode concatenates its per-shard BAMs with `samtools cat`. The CLI is present in
 # ugbio_base, but ugbio-utils-bioinfo-CI runs a bare `uv run pytest` with no such guarantee.
-needs_samtools = pytest.mark.skipif(
-    shutil.which("samtools") is None, reason="sharded mode needs the samtools CLI"
-)
+needs_samtools = pytest.mark.skipif(shutil.which("samtools") is None, reason="sharded mode needs the samtools CLI")
 
 
 def read_tags(path):
