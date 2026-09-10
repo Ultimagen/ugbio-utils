@@ -3323,27 +3323,29 @@ class SRSNVReport:
 
     @exception_handler
     def plot_hmer_indel_by_class(self, output_filename: str = None):
-        """Homopolymer-indel TP SNVQ + count by indel class (ins/del) and reference homopolymer length.
+        """Homopolymer-indel TP SNVQ + count by indel class (ins/del) and affected homopolymer run length.
 
-        Plots median SNVQ (not MQUAL) and TP count vs reference homopolymer length, one line per indel
-        class. For duplex runs the lines are also split by read-type via
-        :func:`_duplex_concordance_group_masks` (single-strand consensus / duplex concordant / duplex
-        discordant): color encodes the read-type group, linestyle encodes ins vs del. For non-duplex
-        runs (or when ``duplex_concordant`` is absent) it falls back to ins/del-only lines. Writes the
-        per-(read_group, indel_class, hmer_length) table to the QC h5 under ``hmer_indel_class_stats``.
-        Self-skips when there are no hmer-indel TP rows. (Note: reference length 1 is expected to carry
-        data; a homopolymer *deletion* has X_HMER_REF>=1, and only the context figure's X_HMER_RUN is
-        legitimately >=2 for deletions.)
+        Bins by ``X_HMER_RUN`` (the length of the reference homopolymer run the indel actually
+        changes), NOT ``X_HMER_REF`` (which is measured at the VCF anchor base — usually the 5' flank
+        for deletions — and so reports the wrong homopolymer for ~34% of hmer-indels). Plots median
+        SNVQ (not MQUAL) and TP count vs that run length, one line per indel class. For duplex runs the
+        lines are also split by read-type via :func:`_duplex_concordance_group_masks` (single-strand
+        consensus / duplex concordant / duplex discordant): color encodes the read-type group,
+        linestyle encodes ins vs del. For non-duplex runs (or when ``duplex_concordant`` is absent) it
+        falls back to ins/del-only lines. Writes the per-(read_group, indel_class, hmer_length) table
+        to the QC h5 under ``hmer_indel_class_stats``. Self-skips when there are no hmer-indel TP rows.
+        (A 1-mer bin is populated for insertions but empty for deletions, since a homopolymer deletion
+        shortens a run of length >=2.)
         """
-        if VARIANT_TYPE not in self.data_df.columns or X_IC not in self.data_df.columns:
-            logger.info("plot_hmer_indel_by_class: variant_type / X_IC missing; skipping")
+        if any(c not in self.data_df.columns for c in (VARIANT_TYPE, X_IC, X_HMER_RUN)):
+            logger.info("plot_hmer_indel_by_class: variant_type / X_IC / X_HMER_RUN missing; skipping")
             return
         data = self.data_df
         ind = data[(data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL) & data[LABEL].astype(bool)]
         if ind.empty:
             logger.info("plot_hmer_indel_by_class: no hmer-indel TP rows; skipping")
             return
-        hmer_len = pd.to_numeric(ind[X_HMER_REF], errors="coerce").clip(lower=0, upper=12)
+        hmer_len = pd.to_numeric(ind[X_HMER_RUN], errors="coerce").clip(lower=1, upper=12)
         base = pd.DataFrame(
             {
                 "hmer_length": hmer_len.to_numpy(),
@@ -3381,10 +3383,10 @@ class SRSNVReport:
             lbl = cls_name if groups == ["all"] else f"{g} · {cls_name}"
             axes[0].plot(srt["hmer_length"], srt["median_snvq"], marker="o", ls=ls, color=color, label=lbl)
             axes[1].plot(srt["hmer_length"], srt["count"], marker="o", ls=ls, color=color, label=lbl)
-        axes[0].set_xlabel("reference homopolymer length")
+        axes[0].set_xlabel("affected homopolymer run length")
         axes[0].set_ylabel("median SNVQ (TP)")
         axes[0].set_title("median SNVQ by class")
-        axes[1].set_xlabel("reference homopolymer length")
+        axes[1].set_xlabel("affected homopolymer run length")
         axes[1].set_ylabel("TP count")
         axes[1].set_title("TP count by class")
         axes[1].set_yscale("log")
