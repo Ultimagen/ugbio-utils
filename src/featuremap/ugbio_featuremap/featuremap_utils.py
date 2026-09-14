@@ -31,6 +31,8 @@ class FeatureMapFields(Enum):
     SNVQ = "SNVQ"
     X_HMER_REF = "X_HMER_REF"
     X_HMER_ALT = "X_HMER_ALT"
+    X_INDEL_CLASS = "X_INDEL_CLASS"
+    X_INDEL_SEQ = "X_INDEL_SEQ"
     ST = "st"
     ET = "et"
     FS = "fs"  # forward-strand read count (consensus data)

@@ -70,9 +70,11 @@ IS_CYCLE_SKIP = "is_cycle_skip"
 # (indel length); X_HMER_REF is the reference homopolymer length used to bin hmer-indel metrics.
 X_IC = "X_IC"
 X_IL = "X_IL"
+X_INDEL_CLASS = "X_INDEL_CLASS"  # snvfind: "hmer" | "non_hmer" -- discriminates the two indel classes
 VARIANT_TYPE = "variant_type"
 VARIANT_TYPE_SNV = "snv"
 VARIANT_TYPE_HMER_INDEL = "hmer_indel"
+VARIANT_TYPE_NONHMER_INDEL = "non_hmer_indel"
 
 EDIT_DIST_FEATURES = ["EDIST", "HAMDIST", "HAMDIST_FILT"]
 
@@ -123,20 +125,30 @@ def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA"
 
 
 def compute_variant_type_column(data_df: pd.DataFrame) -> pd.Series:
-    """Label each featuremap row as an SNV or a homopolymer indel (the joint report's variant-type axis).
+    """Label each featuremap row as SNV, homopolymer indel, or non-homopolymer indel (the report's axis).
 
-    In the joint DeepSRSNV mode snvfind emits SNVs plus homopolymer indels; the latter carry ``X_IC``
-    (``ins``/``del``). Rows without ``X_IC`` (SNVs, or any run produced without ``--enable-hmer-indels``)
-    are labeled ``snv``. Returns a Series of ``"snv"`` / ``"hmer_indel"`` aligned to ``data_df.index``.
+    In the joint DeepSRSNV mode snvfind emits SNVs plus indels; indels carry ``X_IC`` (``ins``/``del``) and
+    an ``X_INDEL_CLASS`` (``hmer``/``non_hmer``) discriminator. Rows without ``X_IC`` (SNVs, or any run
+    produced without indel emission) are labeled ``snv``. Indel rows are split by ``X_INDEL_CLASS``:
+    ``non_hmer`` -> ``non_hmer_indel``; anything else (including a missing column, for backward
+    compatibility with older hmer-only featuremaps) -> ``hmer_indel``. Returns a Series aligned to
+    ``data_df.index``.
     """
     if X_IC not in data_df.columns:
         return pd.Series(VARIANT_TYPE_SNV, index=data_df.index)
     ic = data_df[X_IC].astype(str).str.lower()
-    is_hmer_indel = ic.isin(["ins", "del"])
-    return pd.Series(
+    is_indel = ic.isin(["ins", "del"])
+    if X_INDEL_CLASS in data_df.columns:
+        is_non_hmer = is_indel & (data_df[X_INDEL_CLASS].astype(str).str.lower() == "non_hmer")
+    else:
+        is_non_hmer = pd.Series(np.zeros(len(data_df), dtype=bool), index=data_df.index)
+    is_hmer_indel = is_indel & ~is_non_hmer
+    labels = np.where(
+        is_non_hmer,
+        VARIANT_TYPE_NONHMER_INDEL,
         np.where(is_hmer_indel, VARIANT_TYPE_HMER_INDEL, VARIANT_TYPE_SNV),
-        index=data_df.index,
     )
+    return pd.Series(labels, index=data_df.index)
 
 
 class _ModelWithTrainingResults:
@@ -316,6 +328,7 @@ def prepare_report(
     # metrics out by variant type and (via X_HMER_REF) by homopolymer length.
     data_df[VARIANT_TYPE] = compute_variant_type_column(data_df)
     params["has_hmer_indels"] = bool((data_df[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).any())
+    params["has_non_hmer_indels"] = bool((data_df[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL).any())
 
     # Handle random seed
     rng = np.random.default_rng(random_seed) if random_seed is not None else None
@@ -358,6 +371,7 @@ def prepare_report(
         split_mode=scheme.mode.value,
         display_suffix=scheme.display_suffix,
         has_hmer_indels=params["has_hmer_indels"],
+        has_non_hmer_indels=params["has_non_hmer_indels"],
     )
 
 

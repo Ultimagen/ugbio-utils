@@ -81,8 +81,9 @@ X_HMER_POST = "X_HMER_POST"  # snvfind: reference base immediately 3' of the aff
 X_NEXT1 = FeatureMapFields.X_NEXT1.value  # base at POS+1 == first base of the affected hmer run
 REF = FeatureMapFields.REF.value
 VARIANT_TYPE_SNV = "snv"
-VARIANT_TYPE = "variant_type"  # per-row snv | hmer_indel (set by prepare_report.compute_variant_type_column)
+VARIANT_TYPE = "variant_type"  # per-row snv | hmer_indel | non_hmer_indel (set by compute_variant_type_column)
 VARIANT_TYPE_HMER_INDEL = "hmer_indel"
+VARIANT_TYPE_NONHMER_INDEL = "non_hmer_indel"
 IS_MIXED = "is_mixed"
 IS_MIXED_START = "is_mixed_start"
 IS_MIXED_END = "is_mixed_end"
@@ -322,6 +323,7 @@ def create_srsnv_report_html(
     display_suffix: str = "mixed_start",
     *,
     has_hmer_indels: bool = False,
+    has_non_hmer_indels: bool = False,
 ):
     if len(out_basename) > 0 and not out_basename.endswith("."):
         out_basename += "."
@@ -332,6 +334,8 @@ def create_srsnv_report_html(
     hmer_indel_fq_recall_plot = os.path.join(out_path, f"{out_basename}hmer_indel_fq_recall")
     hmer_indel_context_plot = os.path.join(out_path, f"{out_basename}hmer_indel_context")
     logit_histogram_hmer_indel = os.path.join(out_path, f"{out_basename}logit_histogram_hmer_indel")
+    # non-hmer indel section (parallel to hmer; files exist only when has_non_hmer_indels).
+    logit_histogram_non_hmer_indel = os.path.join(out_path, f"{out_basename}logit_histogram_non_hmer_indel")
 
     [
         FQ_vs_recall_plot,  # noqa: N806
@@ -364,10 +368,12 @@ def create_srsnv_report_html(
         "qual_histogram": qual_histogram,
         "logit_histogram": logit_histogram,
         "logit_histogram_hmer_indel": logit_histogram_hmer_indel,
+        "logit_histogram_non_hmer_indel": logit_histogram_non_hmer_indel,
         "calibration_fn_with_hist": calibration_fn_with_hist,
         "split_mode": split_mode,
         "display_suffix": display_suffix,
         "has_hmer_indels": has_hmer_indels,
+        "has_non_hmer_indels": has_non_hmer_indels,
         "hmer_indel_by_class_plot": hmer_indel_by_class_plot,
         "hmer_indel_fq_recall_plot": hmer_indel_fq_recall_plot,
         "hmer_indel_context_plot": hmer_indel_context_plot,
@@ -3443,6 +3449,12 @@ class SRSNVReport:
             (self.data_df[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).any()
         )
 
+    def _has_non_hmer_indel_rows(self) -> bool:
+        """True when the report dataframe carries any non-hmer-indel rows (``variant_type == non_hmer_indel``)."""
+        return VARIANT_TYPE in self.data_df.columns and bool(
+            (self.data_df[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL).any()
+        )
+
     def _snvq_thresholds(self) -> list[int]:
         """SNVQ thresholds for the Recall@SNVQ rows. Duplex runs also report the high-quality
         Recall@SNVQ80 (duplex consensus reaches higher SNVQ). SNVQ90 is intentionally omitted: the
@@ -3487,22 +3499,31 @@ class SRSNVReport:
     def _hmer_indel_class_conditions(self):
         """Ordered ``{label: boolean mask}`` over the variant-type / indel-class axis.
 
-        ``snv`` (baseline) + ``all indel`` + ``ins`` / ``del``. Masks are plain numpy bool arrays aligned
-        to ``self.data_df``. Returns ``None`` when there are no hmer-indel rows.
+        Always ``snv (baseline)``. When hmer-indel rows are present: ``all indel`` + ``ins`` / ``del``
+        (the existing hmer axis, unchanged so hmer-only reports are byte-identical). When non-hmer-indel
+        rows are present, additionally: ``non-hmer indel`` + ``non-hmer ins`` / ``non-hmer del``. Masks are
+        plain numpy bool arrays aligned to ``self.data_df``. Returns ``None`` when there are no indel rows
+        of either class.
         """
         if VARIANT_TYPE not in self.data_df.columns:
             return None
         data = self.data_df
-        is_indel = (data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).to_numpy()
-        if not is_indel.any():
+        vt = data[VARIANT_TYPE]
+        is_hmer = (vt == VARIANT_TYPE_HMER_INDEL).to_numpy()
+        is_nonhmer = (vt == VARIANT_TYPE_NONHMER_INDEL).to_numpy()
+        if not is_hmer.any() and not is_nonhmer.any():
             return None
         cls = data[X_IC].astype(str).str.lower().to_numpy() if X_IC in data.columns else np.array([""] * len(data))
-        return {
-            "snv (baseline)": (data[VARIANT_TYPE] == VARIANT_TYPE_SNV).to_numpy(),
-            "all indel": is_indel,
-            "ins": is_indel & (cls == "ins"),
-            "del": is_indel & (cls == "del"),
-        }
+        conditions = {"snv (baseline)": (vt == VARIANT_TYPE_SNV).to_numpy()}
+        if is_hmer.any():
+            conditions["all indel"] = is_hmer
+            conditions["ins"] = is_hmer & (cls == "ins")
+            conditions["del"] = is_hmer & (cls == "del")
+        if is_nonhmer.any():
+            conditions["non-hmer indel"] = is_nonhmer
+            conditions["non-hmer ins"] = is_nonhmer & (cls == "ins")
+            conditions["non-hmer del"] = is_nonhmer & (cls == "del")
+        return conditions
 
     @exception_handler
     def calc_hmer_indel_run_info_table(self):
