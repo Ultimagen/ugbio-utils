@@ -1,4 +1,6 @@
 import random
+from pathlib import Path
+import subprocess
 
 import pysam
 import pytest
@@ -227,6 +229,34 @@ class TestEstimatePloidyFromVcf:
                     writer.write(record)
         return vcf_path
 
+    @staticmethod
+    def _make_full_genome_vcf(tmp_path, sample_name="SAMPLE"):
+        vcf_path = tmp_path / "full_genome_calls.vcf.gz"
+        header = pysam.VariantHeader()
+        header.add_sample(sample_name)
+        contigs = [f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY"]
+        for chrom in contigs:
+            header.add_line(f"##contig=<ID={chrom},length=100000000>")
+        header.add_line('##FILTER=<ID=PASS,Description="All filters passed">')
+        header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
+        header.add_line('##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Depth">')
+        header.add_line('##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allele depths">')
+        with pysam.VariantFile(vcf_path, "wz", header=header) as writer:
+            for chrom in contigs:
+                if chrom in ("chrX", "chrY"):
+                    depth, genotype, ad = 25, (1, 1), (0, 25)
+                else:
+                    depth, genotype, ad = 50, (0, 1), (25, 25)
+                for pos in range(1, 31):
+                    record = writer.new_record(contig=chrom, start=pos - 1, stop=pos, alleles=("A", "G"))
+                    record.filter.add("PASS")
+                    record.samples[sample_name]["GT"] = genotype
+                    record.samples[sample_name]["DP"] = depth
+                    record.samples[sample_name]["AD"] = ad
+                    writer.write(record)
+        pysam.tabix_index(str(vcf_path), preset="vcf", force=True)
+        return vcf_path
+
     def test_reads_unfiltered_snps_with_pysam(self, tmp_path):
         vcf_path = self._make_ploidy_vcf(tmp_path)
 
@@ -298,6 +328,51 @@ class TestEstimatePloidyCli:
         assert "Karyotype:" in report_text
         assert "Coverage source:    VCF SNP median DP" in report_text
 
+    def test_vcf_mode_report_matches_reference(self, tmp_path):
+        vcf_path = TestEstimatePloidyFromVcf._make_full_genome_vcf(tmp_path, sample_name="SAMPLE")
+
+        main(["--vcf", str(vcf_path), "--sample-id", "SAMPLE", "--output-dir", str(tmp_path)])
+
+        report_path = tmp_path / "SAMPLE.ploidy_report.txt"
+        report_text = report_path.read_text()
+
+        expected_lines = [
+            "======================================================",
+            "  Genome Ploidy Report - SAMPLE",
+            "======================================================",
+            "",
+            "  Karyotype:          XY",
+            "  X/Y coverage ratios: X=0.500, Y=0.500",
+            "  Whole-genome ploidy: DIPLOID (100.0% hets in 0.4-0.6 BAF band, n=660)",
+            "  Autosomal median cov: 50.0x",
+            "  Coverage source:    VCF SNP median DP",
+            f"  Input:              {vcf_path}",
+            "",
+            "  Per-chromosome ploidy (relative to autosome median = 2.0):",
+            "  --------------------------------------------------------",
+        ]
+        for i in range(1, 23):
+            chrom = f"chr{i}"
+            expected_lines.append(f"  {chrom:<6s} ploidy=2.000  cov=50.00x   ")
+        expected_lines.extend(
+            [
+                "  chrX   ploidy=1.000  cov=25.00x  .",
+                "  chrY   ploidy=1.000  cov=25.00x  .",
+                "",
+                "  (. = sex chromosome)",
+                "",
+                "  No autosomal aneuploidy detected (all within +/-0.35 of 2.0).",
+                "",
+                "",
+            ]
+        )
+        assert report_text == "\n".join(expected_lines)
+
+        # Verify downstream WDL task karyotype extraction logic
+        cmd = f"grep -m1 'Karyotype:' {report_path} | awk '{{print $NF}}'"
+        karyotype_extracted = subprocess.check_output(cmd, shell=True, text=True).strip()
+        assert karyotype_extracted == "XY"
+
     def test_mosdepth_summary_mode_writes_report(self, tmp_path):
         summary_path = tmp_path / "summary.txt"
         lines = ["chrom\tlength\tbases\tmean\tmin_cov\tmax_cov\n"]
@@ -314,6 +389,39 @@ class TestEstimatePloidyCli:
         assert report.exists()
         assert "Karyotype:          XY" in report_text
         assert "Coverage source:    mosdepth" in report_text
+
+    def test_mosdepth_mode_report_matches_reference(self, tmp_path):
+        summary_path = tmp_path / "summary.txt"
+        lines = ["chrom\tlength\tbases\tmean\tmin_cov\tmax_cov\n"]
+        for i in range(1, 23):
+            lines.append(f"chr{i}\t100000000\t5000000000\t50.0\t0\t200\n")
+        lines.append("chrX\t100000000\t2500000000\t25.0\t0\t100\n")
+        lines.append("chrY\t50000000\t1250000000\t25.0\t0\t100\n")
+        summary_path.write_text("".join(lines))
+
+        main(["--mosdepth-summary", str(summary_path), "--sample-id", "SAMPLE", "--output-dir", str(tmp_path)])
+
+        report_path = tmp_path / "SAMPLE.ploidy_report.txt"
+        report_text = report_path.read_text()
+
+        expected_head = [
+            "======================================================",
+            "  Genome Ploidy Report - SAMPLE",
+            "======================================================",
+            "",
+            "  Karyotype:          XY",
+            "  X/Y coverage ratios: X=0.500, Y=0.500",
+            "  Whole-genome ploidy: N/A (CRAM mode, no BAF)",
+            "  Autosomal median cov: 50.0x",
+            "  Coverage source:    mosdepth",
+            f"  Input:              {summary_path}",
+        ]
+        assert "\n".join(expected_head) in report_text
+
+        # Verify downstream WDL task karyotype extraction logic
+        cmd = f"grep -m1 'Karyotype:' {report_path} | awk '{{print $NF}}'"
+        karyotype_extracted = subprocess.check_output(cmd, shell=True, text=True).strip()
+        assert karyotype_extracted == "XY"
 
     def test_vcf_and_mosdepth_summary_are_mutually_exclusive(self, tmp_path):
         vcf_path = TestEstimatePloidyFromVcf._make_ploidy_vcf(tmp_path)
