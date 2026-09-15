@@ -31,6 +31,7 @@ _AUTOSOME_CHR = re.compile(r"^chr(\d+)$")
 _AUTOSOME_NOCHR = re.compile(r"^(\d+)$")
 _MITO = re.compile(r"^(chrM|MT)$", re.IGNORECASE)
 _SKIP = re.compile(r"_random$|_decoy$|^chrUn|^HLA|^EBV|_alt$", re.IGNORECASE)
+_REGION_SUFFIX = re.compile(r"_region$", re.IGNORECASE)
 
 # DRAGEN-compatible karyotype lookup: (x_min, x_max, y_min, y_max, label)
 _KARYOTYPE_TABLE = [
@@ -207,12 +208,20 @@ def estimate_ploidy_from_coverage(
     mosdepth_df: pd.DataFrame,
     sex_chromosomes: list[str] | tuple[str, ...] = DEFAULT_SEX_CHROMOSOMES,
 ) -> dict:
-    """Mode 2: estimate ploidy from mosdepth summary."""
-    df_filtered = mosdepth_df[~mosdepth_df["chrom"].apply(_is_skipped_chromosome)].copy()
+    """Mode 2: estimate ploidy from mosdepth interval summary rows.
+
+    Mosdepth emits both whole-chromosome rows and rows for the BED intervals
+    passed with ``--by``. The interval rows are the intended callable regions
+    for this workflow, so whole-chromosome and aggregate rows are excluded.
+    """
+    region_mask = mosdepth_df["chrom"].apply(lambda chrom: bool(_REGION_SUFFIX.search(chrom)))
+    df_filtered = mosdepth_df[region_mask].copy()
+    if df_filtered.empty:
+        raise ValueError("Mosdepth summary contains no *_region rows for ploidy estimation")
 
     chr_data = {}
     for _, row in df_filtered.iterrows():
-        chrom = row["chrom"]
+        chrom = _REGION_SUFFIX.sub("", row["chrom"])
         if chrom not in chr_data:
             chr_data[chrom] = {"length": row["length"], "coverage": row["mean"]}
 

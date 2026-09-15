@@ -1,7 +1,7 @@
 import random
-from pathlib import Path
 import subprocess
 
+import pandas as pd
 import pysam
 import pytest
 from ugbio_core.estimate_ploidy import (
@@ -193,9 +193,12 @@ class TestEstimatePloidyFromCoverage:
         tsv = tmp_path / "summary.txt"
         lines = ["chrom\tlength\tbases\tmean\tmin_cov\tmax_cov\n"]
         for i in range(1, 23):
-            lines.append(f"chr{i}\t100000000\t5000000000\t50.0\t0\t200\n")
-        lines.append("chrX\t100000000\t2500000000\t25.0\t0\t100\n")
-        lines.append("chrY\t50000000\t1250000000\t25.0\t0\t100\n")
+            lines.append(f"chr{i}_region\t100000000\t5000000000\t50.0\t0\t200\n")
+        lines.append("chrX_region\t100000000\t2500000000\t25.0\t0\t100\n")
+        lines.append("chrY_region\t50000000\t1250000000\t25.0\t0\t100\n")
+        lines.append("chrX_region\t100000000\t2500000000\t25.0\t0\t100\n")
+        lines.append("chrY\t50000000\t1250000000\t1.0\t0\t100\n")
+        lines.append("chrY_region\t50000000\t1250000000\t25.0\t0\t100\n")
         lines.append("total\t3000000000\t150000000000\t50.0\t0\t200\n")
         tsv.write_text("".join(lines))
 
@@ -204,6 +207,24 @@ class TestEstimatePloidyFromCoverage:
         assert result["karyotype"] == "XY"
         assert result["sex_label"] == "male"
         assert result["source"] == "mosdepth"
+        assert {entry["chrom"] for entry in result["per_chrom"]} == {
+            *(f"chr{i}" for i in range(1, 23)),
+            "chrX",
+            "chrY",
+        }
+        assert all(entry["mean_cov"] != 1.0 for entry in result["per_chrom"])
+
+    def test_mosdepth_requires_region_rows(self):
+        summary = pd.DataFrame(
+            {
+                "chrom": ["chr1", "total"],
+                "length": [100, 100],
+                "mean": [50.0, 50.0],
+            }
+        )
+
+        with pytest.raises(ValueError, match=r"no \*_region rows"):
+            estimate_ploidy_from_coverage(summary)
 
 
 class TestEstimatePloidyFromVcf:
@@ -377,9 +398,9 @@ class TestEstimatePloidyCli:
         summary_path = tmp_path / "summary.txt"
         lines = ["chrom\tlength\tbases\tmean\tmin_cov\tmax_cov\n"]
         for i in range(1, 23):
-            lines.append(f"chr{i}\t100000000\t5000000000\t50.0\t0\t200\n")
-        lines.append("chrX\t100000000\t2500000000\t25.0\t0\t100\n")
-        lines.append("chrY\t50000000\t1250000000\t25.0\t0\t100\n")
+            lines.append(f"chr{i}_region\t100000000\t5000000000\t50.0\t0\t200\n")
+        lines.append("chrX_region\t100000000\t2500000000\t25.0\t0\t100\n")
+        lines.append("chrY_region\t50000000\t1250000000\t25.0\t0\t100\n")
         summary_path.write_text("".join(lines))
 
         main(["--mosdepth-summary", str(summary_path), "--sample-id", "SAMPLE", "--output-dir", str(tmp_path)])
@@ -394,9 +415,9 @@ class TestEstimatePloidyCli:
         summary_path = tmp_path / "summary.txt"
         lines = ["chrom\tlength\tbases\tmean\tmin_cov\tmax_cov\n"]
         for i in range(1, 23):
-            lines.append(f"chr{i}\t100000000\t5000000000\t50.0\t0\t200\n")
-        lines.append("chrX\t100000000\t2500000000\t25.0\t0\t100\n")
-        lines.append("chrY\t50000000\t1250000000\t25.0\t0\t100\n")
+            lines.append(f"chr{i}_region\t100000000\t5000000000\t50.0\t0\t200\n")
+        lines.append("chrX_region\t100000000\t2500000000\t25.0\t0\t100\n")
+        lines.append("chrY_region\t50000000\t1250000000\t25.0\t0\t100\n")
         summary_path.write_text("".join(lines))
 
         main(["--mosdepth-summary", str(summary_path), "--sample-id", "SAMPLE", "--output-dir", str(tmp_path)])
