@@ -62,7 +62,7 @@ def convert_haploid_regions(input_vcf: str, output_vcf: str, par_regions: str) -
         raise ValueError(f"Expected single-sample VCF, found {len(reader.header.samples)} samples")
     regions_by_chrom = _read_par_regions(par_regions)
 
-    writer = pysam.VariantFile(output_vcf, mode="w", header=reader.header)
+    writer = pysam.VariantFile(output_vcf, mode="wz", header=reader.header)
     for variant in reader:
         chrom_regions = regions_by_chrom.get(variant.chrom)
         if chrom_regions is not None and not _in_regions(variant.chrom, variant.pos, chrom_regions):
