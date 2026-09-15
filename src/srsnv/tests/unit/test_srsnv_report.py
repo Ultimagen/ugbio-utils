@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import xgboost as xgb
+from ugbio_srsnv.split_scheme import MIXED_SCHEME
 from ugbio_srsnv.srsnv_report import (
     _build_params,
     _fallback_dummy_models,
@@ -34,6 +35,7 @@ from ugbio_srsnv.srsnv_report import (
     compute_is_cycle_skip_column,
     prepare_report,
 )
+from ugbio_srsnv.srsnv_utils import ReportMode  # noqa: F401  (kept for other tests)
 
 # ──────────────────────── _ModelWithTrainingResults ──────────────────────
 
@@ -495,10 +497,10 @@ class TestPrepareReport:
         with (
             patch("ugbio_srsnv.srsnv_report.SRSNVReport") as mock_report_cls,
             patch("ugbio_srsnv.srsnv_report.create_srsnv_report_html") as mock_html,
-            patch("ugbio_srsnv.srsnv_report.add_is_mixed_to_featuremap_df") as mock_mixed,
+            patch("ugbio_srsnv.srsnv_report.resolve_scheme_and_add_columns") as mock_mixed,
         ):
-            # Mock add_is_mixed to return the same df
-            mock_mixed.side_effect = lambda df, *args, **kwargs: df
+            # Mock split-column resolution to return the same df + the mixed scheme
+            mock_mixed.side_effect = lambda df, *args, **kwargs: (df, MIXED_SCHEME)
             # Mock the report class
             mock_report_instance = MagicMock()
             mock_report_cls.return_value = mock_report_instance
@@ -568,9 +570,9 @@ class TestPrepareReport:
         with (
             patch("ugbio_srsnv.srsnv_report.SRSNVReport") as mock_report_cls,
             patch("ugbio_srsnv.srsnv_report.create_srsnv_report_html"),
-            patch("ugbio_srsnv.srsnv_report.add_is_mixed_to_featuremap_df") as mock_mixed,
+            patch("ugbio_srsnv.srsnv_report.resolve_scheme_and_add_columns") as mock_mixed,
         ):
-            mock_mixed.side_effect = lambda df, *args, **kwargs: df
+            mock_mixed.side_effect = lambda df, *args, **kwargs: (df, MIXED_SCHEME)
             mock_report_instance = MagicMock()
             mock_report_cls.return_value = mock_report_instance
 
@@ -621,9 +623,9 @@ class TestPrepareReport:
         with (
             patch("ugbio_srsnv.srsnv_report.SRSNVReport") as mock_report_cls,
             patch("ugbio_srsnv.srsnv_report.create_srsnv_report_html"),
-            patch("ugbio_srsnv.srsnv_report.add_is_mixed_to_featuremap_df") as mock_mixed,
+            patch("ugbio_srsnv.srsnv_report.resolve_scheme_and_add_columns") as mock_mixed,
         ):
-            mock_mixed.side_effect = lambda df, *args, **kwargs: df
+            mock_mixed.side_effect = lambda df, *args, **kwargs: (df, MIXED_SCHEME)
             mock_report_cls.return_value = MagicMock()
 
             # Test basename without trailing dot gets dot added

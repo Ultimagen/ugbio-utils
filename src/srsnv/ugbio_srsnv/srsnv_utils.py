@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib
 import warnings
+from enum import Enum
 from functools import partial
 from itertools import cycle
 from typing import TYPE_CHECKING
@@ -75,6 +76,182 @@ TE = "te"
 TM = "tm"  # Trimmer tags column
 ST_FILLNA = "st_fillna"  # start tag with NAs filled in
 ET_FILLNA = "et_fillna"  # end tag with NAs filled in
+
+NF = "nf"  # forward-strand read count (consensus data)
+NR = "nr"  # reverse-strand read count (consensus data)
+IS_CONSENSUS = "is_consensus"  # read is a consensus read (nf >= 1 and nr >= 1)
+
+# Ordered read-group column: reads are split into N ordered groups per mode (see
+# add_read_group_column). The report iterates these groups instead of a binary split.
+READ_GROUP = "read_group"
+
+# Consensus groups, ordered by ascending strand support (single -> one strand -> duplex).
+CONSENSUS_GROUP_SINGLE = "single read"  # nf + nr <= 1
+CONSENSUS_GROUP_ONE_STRAND = "consensus, one strand"  # nf + nr >= 2 and (nf == 0) xor (nr == 0)
+CONSENSUS_GROUP_DUPLEX = "consensus, duplex"  # nf >= 1 and nr >= 1
+CONSENSUS_GROUPS = [CONSENSUS_GROUP_SINGLE, CONSENSUS_GROUP_ONE_STRAND, CONSENSUS_GROUP_DUPLEX]
+
+# Mixed groups (2), reproducing the historical binary ppmSeq labels/order.
+MIXED_GROUP_NON = "Non-mixed"
+MIXED_GROUP_POS = "Mixed"
+MIXED_GROUPS = [MIXED_GROUP_NON, MIXED_GROUP_POS]
+
+# None mode: a single "all reads" group.
+NONE_GROUP_ALL = "all reads"
+
+
+class ReportMode(Enum):
+    """How the SRSNV report splits reads into two groups.
+
+    The mode is detected automatically from the columns present in the featuremap
+    dataframe (see :func:`detect_report_mode`). Its ``.value`` is a plain string, so the
+    mode can be stored in the params dict / JSON and reconstructed via ``ReportMode(value)``.
+    """
+
+    MIXED = "mixed"  # ppmSeq data: split on mixed vs non-mixed reads (st/et tags)
+    CONSENSUS = "consensus"  # consensus data: split on consensus vs non-consensus (nf/nr)
+    NONE = "none"  # neither available: single "all reads" group
+
+
+def detect_report_mode(data_df: pd.DataFrame) -> ReportMode:
+    """Detect the report split mode from the columns present in the featuremap dataframe.
+
+    Detection is column-presence based (not adapter-version based), because the adapter
+    version is unreliable in some pipelines (e.g. the DNN report path stores it as None).
+
+    ppmSeq tags take priority over consensus counts: if the start/end strand-ratio tags
+    (``st``/``et``, or the v5 ``as``/``ae``/``ts``/``te`` tags from which they are derived)
+    are present, the mode is MIXED even if ``nf``/``nr`` happen to also be present.
+
+    Parameters
+    ----------
+    data_df : pd.DataFrame
+        The featuremap dataframe.
+
+    Returns
+    -------
+    ReportMode
+        MIXED if ppmSeq tags are present, CONSENSUS if nf/nr are present, else NONE.
+    """
+    cols = data_df.columns
+    v5_tags_present = AS in cols and AE in cols and TS in cols and TE in cols
+    if (ST in cols and ET in cols) or v5_tags_present:
+        return ReportMode.MIXED
+    if NF in cols and NR in cols:
+        return ReportMode.CONSENSUS
+    return ReportMode.NONE
+
+
+def add_is_consensus_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
+    """Add the ``is_consensus`` column to a consensus featuremap dataframe.
+
+    A read is a consensus read iff it has at least one forward-strand read (``nf >= 1``)
+    and at least one reverse-strand read (``nr >= 1``).
+
+    Parameters
+    ----------
+    data_df : pd.DataFrame
+        The featuremap dataframe, expected to contain the ``nf`` and ``nr`` columns.
+
+    Returns
+    -------
+    pd.DataFrame
+        The same dataframe with the ``is_consensus`` boolean column added.
+    """
+    logger.info("Adding is_consensus column to featuremap")
+    data_df[IS_CONSENSUS] = (data_df[NF] >= 1) & (data_df[NR] >= 1)
+    return data_df
+
+
+def add_read_group_column(data_df: pd.DataFrame, mode: ReportMode) -> pd.DataFrame:
+    """Add the ordered categorical ``read_group`` column used to split the report.
+
+    The report splits reads into N ordered groups depending on the mode:
+
+    - CONSENSUS: three groups by strand support (from ``nf``/``nr``), ascending:
+      ``single read`` (nf + nr <= 1), ``consensus, one strand``
+      (nf + nr >= 2 and exactly one of nf/nr is 0), ``consensus, duplex`` (nf >= 1 and nr >= 1).
+      These are exhaustive and mutually exclusive.
+    - MIXED: two groups reproducing the historical binary ppmSeq split, derived from
+      ``is_mixed_start``: ``Non-mixed`` / ``Mixed`` (in that order). NOTE: mixed-mode report code
+      keeps its own dual (legacy both-ends + display start) logic and does not rely on this column;
+      it is added only for a uniform N-group interface.
+    - NONE: a single ``all reads`` group.
+
+    The column is an *ordered* pandas Categorical so group order is stable in tables/plots.
+
+    Parameters
+    ----------
+    data_df : pd.DataFrame
+        The featuremap dataframe (with split boolean columns already added).
+    mode : ReportMode
+        The resolved report mode.
+
+    Returns
+    -------
+    pd.DataFrame
+        The dataframe with the ``read_group`` ordered-categorical column added.
+    """
+    if mode is ReportMode.CONSENSUS:
+        min_consensus_reads = 2  # nf + nr >= 2 to be more than a single read
+        nf = data_df[NF]
+        nr = data_df[NR]
+        total = nf + nr
+        group = pd.Series(CONSENSUS_GROUP_SINGLE, index=data_df.index, dtype=object)
+        one_strand = (total >= min_consensus_reads) & ((nf == 0) ^ (nr == 0))
+        duplex = (nf >= 1) & (nr >= 1)
+        group[one_strand] = CONSENSUS_GROUP_ONE_STRAND
+        group[duplex] = CONSENSUS_GROUP_DUPLEX
+        categories = CONSENSUS_GROUPS
+    elif mode is ReportMode.MIXED:
+        group = pd.Series(MIXED_GROUP_NON, index=data_df.index, dtype=object)
+        group[data_df[IS_MIXED_START]] = MIXED_GROUP_POS
+        categories = MIXED_GROUPS
+    else:  # ReportMode.NONE
+        group = pd.Series(NONE_GROUP_ALL, index=data_df.index, dtype=object)
+        categories = [NONE_GROUP_ALL]
+
+    data_df[READ_GROUP] = pd.Categorical(group, categories=categories, ordered=True)
+    return data_df
+
+
+def resolve_and_add_split_columns(
+    data_df: pd.DataFrame,
+    adapter_version: str = None,
+    categorical_features_names: list[str] | None = None,
+) -> tuple[pd.DataFrame, ReportMode]:
+    """Detect the report mode and add the boolean split column(s) it needs.
+
+    - MIXED: delegates to :func:`add_is_mixed_to_featuremap_df` (adds is_mixed/_start/_end).
+    - CONSENSUS: adds ``is_consensus`` = (nf >= 1) & (nr >= 1).
+    - NONE: adds ``is_consensus`` = False (single "all reads" group).
+
+    Parameters
+    ----------
+    data_df : pd.DataFrame
+        The featuremap dataframe.
+    adapter_version : str, optional
+        ppmSeq adapter version, forwarded to the MIXED path.
+    categorical_features_names : list[str], optional
+        Categorical feature names, forwarded to the MIXED path.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, ReportMode]
+        The dataframe with split columns added, and the detected mode.
+    """
+    mode = detect_report_mode(data_df)
+    logger.info("Detected SRSNV report mode: %s", mode.value)
+    if mode is ReportMode.MIXED:
+        data_df = add_is_mixed_to_featuremap_df(data_df, adapter_version, categorical_features_names)
+    elif mode is ReportMode.CONSENSUS:
+        data_df = add_is_consensus_to_featuremap_df(data_df)
+    else:  # ReportMode.NONE — no split information available, degrade to a single group
+        data_df[IS_CONSENSUS] = False
+    # Add the ordered read_group column used by the N-group report split.
+    data_df = add_read_group_column(data_df, mode)
+    return data_df, mode
+
 
 FLOW_ORDER = ["T", "G", "C", "A"]
 
@@ -1055,6 +1232,10 @@ def construct_trinuc_context_with_alt(
     df: pd.DataFrame, *, prev1: str = PREV1, ref: str = REF, next1: str = NEXT1, alt: str = ALT
 ) -> pd.Series:
     """Construct trinuc_context_with_alt column from prev1, ref, next1, alt columns.
+
+    The ``ALT`` column holds the read's actual substituted base in the report featuremap
+    (produced by prepare_dnn_report for the DNN path, or directly for XGBoost), so it is used
+    as-is.
 
     Args:
         df: DataFrame containing the required columns
