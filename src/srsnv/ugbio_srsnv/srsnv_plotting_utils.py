@@ -3302,7 +3302,12 @@ class SRSNVReport:
 
     @exception_handler
     def plot_logit_histograms(
-        self, *, plot_by_fold: bool = True, output_filename: str = None, output_filename_hmer_indel: str = None
+        self,
+        *,
+        plot_by_fold: bool = True,
+        output_filename: str = None,
+        output_filename_hmer_indel: str = None,
+        output_filename_non_hmer_indel: str = None,
     ):
         """Plot logit-value histograms (FP + one TP series per group), overlaid per fold if requested.
 
@@ -3326,6 +3331,12 @@ class SRSNVReport:
         if output_filename_hmer_indel is not None and self._has_hmer_indel_rows():
             hmer_df = plot_df_all[plot_df_all[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL]
             self._render_logit_figure(hmer_df, output_filename_hmer_indel, write_h5=False, plot_by_fold=plot_by_fold)
+
+        if output_filename_non_hmer_indel is not None and self._has_non_hmer_indel_rows():
+            non_hmer_df = plot_df_all[plot_df_all[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL]
+            self._render_logit_figure(
+                non_hmer_df, output_filename_non_hmer_indel, write_h5=False, plot_by_fold=plot_by_fold
+            )
 
     @exception_handler
     def plot_hmer_indel_by_class(self, output_filename: str = None):
@@ -3413,23 +3424,26 @@ class SRSNVReport:
         """
         from sklearn.metrics import roc_auc_score  # noqa: PLC0415  (optional [ml] dependency)
 
-        if (
-            VARIANT_TYPE not in self.data_df.columns
-            or not (self.data_df[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).any()
+        if VARIANT_TYPE not in self.data_df.columns or not (
+            self._has_hmer_indel_rows() or self._has_non_hmer_indel_rows()
         ):
-            logger.info("calc_hmer_indel_auc_table: no hmer-indel rows; skipping")
+            logger.info("calc_hmer_indel_auc_table: no indel rows; skipping")
             return
         data = self.data_df
         y = data[LABEL].astype(int).to_numpy()
         q = pd.to_numeric(data[ML_QUAL_1_TEST], errors="coerce").to_numpy()
         cls = data[X_IC].astype(str).str.lower() if X_IC in data.columns else pd.Series("", index=data.index)
-        is_indel = data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL
-        groups = {
-            "snv": (data[VARIANT_TYPE] == "snv").to_numpy(),
-            "hmer_indel": is_indel.to_numpy(),
-            "hmer_indel:ins": (is_indel & (cls == "ins")).to_numpy(),
-            "hmer_indel:del": (is_indel & (cls == "del")).to_numpy(),
-        }
+        is_hmer = data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL
+        is_nonhmer = data[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL
+        groups = {"snv": (data[VARIANT_TYPE] == VARIANT_TYPE_SNV).to_numpy()}
+        if is_hmer.any():
+            groups["hmer_indel"] = is_hmer.to_numpy()
+            groups["hmer_indel:ins"] = (is_hmer & (cls == "ins")).to_numpy()
+            groups["hmer_indel:del"] = (is_hmer & (cls == "del")).to_numpy()
+        if is_nonhmer.any():
+            groups["non_hmer_indel"] = is_nonhmer.to_numpy()
+            groups["non_hmer_indel:ins"] = (is_nonhmer & (cls == "ins")).to_numpy()
+            groups["non_hmer_indel:del"] = (is_nonhmer & (cls == "del")).to_numpy()
         rows = []
         for name, mask in groups.items():
             m = mask & np.isfinite(q)
@@ -3941,8 +3955,13 @@ class SRSNVReport:
         logit_histogram_hmer_indel = os.path.join(
             self.params["workdir"], f"{self.params['data_name']}logit_histogram_hmer_indel"
         )
+        logit_histogram_non_hmer_indel = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}logit_histogram_non_hmer_indel"
+        )
         self.plot_logit_histograms(
-            output_filename=logit_histogram, output_filename_hmer_indel=logit_histogram_hmer_indel
+            output_filename=logit_histogram,
+            output_filename_hmer_indel=logit_histogram_hmer_indel,
+            output_filename_non_hmer_indel=logit_histogram_non_hmer_indel,
         )
         self.plot_interpolating_function_with_histograms(output_filename=calibration_fn_with_hist)
 
