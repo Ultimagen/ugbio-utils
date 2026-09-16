@@ -109,6 +109,27 @@ TARGET_RECORDS_PER_WINDOW = 300_000  # aim for ~300k VCF records per parallel wi
 MIN_WINDOW_BP = 250_000  # never go below 250 kbp windows (avoids pathological window explosion)
 COL_X_IC = "X_IC"  # Indel-class column emitted by snvfind: "ins"/"del" for hmer-indels, null for SNVs
 
+# Duplex / consensus per-read tags (copied by snvfind) used to classify a read's molecule type for the
+# duplex-concordance oversampling of the training set. MI = molecule id (present only on duplex molecules,
+# shared by the two strands); nf/nr = forward/reverse consensus family sizes (a single-strand consensus has
+# exactly one of them > 0).
+COL_MI = "MI"
+COL_NF = "nf"
+COL_NR = "nr"
+COL_CHROM = "CHROM"
+COL_POS = "POS"
+
+# duplex_group categories (see _duplex_group_expr): a molecule with an MI whose two opposite strands emit
+# the SAME variant here is concordant; an MI read without an agreeing mate row here is discordant; a
+# consensus read with no MI is single-strand consensus (ssc); a read with no consensus family is a singleton.
+DUPLEX_GROUP_COL = "duplex_group"
+DUPLEX_GROUP_CONCORDANT = "concordant_duplex"
+DUPLEX_GROUP_DISCORDANT = "discordant_duplex"
+DUPLEX_GROUP_SSC = "ssc"
+DUPLEX_GROUP_SINGLETON = "singleton"
+# The TP path needs only "duplex > ssc"; the same 4-group priority achieves that (both duplex sub-tiers rank
+# above ssc), so no separate collapsed tier is required — concordance ranking is simply harmless for TP.
+
 
 def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> None:
     """
@@ -797,6 +818,170 @@ def _get_awk_script_path(mode: str = "explode") -> str:
     raise FileNotFoundError(f"AWK script not found: {awk_script}")
 
 
+def _add_duplex_group_column(frame: pl.DataFrame) -> pl.DataFrame:
+    """Annotate each read row with its molecule ``duplex_group`` (see the DUPLEX_GROUP_* constants).
+
+    Classification uses only the per-read ``MI``/``nf``/``nr`` tags plus a within-molecule agreement check:
+      * ``singleton``          – no MI and no consensus family (nf==0 and nr==0)
+      * ``ssc``                – no MI but a single-strand consensus (nf>0 xor nr>0)
+      * ``concordant_duplex``  – has MI and the same variant appears on BOTH strands of the molecule at this
+                                 position (a forward-family row and a reverse-family row share
+                                 CHROM/POS/MI/variant)
+      * ``discordant_duplex``  – has MI but no agreeing opposite-strand row here (the mate matched reference
+                                 so emitted no record, or the two strands disagree)
+
+    Molecules never span genomic regions, so it is safe to compute this per part-file.
+    """
+    has_nf = COL_NF in frame.columns
+    has_nr = COL_NR in frame.columns
+    nf = pl.col(COL_NF).cast(pl.Int64, strict=False).fill_null(0) if has_nf else pl.lit(0)
+    nr = pl.col(COL_NR).cast(pl.Int64, strict=False).fill_null(0) if has_nr else pl.lit(0)
+    if COL_MI in frame.columns:
+        mi_valid = pl.col(COL_MI).is_not_null() & (pl.col(COL_MI).cast(pl.Utf8, strict=False) != ".")
+    else:
+        mi_valid = pl.lit(value=False)
+    strand_expr = (
+        pl.when(nf > 0).then(pl.lit("f")).when(nr > 0).then(pl.lit("r")).otherwise(pl.lit(None, dtype=pl.Utf8))
+    )
+    frame = frame.with_columns(
+        mi_valid.alias("_mi_valid"),
+        ((nf > 0) | (nr > 0)).alias("_is_consensus"),
+        strand_expr.alias("_strand"),
+    )
+    # A variant is "the same" across strands when CHROM/POS/MI and the allele descriptors match. Include the
+    # indel descriptors when present so an ins and a del at the same anchor are not treated as concordant.
+    variant_keys = [
+        c for c in (COL_CHROM, COL_POS, COL_MI, "REF", "ALT", COL_X_IC, "X_IL", "X_INDEL_SEQ") if c in frame.columns
+    ]
+    has_f = (pl.col("_strand") == "f").any().over(variant_keys)
+    has_r = (pl.col("_strand") == "r").any().over(variant_keys)
+    frame = frame.with_columns(
+        pl.when(~pl.col("_mi_valid") & ~pl.col("_is_consensus"))
+        .then(pl.lit(DUPLEX_GROUP_SINGLETON))
+        .when(~pl.col("_mi_valid"))
+        .then(pl.lit(DUPLEX_GROUP_SSC))
+        .when(pl.col("_mi_valid") & has_f & has_r)
+        .then(pl.lit(DUPLEX_GROUP_CONCORDANT))
+        .otherwise(pl.lit(DUPLEX_GROUP_DISCORDANT))
+        .alias(DUPLEX_GROUP_COL)
+    )
+    return frame.drop("_mi_valid", "_is_consensus", "_strand")
+
+
+def _balanced_sample(frame: pl.DataFrame, n: int, indel_snv_balance_fraction: float | None, seed: int) -> pl.DataFrame:
+    """Sample ``n`` rows from ``frame``; if a balance fraction is given, keep ~that fraction of indel rows."""
+    if frame.height <= n:
+        return frame
+    if indel_snv_balance_fraction is None:
+        return frame.sample(n=n, seed=seed)
+    pred = (
+        pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False)
+        if COL_X_IC in frame.columns
+        else pl.lit(value=False)
+    )
+    indel_df = frame.filter(pred)
+    snv_df = frame.filter(~pred)
+    want_indel = min(round(indel_snv_balance_fraction * n), indel_df.height)
+    want_snv = min(n - want_indel, snv_df.height)
+    want_indel = min(indel_df.height, n - want_snv)  # refill if SNV-scarce
+    parts = []
+    if want_indel > 0:
+        parts.append(indel_df.sample(n=want_indel, seed=seed) if indel_df.height > want_indel else indel_df)
+    if want_snv > 0:
+        parts.append(snv_df.sample(n=want_snv, seed=seed) if snv_df.height > want_snv else snv_df)
+    return pl.concat(parts, how="vertical") if parts else frame.head(0)
+
+
+def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913
+    parquet_files: list[str],
+    output_path: str,
+    downsample_reads: int,
+    downsample_seed: int | None,
+    duplex_oversample_priority: list[str],
+    indel_snv_balance_fraction: float | None,
+) -> None:
+    """Downsample to ``downsample_reads`` while preserving reads by ``duplex_group`` priority.
+
+    The size budget is filled top-down in ``duplex_oversample_priority`` order: every row of a higher-priority
+    group is kept before any of a lower-priority group. Only the single group that straddles the budget (the
+    "boundary" group) is subsampled; lower groups are dropped. This is the ordered-tier generalization of the
+    ``preserve_field`` keep-all in ``filter_dataframe.py`` and enriches (e.g.) concordant-duplex FP reads
+    relative to SSC/singletons without duplicating any row. When a balance fraction is set, it is applied only
+    within the boundary group's subsample so indel FPs are not decimated there.
+    """
+    seed = downsample_seed if downsample_seed is not None else 0
+
+    # Pass 1: annotate each part with duplex_group (per-part is safe — molecules don't span regions) and
+    # tally global per-group counts.
+    annotated_files: list[str] = []
+    counts: dict[str, int] = {}
+    for f in parquet_files:
+        part = _add_duplex_group_column(pl.read_parquet(f))
+        tmp = f + ".dg.parquet"
+        part.write_parquet(tmp)
+        annotated_files.append(tmp)
+        for grp, c in part.group_by(DUPLEX_GROUP_COL).len().iter_rows():
+            counts[grp] = counts.get(grp, 0) + int(c)
+
+    total = sum(counts.values())
+    budget = min(downsample_reads, total)
+
+    # Priority order: configured groups first (in order), then any unlisted groups (stable) last.
+    ordered = [g for g in duplex_oversample_priority if g in counts]
+    ordered += [g for g in counts if g not in ordered]
+
+    keep_n: dict[str, int] = {}
+    boundary: str | None = None
+    remaining = budget
+    for g in ordered:
+        take = min(counts[g], remaining)
+        keep_n[g] = take
+        if 0 < take < counts[g]:
+            boundary = g
+        remaining -= take
+    full_groups = [g for g, n in keep_n.items() if n > 0 and n == counts[g]]
+
+    log.info(
+        f"Duplex priority-preserve downsample: counts={counts} budget={budget} "
+        f"full_keep={full_groups} boundary={boundary} keep_n={keep_n}"
+    )
+
+    # Pass 2: collect fully-kept groups in full, and a memory-bounded per-part pre-sample of the boundary.
+    kept: list[pl.DataFrame] = []
+    for i, tmp in enumerate(annotated_files):
+        part = pl.read_parquet(tmp)
+        if full_groups:
+            kept.append(part.filter(pl.col(DUPLEX_GROUP_COL).is_in(full_groups)))
+        if boundary is not None:
+            b = part.filter(pl.col(DUPLEX_GROUP_COL) == boundary)
+            if b.height:
+                frac = min(1.0, keep_n[boundary] / counts[boundary] * 1.05 + 1000.0 / counts[boundary])
+                kept.append(b.sample(fraction=frac, seed=seed + i))
+
+    if kept:
+        merged = pl.concat(kept, how="vertical")
+    else:
+        merged = _add_duplex_group_column(pl.read_parquet(annotated_files[0])).head(0)
+
+    # Exact-trim the boundary group to its target (balanced if requested); leave full-kept groups intact.
+    if boundary is not None:
+        boundary_df = merged.filter(pl.col(DUPLEX_GROUP_COL) == boundary)
+        rest_df = merged.filter(pl.col(DUPLEX_GROUP_COL) != boundary)
+        boundary_df = _balanced_sample(boundary_df, keep_n[boundary], indel_snv_balance_fraction, seed)
+        merged = pl.concat([rest_df, boundary_df], how="vertical")
+
+    # Drop the helper column, shuffle deterministically so groups interleave, write.
+    merged = merged.drop(DUPLEX_GROUP_COL).sample(fraction=1.0, shuffle=True, seed=seed)
+    realized = merged.height
+    log.info(f"Duplex priority-preserve realized: {realized} rows (target {budget})")
+    merged.write_parquet(output_path)
+
+    for f in annotated_files:
+        Path(f).unlink(missing_ok=True)
+    for f in parquet_files:
+        Path(f).unlink(missing_ok=True)
+
+
 def _stratified_downsample_by_variant_type(
     parquet_files: list[str],
     output_path: str,
@@ -900,6 +1085,7 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
     downsample_reads: int | None = None,
     downsample_seed: int | None = None,
     indel_snv_balance_fraction: float | None = None,
+    duplex_oversample_priority: list[str] | None = None,
 ) -> None:
     """
     Merge multiple Parquet files using Polars lazy evaluation for memory efficiency.
@@ -921,6 +1107,27 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
         instead of the default uniform downsample. No-op if unset, if the X_IC column is
         absent, if there are no indel rows, or if the dataset fits within downsample_reads.
     """
+    # Duplex priority-preserve downsample: opt-in (duplex_oversample_priority set) and only when it can
+    # change the result. Short-circuits to the paths below (byte-identical) when: no priority requested,
+    # no downsample target, the MI column is absent (non-duplex run), or the dataset already fits the budget.
+    if duplex_oversample_priority and downsample_reads is not None and parquet_files:
+        try:
+            schema_names = pl.scan_parquet(parquet_files[0]).collect_schema().names()
+        except Exception:  # noqa: BLE001 - be conservative; fall back on any schema error
+            schema_names = []
+        if COL_MI in schema_names:
+            total_rows = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
+            if total_rows > downsample_reads:
+                _priority_preserve_downsample(
+                    parquet_files,
+                    output_path,
+                    downsample_reads,
+                    downsample_seed,
+                    duplex_oversample_priority,
+                    indel_snv_balance_fraction,
+                )
+                return
+
     # Stratified (indel/SNV-balanced) downsample: opt-in and only when it can change the
     # result. Any of the following short-circuits back to the byte-identical uniform path:
     #   - no target fraction requested
@@ -1300,6 +1507,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
     downsample_reads: int | None = None,
     downsample_seed: int | None = None,
     indel_snv_balance_fraction: float | None = None,
+    duplex_oversample_priority: list[str] | None = None,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -1537,7 +1745,14 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
                     "Check log for details. If using read filters, they may be filtering out all data."
                 )
 
-            _merge_parquet_files_lazy(part_files, out, downsample_reads, downsample_seed, indel_snv_balance_fraction)
+            _merge_parquet_files_lazy(
+                part_files,
+                out,
+                downsample_reads,
+                downsample_seed,
+                indel_snv_balance_fraction,
+                duplex_oversample_priority,
+            )
 
         final_row_count = pl.scan_parquet(out).select(pl.len()).collect().item()
         log.info(f"Conversion completed: {out} ({final_row_count:,} rows)")
@@ -1972,8 +2187,25 @@ def main(argv: list[str] | None = None) -> None:
             "fraction instead of uniform sampling. No-op if unset or no X_IC column."
         ),
     )
+    parser.add_argument(
+        "--duplex-oversample-priority",
+        default=None,
+        help=(
+            "Comma-separated ordered list of duplex_group tiers to preserve during downsampling, highest "
+            "priority first (e.g. 'concordant_duplex,discordant_duplex,ssc,singleton' for FP). When set, the "
+            "downsample fills the --downsample-reads budget top-down by tier (keep-all of a higher tier before "
+            "any of a lower tier; only the boundary tier is subsampled), enriching duplex / concordant-duplex "
+            "reads. No-op if unset, if the MI column is absent (non-duplex run), or if the data fits the budget."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args(argv)
+
+    duplex_oversample_priority = (
+        [t.strip() for t in args.duplex_oversample_priority.split(",") if t.strip()]
+        if args.duplex_oversample_priority
+        else None
+    )
 
     # Parse expand columns
     expand_columns: dict[str, int] | None = None
@@ -2007,6 +2239,7 @@ def main(argv: list[str] | None = None) -> None:
         downsample_reads=args.downsample_reads,
         downsample_seed=args.downsample_seed,
         indel_snv_balance_fraction=args.indel_snv_balance_fraction,
+        duplex_oversample_priority=duplex_oversample_priority,
     )
 
 
