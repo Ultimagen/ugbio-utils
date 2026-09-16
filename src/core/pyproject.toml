@@ -27,6 +27,9 @@ vcfbed = [
     "bgzip>=0.5.0,<0.6.0",
     "intervaltree<=3.1.0",
     "truvari>=5.4.0,<6.0.0",
+    # pyabpoa is a transitive dep via truvari. Exclude 1.5.7 (published 2026-09-16): its sdist is missing
+    # abpoa_simd_internal.h and fails to compile, breaking the featuremap/mrd docker builds. 1.5.6 builds fine.
+    "pyabpoa!=1.5.7",
     "pytest-mock>=3.14.0,<4.0.0",
 ]
 reports = [
