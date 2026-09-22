@@ -87,6 +87,12 @@ NR = "nr"  # per-read reverse-strand consensus count (duplex path)
 # (opposite strands, same molecular id MI). ``mate_present`` = 1 when the molecule had a real
 # partner (both strands), 0 for a single-strand molecule / singleton. ``MI`` is the molecular id.
 MATE_PRESENT = "mate_present"  # per-molecule flag: molecule has both strand-mates present
+DUPLEX_CONCORDANT = "duplex_concordant"  # per-read: 1 both strands call the same variant, 0 discordant, -1 none
+# PE-duplex featuremap columns used to derive the per-molecule duplex flags (grouping by the CS family):
+CS_FAMILY = "CS"  # paired-end-duplex consensus/UMI family key
+COL_CHROM_KEY = "CHROM"
+COL_POS_KEY = "POS"
+COL_ALT_KEY = "ALT"
 MI = "MI"  # molecular id column
 
 # Ordered read-group column: reads are split into N ordered groups per mode (see
@@ -212,21 +218,47 @@ def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
         boolean columns.
     """
     logger.info("Adding duplex per-molecule columns to featuremap")
-    if MATE_PRESENT in data_df.columns:
-        data_df[MATE_PRESENT] = data_df[MATE_PRESENT].fillna(0).astype(bool)
-    elif NF in data_df.columns and NR in data_df.columns:
-        # PE-duplex emits no per-molecule ``mate_present`` column (the family has up to 4 slots, not a
-        # single mate). Derive it from the consensus strand counts: a molecule is a paired duplex iff its
-        # consensus carries BOTH strands (``nf > 0 and nr > 0``); single-strand consensus / singletons
-        # carry fewer than two strands and fall through to the non-duplex groups.
-        data_df[MATE_PRESENT] = (data_df[NF].fillna(0) > 0) & (data_df[NR].fillna(0) > 0)
-    else:
-        data_df[MATE_PRESENT] = False
-    if NF in data_df.columns and NR in data_df.columns:
-        # authoritative: consensus iff a strand-count tag is present (nf>0 or nr>0)
+    has_nf_nr = NF in data_df.columns and NR in data_df.columns
+    # is_consensus: a read is a consensus read iff it carries a strand-count tag (nf>0 or nr>0); a raw
+    # singleton has nf==0 and nr==0.
+    if has_nf_nr:
         data_df[IS_CONSENSUS] = (data_df[NF].fillna(0) > 0) | (data_df[NR].fillna(0) > 0)
     elif IS_CONSENSUS in data_df.columns:
         data_df[IS_CONSENSUS] = data_df[IS_CONSENSUS].fillna(0).astype(bool)
+
+    if MATE_PRESENT in data_df.columns:
+        # duplex-2 (2-slot): the tensorizer emits a per-molecule mate_present (and duplex_concordant) directly.
+        data_df[MATE_PRESENT] = data_df[MATE_PRESENT].fillna(0).astype(bool)
+        return data_df
+
+    if not (has_nf_nr and CS_FAMILY in data_df.columns):
+        data_df[MATE_PRESENT] = False
+        return data_df
+
+    # PE-duplex: each row is a SINGLE-strand consensus read (nf XOR nr), so duplex-ness is a MOLECULE
+    # property, not a per-read one -- deriving mate_present from a single read's nf&nr would always be False.
+    # A CS family is a paired duplex iff it has BOTH a forward (nf>0) and a reverse (nr>0) member, so group
+    # by CS (vectorized transform-max) and mark every read of such a family as mate_present.
+    fwd = data_df[NF].fillna(0) > 0
+    rev = data_df[NR].fillna(0) > 0
+    cs = data_df[CS_FAMILY]
+    data_df[MATE_PRESENT] = fwd.groupby(cs).transform("max").astype(bool) & rev.groupby(cs).transform("max").astype(
+        bool
+    )
+
+    # duplex_concordant (only meaningful for mate reads): 1 if BOTH strands of the molecule call the SAME
+    # variant at this locus (same CHROM/POS/ALT), else 0; -1 for non-duplex reads. The report splits duplex
+    # reads into concordant (==1) / discordant (==0).
+    if DUPLEX_CONCORDANT not in data_df.columns:
+        loc_keys = [data_df[c] for c in (CS_FAMILY, COL_CHROM_KEY, COL_POS_KEY, COL_ALT_KEY) if c in data_df.columns]
+        both_at_locus = fwd.groupby(loc_keys).transform("max").astype(bool) & rev.groupby(loc_keys).transform(
+            "max"
+        ).astype(bool)
+        dc = pd.Series(-1, index=data_df.index, dtype="int8")
+        mate = data_df[MATE_PRESENT].to_numpy()
+        dc[mate & both_at_locus.to_numpy()] = 1
+        dc[mate & ~both_at_locus.to_numpy()] = 0
+        data_df[DUPLEX_CONCORDANT] = dc
     return data_df
 
 
