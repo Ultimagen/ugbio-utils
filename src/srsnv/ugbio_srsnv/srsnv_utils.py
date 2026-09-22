@@ -212,7 +212,16 @@ def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
         boolean columns.
     """
     logger.info("Adding duplex per-molecule columns to featuremap")
-    data_df[MATE_PRESENT] = data_df[MATE_PRESENT].fillna(0).astype(bool)
+    if MATE_PRESENT in data_df.columns:
+        data_df[MATE_PRESENT] = data_df[MATE_PRESENT].fillna(0).astype(bool)
+    elif NF in data_df.columns and NR in data_df.columns:
+        # PE-duplex emits no per-molecule ``mate_present`` column (the family has up to 4 slots, not a
+        # single mate). Derive it from the consensus strand counts: a molecule is a paired duplex iff its
+        # consensus carries BOTH strands (``nf > 0 and nr > 0``); single-strand consensus / singletons
+        # carry fewer than two strands and fall through to the non-duplex groups.
+        data_df[MATE_PRESENT] = (data_df[NF].fillna(0) > 0) & (data_df[NR].fillna(0) > 0)
+    else:
+        data_df[MATE_PRESENT] = False
     if NF in data_df.columns and NR in data_df.columns:
         # authoritative: consensus iff a strand-count tag is present (nf>0 or nr>0)
         data_df[IS_CONSENSUS] = (data_df[NF].fillna(0) > 0) | (data_df[NR].fillna(0) > 0)

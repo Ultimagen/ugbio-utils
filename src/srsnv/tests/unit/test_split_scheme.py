@@ -96,6 +96,31 @@ class TestResolveScheme:
         assert resolve_scheme(pd.DataFrame({FS: [0, 1], RS: [1, 1]})) is CONSENSUS_SCHEME
         assert resolve_scheme(pd.DataFrame({"MQUAL": [1.0, 2.0]})) is NONE_SCHEME
 
+    def test_duplex_from_nf_nr_pe_no_mate_present(self):
+        # PE-duplex emits nf/nr (consensus strand counts) but NO mate_present; it must still resolve to the
+        # per-molecule DUPLEX split, not fall back to MIXED (st/et are present on PE consensus reads).
+        data_df = pd.DataFrame({NF: [3, 0, 2, 0], NR: [5, 4, 0, 0], "st": ["MIXED"] * 4, "et": ["MIXED"] * 4})
+        assert resolve_scheme(data_df) is DUPLEX_SCHEME
+
+    def test_pe_duplex_mate_present_and_groups_derived_from_nf_nr(self):
+        # mate_present derived: paired duplex iff nf>0 AND nr>0; is_consensus iff nf>0 OR nr>0; the read_group
+        # is the per-molecule 3-way split (duplex / single-strand consensus / singleton).
+        data_df = pd.DataFrame({NF: [3, 0, 2, 0], NR: [5, 4, 0, 0], "st": ["MIXED"] * 4, "et": ["MIXED"] * 4})
+        out, scheme = resolve_scheme_and_add_columns(data_df.copy())
+        assert scheme is DUPLEX_SCHEME
+        assert list(out[MATE_PRESENT].astype(bool)) == [True, False, False, False]
+        assert list(out[IS_CONSENSUS].astype(bool)) == [True, True, True, False]
+        assert list(out[READ_GROUP]) == [
+            DUPLEX_MOL_PAIRED,
+            DUPLEX_MOL_SINGLE_STRAND,
+            DUPLEX_MOL_SINGLE_STRAND,
+            DUPLEX_MOL_SINGLETON,
+        ]
+
+    def test_nf_nr_absent_does_not_trigger_duplex(self):
+        # nf/nr are the duplex-path signal; classic fs/rs consensus data must still resolve to CONSENSUS.
+        assert resolve_scheme(pd.DataFrame({FS: [0, 1], RS: [1, 1]})) is CONSENSUS_SCHEME
+
 
 # ──────────────────────────── h5 keys / variants ────────────────────────────
 

@@ -45,7 +45,9 @@ from ugbio_srsnv.srsnv_utils import (
     MIXED_GROUP_NON,
     MIXED_GROUP_POS,
     MIXED_GROUPS,
+    NF,
     NONE_GROUP_ALL,
+    NR,
     READ_GROUP,
     RS,
     ST,
@@ -323,7 +325,9 @@ MIXED_SCHEME = SplitScheme(
 
 DUPLEX_SCHEME = SplitScheme(
     mode=ReportMode.DUPLEX,
-    detect=lambda cols: MATE_PRESENT in cols,
+    # duplex-2 emits the per-molecule `mate_present` column; PE-duplex does not, but its consensus
+    # strand counts `nf`/`nr` carry the same per-molecule signal (mate_present derived in add_columns).
+    detect=lambda cols: MATE_PRESENT in cols or (NF in cols and NR in cols),
     add_columns=_duplex_add_columns,
     tag_axis="mate status",
     variants=(
@@ -373,10 +377,11 @@ NONE_SCHEME = SplitScheme(
 # the per-molecule duplex `mate_present` flag beats per-read fs/rs (a duplex featuremap may carry
 # both, and the per-molecule split must win). NONE is the explicit fallback, not consulted via
 # `detect`.
-# DUPLEX first: it detects the per-molecule `mate_present` column, which is emitted ONLY by duplex
-# DeepSRSNV runs. For those runs the duplex (molecule-pairing) split is the point, so it must win over
-# the ppmSeq MIXED split (which also matches because st/et are present). Non-duplex runs lack
-# `mate_present`, so MIXED/CONSENSUS/NONE detection is unchanged.
+# DUPLEX first: it detects the per-molecule `mate_present` column (duplex-2) or the `nf`/`nr` consensus
+# strand counts (PE-duplex, which emits no `mate_present`) -- both are emitted only by duplex/PE-duplex
+# DeepSRSNV runs. For those runs the per-molecule duplex split is the point, so it must win over the
+# ppmSeq MIXED split (which also matches because st/et are present). Non-duplex runs lack both
+# `mate_present` and `nf`/`nr`, so MIXED/CONSENSUS/NONE detection is unchanged.
 SPLIT_SCHEMES: tuple[SplitScheme, ...] = (DUPLEX_SCHEME, MIXED_SCHEME, CONSENSUS_SCHEME, NONE_SCHEME)
 _BY_MODE: dict[ReportMode, SplitScheme] = {s.mode: s for s in SPLIT_SCHEMES}
 
