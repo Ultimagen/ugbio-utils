@@ -324,7 +324,7 @@ gh run view <run-id>
 **Key Modules:**
 - `jalign.py` - JALIGN alignment algorithm
 - `run_jalign.py` - JALIGN execution
-- `analyze_cnv_breakpoint_reads.py` - Read analysis for CNV breakpoints (RECENTLY REFINED - requires consistent insert size)
+- `analyze_cnv_breakpoint_reads.py` - Read analysis for CNV breakpoints (RECENTLY REFINED - requires consistent insert size). `--paired-end` also counts discordant pairs (span ≥ `--min-pair-span`); pair mates go to the evidence BAM under RG `PAIR`.
 - `run_cnvpytor.py` - CNVpytor integration
 - `process_cnvs.py` - Process CNV calls from cn.mops/FREEC
 - `combine_cnmops_cnvpytor_cnv_calls.py` - Multi-tool fusion

@@ -105,7 +105,7 @@ merge_records
 ```
 
 #### `analyze_cnv_breakpoint_reads`
-Analyze single-ended reads at CNV breakpoints to identify supporting evidence for duplications and deletions.
+Analyze reads at CNV breakpoints to identify supporting evidence for duplications and deletions.
 Counts of supporting evidence appear as info tags in the VCF
 
 ```bash
@@ -116,6 +116,25 @@ analyze_cnv_breakpoint_reads \
   --cushion 100 \
   --reference-fasta Homo_sapiens_assembly38.fasta
 ```
+
+By default only split reads count. With `--paired-end`, discordant pairs count too, in the same
+`CNV_*_READS` / `CNV_*_FRAC` fields. Each fragment votes once, and split evidence outranks pair evidence.
+
+```bash
+analyze_cnv_breakpoint_reads \
+  --vcf-file cnv_calls.vcf.gz \
+  --bam-file sample.cram \
+  --output-file annotated.vcf.gz \
+  --cushion 1500 \
+  --reference-fasta Homo_sapiens_assembly38.fasta \
+  --paired-end \
+  --min-pair-span 800
+```
+
+- An everted (RF) pair is DUP evidence. An FR pair is DEL evidence, but only if both mates start outside the deleted segment.
+- A pair must span at least `--min-pair-span` bases (template length, default 800). Its alignment must have MAPQ of at least `--min-pair-mapping-quality` (default 20).
+- `*_READS_MEDIAN_INSERT_SIZE` (the median event length) uses pair spans only when a class has no split reads.
+- With `--output-bam`, pair mates get read group `PAIR`, which keeps them out of `refine_cnv_breakpoints`.
 
 ### Somatic CNV Tools (ControlFREEC)
 
