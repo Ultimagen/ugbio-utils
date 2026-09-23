@@ -109,26 +109,45 @@ TARGET_RECORDS_PER_WINDOW = 300_000  # aim for ~300k VCF records per parallel wi
 MIN_WINDOW_BP = 250_000  # never go below 250 kbp windows (avoids pathological window explosion)
 COL_X_IC = "X_IC"  # Indel-class column emitted by snvfind: "ins"/"del" for hmer-indels, null for SNVs
 
-# Duplex / consensus per-read tags (copied by snvfind) used to classify a read's molecule type for the
-# duplex-concordance oversampling of the training set. MI = molecule id (present only on duplex molecules,
-# shared by the two strands); nf/nr = forward/reverse consensus family sizes (a single-strand consensus has
-# exactly one of them > 0).
+# Duplex / consensus per-read tags used to classify a read's molecule type for the duplex oversampling of the
+# training set. IMPORTANT (ramp_ppmseq_duplex_pe): this data is native paired-end duplex that was unpaired into
+# single-end reads (UnpairAndRenameByStrand), so:
+#   * CS = the molecule id, shared across BOTH strands and BOTH PE ends -> the ONLY correct molecule key.
+#   * nf/nr = fwd/rev consensus family sizes -> the strand (nf>0 fwd, nr>0 rev).
+#   * MI is PER-STRAND (fwd/rev get different MIs), so it must NOT be used to pair the two strands.
+#   * DS == 2 marks a FULL paired-end duplex molecule (both strands AND both PE ends present -> 4 consensus
+#     reads); verified on the CRAM. It is coverage-based, so it tags a full-duplex molecule even when only one
+#     strand flagged the variant here (the informative case). DS is otherwise null / not 2.
 COL_MI = "MI"
 COL_NF = "nf"
 COL_NR = "nr"
+COL_CS = "CS"
+COL_RN = "RN"
+COL_DS = "DS"
 COL_CHROM = "CHROM"
 COL_POS = "POS"
 
-# duplex_group categories (see _duplex_group_expr): a molecule with an MI whose two opposite strands emit
-# the SAME variant here is concordant; an MI read without an agreeing mate row here is discordant; a
-# consensus read with no MI is single-strand consensus (ssc); a read with no consensus family is a singleton.
+# duplex_group categories (see _add_duplex_group_column). "full" = coverage (DS==2, from the CRAM/consensus);
+# "both strands flag" is observed agreement in the featuremap (keyed on CS):
+#   duplex_pe_full – DS==2: full paired-end duplex molecule (both strands + both PE ends present)
+#   duplex         – DS!=2 but this CS flags the variant on both strands (both strands seen, not a full PE mol.)
+#   ssc            – single-strand consensus (only one strand flags)
+#   singleton      – no consensus family (nf==0 and nr==0)
+# Only reads that SHOW the variant appear in the featuremap, so a DS!=2 molecule whose mate strand matched
+# reference (emitted no row) is not distinguishable from ssc here — that finer split needs the CRAM/tensor.
 DUPLEX_GROUP_COL = "duplex_group"
-DUPLEX_GROUP_CONCORDANT = "concordant_duplex"
-DUPLEX_GROUP_DISCORDANT = "discordant_duplex"
+DUPLEX_GROUP_DUPLEX_PE_FULL = "duplex_pe_full"
+DUPLEX_GROUP_DUPLEX = "duplex"
 DUPLEX_GROUP_SSC = "ssc"
 DUPLEX_GROUP_SINGLETON = "singleton"
-# The TP path needs only "duplex > ssc"; the same 4-group priority achieves that (both duplex sub-tiers rank
-# above ssc), so no separate collapsed tier is required — concordance ranking is simply harmless for TP.
+# Default priority orders (highest first); FP and TP use the same completeness ladder.
+DUPLEX_PRIORITY_FP = [
+    DUPLEX_GROUP_DUPLEX_PE_FULL,
+    DUPLEX_GROUP_DUPLEX,
+    DUPLEX_GROUP_SSC,
+    DUPLEX_GROUP_SINGLETON,
+]
+DUPLEX_PRIORITY_TP = list(DUPLEX_PRIORITY_FP)
 
 
 def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> None:
@@ -821,51 +840,57 @@ def _get_awk_script_path(mode: str = "explode") -> str:
 def _add_duplex_group_column(frame: pl.DataFrame) -> pl.DataFrame:
     """Annotate each read row with its molecule ``duplex_group`` (see the DUPLEX_GROUP_* constants).
 
-    Classification uses only the per-read ``MI``/``nf``/``nr`` tags plus a within-molecule agreement check:
-      * ``singleton``          – no MI and no consensus family (nf==0 and nr==0)
-      * ``ssc``                – no MI but a single-strand consensus (nf>0 xor nr>0)
-      * ``concordant_duplex``  – has MI and the same variant appears on BOTH strands of the molecule at this
-                                 position (a forward-family row and a reverse-family row share
-                                 CHROM/POS/MI/variant)
-      * ``discordant_duplex``  – has MI but no agreeing opposite-strand row here (the mate matched reference
-                                 so emitted no record, or the two strands disagree)
+    Classification (per read):
+      * ``duplex_pe_full`` – ``DS == 2``: a full paired-end duplex molecule (both strands + both PE ends
+                             present). DS is coverage-based, so this tags the molecule even when only one strand
+                             flagged the variant here.
+      * ``duplex``         – ``DS != 2`` but this molecule (keyed on ``CS``) flags the variant on BOTH strands
+                             (a nf>0 row and a nr>0 row) — both strands observed, but not a full-PE molecule.
+      * ``ssc``            – single-strand consensus (only one strand flags; nf>0 xor nr>0 for the molecule).
+      * ``singleton``      – no consensus family (nf==0 and nr==0).
 
-    Molecules never span genomic regions, so it is safe to compute this per part-file.
+    The "both strands flag" test is keyed on ``CS`` (never ``MI`` — MI is per-strand on this unpaired PE data,
+    so it can never see both strands). Only reads that SHOW the variant appear in the featuremap, so a DS!=2
+    molecule whose mate strand matched reference (emitted no row) is indistinguishable from ssc here; the finer
+    coverage split needs the CRAM/tensor. Molecules never span regions, so this is safe per part-file.
     """
     has_nf = COL_NF in frame.columns
     has_nr = COL_NR in frame.columns
     nf = pl.col(COL_NF).cast(pl.Int64, strict=False).fill_null(0) if has_nf else pl.lit(0)
     nr = pl.col(COL_NR).cast(pl.Int64, strict=False).fill_null(0) if has_nr else pl.lit(0)
-    if COL_MI in frame.columns:
-        mi_valid = pl.col(COL_MI).is_not_null() & (pl.col(COL_MI).cast(pl.Utf8, strict=False) != ".")
-    else:
-        mi_valid = pl.lit(value=False)
-    strand_expr = (
-        pl.when(nf > 0).then(pl.lit("f")).when(nr > 0).then(pl.lit("r")).otherwise(pl.lit(None, dtype=pl.Utf8))
+    ds_full = (
+        (pl.col(COL_DS).cast(pl.Int64, strict=False) == 2).fill_null(value=False)  # noqa: PLR2004
+        if COL_DS in frame.columns
+        else pl.lit(value=False)
     )
     frame = frame.with_columns(
-        mi_valid.alias("_mi_valid"),
+        (nf > 0).alias("_is_fwd"),
+        (nr > 0).alias("_is_rev"),
         ((nf > 0) | (nr > 0)).alias("_is_consensus"),
-        strand_expr.alias("_strand"),
+        ds_full.alias("_ds_full"),
     )
-    # A variant is "the same" across strands when CHROM/POS/MI and the allele descriptors match. Include the
-    # indel descriptors when present so an ins and a del at the same anchor are not treated as concordant.
-    variant_keys = [
-        c for c in (COL_CHROM, COL_POS, COL_MI, "REF", "ALT", COL_X_IC, "X_IL", "X_INDEL_SEQ") if c in frame.columns
+    # Molecule key: CS + the variant descriptors (indel descriptors keep an ins and a del at the same anchor
+    # from being treated as the same variant). CS spans both strands + both ends; if CS is absent, fall back to
+    # per-row scope so behavior degrades to "single observation".
+    mol_keys = [
+        c for c in (COL_CHROM, COL_POS, "REF", "ALT", COL_X_IC, "X_IL", "X_INDEL_SEQ", COL_CS) if c in frame.columns
     ]
-    has_f = (pl.col("_strand") == "f").any().over(variant_keys)
-    has_r = (pl.col("_strand") == "r").any().over(variant_keys)
+    if COL_CS in frame.columns and mol_keys:
+        has_f = pl.col("_is_fwd").any().over(mol_keys)
+        has_r = pl.col("_is_rev").any().over(mol_keys)
+    else:  # no molecule key available -> classify each row on its own observation
+        has_f, has_r = pl.col("_is_fwd"), pl.col("_is_rev")
     frame = frame.with_columns(
-        pl.when(~pl.col("_mi_valid") & ~pl.col("_is_consensus"))
+        pl.when(pl.col("_ds_full"))
+        .then(pl.lit(DUPLEX_GROUP_DUPLEX_PE_FULL))
+        .when(~pl.col("_is_consensus"))
         .then(pl.lit(DUPLEX_GROUP_SINGLETON))
-        .when(~pl.col("_mi_valid"))
-        .then(pl.lit(DUPLEX_GROUP_SSC))
-        .when(pl.col("_mi_valid") & has_f & has_r)
-        .then(pl.lit(DUPLEX_GROUP_CONCORDANT))
-        .otherwise(pl.lit(DUPLEX_GROUP_DISCORDANT))
+        .when(has_f & has_r)
+        .then(pl.lit(DUPLEX_GROUP_DUPLEX))
+        .otherwise(pl.lit(DUPLEX_GROUP_SSC))
         .alias(DUPLEX_GROUP_COL)
     )
-    return frame.drop("_mi_valid", "_is_consensus", "_strand")
+    return frame.drop("_is_fwd", "_is_rev", "_is_consensus", "_ds_full")
 
 
 def _balanced_sample(frame: pl.DataFrame, n: int, indel_snv_balance_fraction: float | None, seed: int) -> pl.DataFrame:
@@ -1109,13 +1134,13 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
     """
     # Duplex priority-preserve downsample: opt-in (duplex_oversample_priority set) and only when it can
     # change the result. Short-circuits to the paths below (byte-identical) when: no priority requested,
-    # no downsample target, the MI column is absent (non-duplex run), or the dataset already fits the budget.
+    # no downsample target, the CS molecule column is absent (non-duplex run), or the dataset already fits.
     if duplex_oversample_priority and downsample_reads is not None and parquet_files:
         try:
             schema_names = pl.scan_parquet(parquet_files[0]).collect_schema().names()
         except Exception:  # noqa: BLE001 - be conservative; fall back on any schema error
             schema_names = []
-        if COL_MI in schema_names:
+        if COL_CS in schema_names:
             total_rows = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
             if total_rows > downsample_reads:
                 _priority_preserve_downsample(
@@ -2192,10 +2217,10 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help=(
             "Comma-separated ordered list of duplex_group tiers to preserve during downsampling, highest "
-            "priority first (e.g. 'concordant_duplex,discordant_duplex,ssc,singleton' for FP). When set, the "
-            "downsample fills the --downsample-reads budget top-down by tier (keep-all of a higher tier before "
-            "any of a lower tier; only the boundary tier is subsampled), enriching duplex / concordant-duplex "
-            "reads. No-op if unset, if the MI column is absent (non-duplex run), or if the data fits the budget."
+            "priority first (e.g. 'duplex_pe_full,duplex,ssc,singleton'). When set, the downsample fills the "
+            "--downsample-reads budget top-down by tier (keep-all of a higher tier before any of a lower tier; "
+            "only the boundary tier is subsampled), enriching full-PE-duplex / duplex reads over ssc. No-op if "
+            "unset, if the CS column is absent (non-duplex run), or if the data already fits the budget."
         ),
     )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
