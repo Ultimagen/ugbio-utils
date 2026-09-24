@@ -1965,6 +1965,31 @@ class SRSNVReport:
         performance_info_legacy[("ROC AUC (Phred)", "All reads")] = signif(roc_auc_phred, SIG_DIGITS)
         performance_info_legacy[("ROC AUC (Phred)", "Mixed, start")] = signif(roc_auc_phred_mixed_start, SIG_DIGITS)
         performance_info_legacy[("ROC AUC (Phred)", "Mixed, both ends")] = signif(roc_auc_phred_mixed_both, SIG_DIGITS)
+
+        # Absolute (end-to-end) recall at SNVQ: unlike the relative tables above, this folds the
+        # pre-filter recall back in. recalls[snvq][...] already equals base_recall (the pre-filter
+        # recall) times the fraction of TP reads with SNVQ >= threshold, so we simply do NOT divide
+        # by recall_at_0. Equivalently, absolute recall = relative recall * pre-filter recall.
+        performance_info_absolute = {}
+        for snvq in snvq_thresholds:
+            performance_info_absolute[(f"Recall at SNVQ={snvq}", "All reads")] = signif(
+                recalls[snvq]["all"], SIG_DIGITS
+            )
+            performance_info_absolute[(f"Recall at SNVQ={snvq}", "Mixed")] = signif(
+                recalls[snvq]["mixed_start"], SIG_DIGITS
+            )
+        # Legacy absolute recall with 3-way mixed split for backward-compatible h5 storage
+        performance_info_absolute_legacy = {}
+        for snvq in snvq_thresholds:
+            performance_info_absolute_legacy[(f"Recall at SNVQ={snvq}", "All reads")] = signif(
+                recalls[snvq]["all"], SIG_DIGITS
+            )
+            performance_info_absolute_legacy[(f"Recall at SNVQ={snvq}", "Mixed, start")] = signif(
+                recalls[snvq]["mixed_start"], SIG_DIGITS
+            )
+            performance_info_absolute_legacy[(f"Recall at SNVQ={snvq}", "Mixed, both ends")] = signif(
+                recalls[snvq]["mixed_both"], SIG_DIGITS
+            )
         # Info about versions
         version_info = {
             ("Pipeline version", ""): (self.params.get("pipeline_version", None)),
@@ -1985,11 +2010,19 @@ class SRSNVReport:
         run_info_table = pd.Series({**general_info, **version_info}, name="")
         run_quality_summary_table = pd.Series({**performance_info}, name="")
         run_quality_summary_table_legacy = pd.Series({**performance_info_legacy}, name="")
+        run_quality_summary_table_absolute = pd.Series({**performance_info_absolute}, name="")
+        run_quality_summary_table_absolute_legacy = pd.Series({**performance_info_absolute_legacy}, name="")
         training_info_table = pd.Series({**training_info, **dataset_sizes}, name="")
         run_info_table_legacy.to_hdf(self.output_h5_filename, key="run_info_table", mode="a")
         run_info_table.to_hdf(self.output_h5_filename, key="run_info_table_mixed_start", mode="a")
         run_quality_summary_table_legacy.to_hdf(self.output_h5_filename, key="run_quality_summary_table", mode="a")
         run_quality_summary_table.to_hdf(self.output_h5_filename, key="run_quality_summary_table_mixed_start", mode="a")
+        run_quality_summary_table_absolute_legacy.to_hdf(
+            self.output_h5_filename, key="run_quality_summary_table_absolute", mode="a"
+        )
+        run_quality_summary_table_absolute.to_hdf(
+            self.output_h5_filename, key="run_quality_summary_table_absolute_mixed_start", mode="a"
+        )
         training_info_table.to_hdf(self.output_h5_filename, key="training_info_table", mode="a")
 
     @exception_handler
