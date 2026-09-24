@@ -82,6 +82,9 @@ RS = "rs"  # reverse-strand read count (consensus data)
 IS_CONSENSUS = "is_consensus"  # read is a consensus read (fs >= 1 and rs >= 1)
 NF = "nf"  # per-read forward-strand consensus count (duplex path); raw singleton has nf==0 & nr==0
 NR = "nr"  # per-read reverse-strand consensus count (duplex path)
+DS = "DS"  # PE-duplex per-read tag: DS==2 marks a FULL paired-end duplex molecule (both strands + both PE
+# ends present). Coverage-based (from consensus/mark-dup), so it marks a duplex molecule even when only one
+# strand flagged the variant here -- unlike "both strands appear in the featuremap", which misses ~90%.
 
 # Duplex per-molecule data: one prediction row is a MOLECULE built from two consensus reads
 # (opposite strands, same molecular id MI). ``mate_present`` = 1 when the molecule had a real
@@ -235,30 +238,16 @@ def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
         data_df[MATE_PRESENT] = False
         return data_df
 
-    # PE-duplex: each row is a SINGLE-strand consensus read (nf XOR nr), so duplex-ness is a MOLECULE
-    # property, not a per-read one -- deriving mate_present from a single read's nf&nr would always be False.
-    # A CS family is a paired duplex iff it has BOTH a forward (nf>0) and a reverse (nr>0) member, so group
-    # by CS (vectorized transform-max) and mark every read of such a family as mate_present.
-    fwd = data_df[NF].fillna(0) > 0
-    rev = data_df[NR].fillna(0) > 0
-    cs = data_df[CS_FAMILY]
-    data_df[MATE_PRESENT] = fwd.groupby(cs).transform("max").astype(bool) & rev.groupby(cs).transform("max").astype(
-        bool
-    )
-
-    # duplex_concordant (only meaningful for mate reads): 1 if BOTH strands of the molecule call the SAME
-    # variant at this locus (same CHROM/POS/ALT), else 0; -1 for non-duplex reads. The report splits duplex
-    # reads into concordant (==1) / discordant (==0).
-    if DUPLEX_CONCORDANT not in data_df.columns:
-        loc_keys = [data_df[c] for c in (CS_FAMILY, COL_CHROM_KEY, COL_POS_KEY, COL_ALT_KEY) if c in data_df.columns]
-        both_at_locus = fwd.groupby(loc_keys).transform("max").astype(bool) & rev.groupby(loc_keys).transform(
-            "max"
-        ).astype(bool)
-        dc = pd.Series(-1, index=data_df.index, dtype="int8")
-        mate = data_df[MATE_PRESENT].to_numpy()
-        dc[mate & both_at_locus.to_numpy()] = 1
-        dc[mate & ~both_at_locus.to_numpy()] = 0
-        data_df[DUPLEX_CONCORDANT] = dc
+    # PE-consensus run (identified by the CS family tag). CS only says the reads are PE consensus; it does
+    # NOT by itself mean duplex. A molecule is a FULL paired-end duplex (both strands + both PE ends present)
+    # iff DS==2 -- the coverage-based consensus/mark-dup tag. Because it is coverage-based, DS==2 marks a
+    # duplex molecule even when only ONE strand flagged the variant here (the informative case), which the
+    # old "both strands appear in the featuremap" heuristic missed (~90% of duplex molecules).
+    if DS in data_df.columns:
+        data_df[MATE_PRESENT] = pd.to_numeric(data_df[DS], errors="coerce").eq(2)  # noqa: PLR2004
+    else:
+        logger.warning("PE-consensus featuremap has no DS tag; cannot identify full duplex -> mate_present=False")
+        data_df[MATE_PRESENT] = False
     return data_df
 
 

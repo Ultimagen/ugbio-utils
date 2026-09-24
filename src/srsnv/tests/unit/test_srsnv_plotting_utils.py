@@ -837,66 +837,8 @@ def test_hmer_indel_snvq_summary_and_plots(consensus_resources, real_models_calc
         assert os.path.exists(by_class + ".png")
 
 
-def test_hmer_indel_snvq_summary_duplex_concordance_split(consensus_resources, real_models_calc_run_info):
-    """Duplex mode: the hmer-indel SNVQ table splits the aggregate 'duplex molecule' row into
-    'duplex molecule — concordant' and 'duplex molecule — single-strand difference' sub-rows when
-    the per-molecule duplex_concordant column is present, keeping the aggregate row."""
-    df, metadata = consensus_resources
-    df = _add_hmer_variant_columns(df)  # noqa: PD901
-    rng = np.random.default_rng(7)
-    # DUPLEX scheme is auto-detected from mate_present; duplex_concordant carries the split code.
-    df["mate_present"] = rng.integers(0, 2, len(df))
-    dc = np.full(len(df), -1, dtype=int)  # -1 where no mate
-    mate_idx = np.flatnonzero(df["mate_present"].to_numpy() == 1)
-    dc[mate_idx] = rng.choice([0, 1, 2], size=len(mate_idx))  # decided code for duplex molecules
-    df["duplex_concordant"] = dc
-    with tempfile.TemporaryDirectory() as temp_output_dir:
-        temp_metadata_file = os.path.join(temp_output_dir, "test_metadata.json")
-        with open(temp_metadata_file, "w") as f:
-            json.dump(metadata, f)
-        categorical_features = [feat for feat in metadata["features"] if feat["type"] == "c"]
-        numerical_features = [feat for feat in metadata["features"] if feat["type"] != "c"]
-        params = {
-            "workdir": temp_output_dir,
-            "data_name": "test_run",
-            "categorical_features_names": [feat["name"] for feat in categorical_features],
-            "categorical_features_dict": {feat["name"]: list(feat["values"].keys()) for feat in categorical_features},
-            "numerical_features": [feat["name"] for feat in numerical_features],
-            "fp_regions_bed_file": 1,
-            "num_CV_folds": len(real_models_calc_run_info),
-            "report_mode": "duplex_molecule",
-        }
-        report = SRSNVReport(
-            models=real_models_calc_run_info,
-            data_df=df.copy(),
-            params=params,
-            out_path=temp_output_dir,
-            srsnv_metadata=temp_metadata_file,
-            base_name="test_",
-            raise_exceptions=True,
-        )
-        assert report.report_mode.value == "duplex_molecule"
-        report.calc_hmer_indel_run_info_table()
-        table = pd.read_hdf(
-            os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5"),
-            key="run_quality_summary_table_hmer_indel",
-        )
-        rts = set(table["read_type"])
-        assert "duplex molecule" in rts  # aggregate row kept
-        assert "duplex molecule — concordant" in rts
-        assert "duplex molecule — single-strand difference" in rts
-        # per indel_class, the two sub-rows' n_TP sum to <= the aggregate duplex row (code 2/other excluded)
-        for cls_name in table["indel_class"].unique():
-            sub = table[table["indel_class"] == cls_name].set_index("read_type")["n_TP"]
-            agg = sub["duplex molecule"]
-            conc = sub["duplex molecule — concordant"]
-            ssd = sub["duplex molecule — single-strand difference"]
-            assert conc + ssd <= agg
-
-
 def _make_duplex_report(df, metadata, temp_output_dir, models):
-    """A duplex-mode SRSNVReport (report_mode='duplex_molecule'); df should carry mate_present +
-    duplex_concordant."""
+    """A duplex-mode SRSNVReport (report_mode='duplex_molecule'); df should carry mate_present."""
     temp_metadata_file = os.path.join(temp_output_dir, "test_metadata.json")
     with open(temp_metadata_file, "w") as f:
         json.dump(metadata, f)
@@ -923,13 +865,9 @@ def _make_duplex_report(df, metadata, temp_output_dir, models):
     )
 
 
-def _add_duplex_concordance_columns(df, seed=7):
+def _add_duplex_columns(df, seed=7):
     rng = np.random.default_rng(seed)
     df["mate_present"] = rng.integers(0, 2, len(df))
-    dc = np.full(len(df), -1, dtype=int)
-    idx = np.flatnonzero(df["mate_present"].to_numpy() == 1)
-    dc[idx] = rng.choice([0, 1, 2], size=len(idx))
-    df["duplex_concordant"] = dc
     return df
 
 
@@ -942,7 +880,7 @@ def test_snvq_thresholds_duplex_adds_80(consensus_resources, real_models_calc_ru
     with tempfile.TemporaryDirectory() as temp_output_dir:
         report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
         assert report._snvq_thresholds() == [50, 60, 70]
-    dfd = _add_duplex_concordance_columns(_add_hmer_variant_columns(consensus_resources[0].copy()))
+    dfd = _add_duplex_columns(_add_hmer_variant_columns(consensus_resources[0].copy()))
     with tempfile.TemporaryDirectory() as temp_output_dir:
         report = _make_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
         assert report._snvq_thresholds() == [50, 60, 70, 80]
@@ -956,22 +894,20 @@ def test_snvq_thresholds_duplex_adds_80(consensus_resources, real_models_calc_ru
         assert "Recall at SNVQ=90" not in table.columns
 
 
-def test_by_class_duplex_concordance_groups(consensus_resources, real_models_calc_run_info):
-    """plot_hmer_indel_by_class splits by the duplex concordance read-types (concordant / discordant)
-    for a duplex run, recorded in the hmer_indel_class_stats h5 (with a median_snvq column)."""
+def test_by_class_hmer_indel_stats(consensus_resources, real_models_calc_run_info):
+    """plot_hmer_indel_by_class writes the hmer_indel_class_stats h5 (with a median_snvq column);
+    lines are ins/del only (no duplex concordant/discordant split)."""
     df, metadata = consensus_resources
-    dfd = _add_duplex_concordance_columns(_add_hmer_variant_columns(df))  # noqa: PD901
+    dfd = _add_duplex_columns(_add_hmer_variant_columns(df))  # noqa: PD901
     with tempfile.TemporaryDirectory() as temp_output_dir:
         report = _make_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
-        masks = report._duplex_concordance_group_masks()
-        assert [lbl for lbl, _ in masks] == ["single-strand consensus", "duplex concordant", "duplex discordant"]
         by_class = os.path.join(temp_output_dir, "by_class")
         report.plot_hmer_indel_by_class(output_filename=by_class)
         stats = pd.read_hdf(
             os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5"), key="hmer_indel_class_stats"
         )
         assert "median_snvq" in stats.columns
-        assert {"duplex concordant", "duplex discordant"} <= set(stats["read_group"])
+        assert set(stats["read_group"]) == {"all"}
         assert os.path.exists(by_class + ".png")
 
 

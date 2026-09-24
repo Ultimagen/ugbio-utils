@@ -44,8 +44,6 @@ from ugbio_srsnv.split_scheme import (
     resolve_scheme_and_add_columns,
 )
 from ugbio_srsnv.srsnv_utils import (
-    DUPLEX_MOL_PAIRED,
-    DUPLEX_MOL_SINGLE_STRAND,
     ET,
     ET_FILLNA,
     FS,
@@ -3345,11 +3343,8 @@ class SRSNVReport:
         Bins by ``X_HMER_RUN`` (the length of the reference homopolymer run the indel actually
         changes), NOT ``X_HMER_REF`` (which is measured at the VCF anchor base — usually the 5' flank
         for deletions — and so reports the wrong homopolymer for ~34% of hmer-indels). Plots median
-        SNVQ (not MQUAL) and TP count vs that run length, one line per indel class. For duplex runs the
-        lines are also split by read-type via :func:`_duplex_concordance_group_masks` (single-strand
-        consensus / duplex concordant / duplex discordant): color encodes the read-type group,
-        linestyle encodes ins vs del. For non-duplex runs (or when ``duplex_concordant`` is absent) it
-        falls back to ins/del-only lines. Writes the per-(read_group, indel_class, hmer_length) table
+        SNVQ (not MQUAL) and TP count vs that run length, one line per indel class (ins/del). Writes the
+        per-(read_group, indel_class, hmer_length) table
         to the QC h5 under ``hmer_indel_class_stats``. Self-skips when there are no hmer-indel TP rows.
         (A 1-mer bin is populated for insertions but empty for deletions, since a homopolymer deletion
         shortens a run of length >=2.)
@@ -3371,8 +3366,8 @@ class SRSNVReport:
             },
             index=ind.index,
         )
-        # Optional read-type (duplex concordance) split; None for non-duplex runs -> single "all" group.
-        group_masks = self._duplex_concordance_group_masks(data_df=ind)
+        # Duplex concordant/discordant split removed: hmer-indel lines are ins/del only (single "all" group).
+        group_masks = None
         if group_masks is None:
             base["read_group"] = "all"
             groups = ["all"]
@@ -3479,37 +3474,6 @@ class SRSNVReport:
             thresholds = [*thresholds, 80]
         return thresholds
 
-    def _duplex_concordance_group_masks(self, data_df=None):
-        """Yield ``(label, boolean_mask)`` for the duplex concordance read-types:
-        ``single-strand consensus`` / ``duplex concordant`` (duplex_concordant==1) /
-        ``duplex discordant`` (duplex_concordant==0).
-
-        Returns ``None`` when this is not a duplex run or the ``duplex_concordant`` column is absent, so
-        callers can fall back to no read-type split. Singletons (no consensus) are intentionally not a
-        group here (this split is about consensus/duplex reads).
-        """
-        if data_df is None:
-            data_df = self.data_df
-        if self.report_mode != ReportMode.DUPLEX or DUPLEX_CONCORDANT not in data_df.columns:
-            return None
-        n = len(data_df)
-        mate = (
-            data_df[MATE_PRESENT].fillna(0).astype(bool).to_numpy()
-            if MATE_PRESENT in data_df.columns
-            else np.zeros(n, dtype=bool)
-        )
-        is_cons = (
-            data_df[IS_CONSENSUS].fillna(0).astype(bool).to_numpy()
-            if IS_CONSENSUS in data_df.columns
-            else np.zeros(n, dtype=bool)
-        )
-        dc = pd.to_numeric(data_df[DUPLEX_CONCORDANT], errors="coerce").to_numpy()
-        return [
-            (DUPLEX_MOL_SINGLE_STRAND, is_cons & ~mate),
-            ("duplex concordant", mate & (dc == 1)),
-            ("duplex discordant", mate & (dc == 0)),
-        ]
-
     def _hmer_indel_class_conditions(self):
         """Ordered ``{label: boolean mask}`` over the variant-type / indel-class axis.
 
@@ -3561,22 +3525,10 @@ class SRSNVReport:
         label = data[LABEL].to_numpy().astype(bool)
         snvq = pd.to_numeric(data[QUAL], errors="coerce").to_numpy()
         snvq_thresholds = self._snvq_thresholds()
-        # read-type groups + an "All reads" margin (all read types together). When the duplex
-        # tensorizer emitted a per-molecule concordance code, split the aggregate "duplex molecule"
-        # row into two extra sub-rows: concordant (both strands carry the variant) and single-strand
-        # difference (opposite strand carries reference). The aggregate duplex row is kept as-is.
-        dc_codes = (
-            pd.to_numeric(data[DUPLEX_CONCORDANT], errors="coerce").to_numpy()
-            if DUPLEX_CONCORDANT in data.columns
-            else None
-        )
+        # read-type groups + an "All reads" margin (all read types together).
         rt_masks = [("All reads", np.ones(len(data), dtype=bool))]
         for lbl, raw_mask in self._group_masks():
-            grp_mask = np.asarray(raw_mask, dtype=bool)
-            rt_masks.append((lbl, grp_mask))
-            if dc_codes is not None and lbl == DUPLEX_MOL_PAIRED:
-                rt_masks.append((f"{lbl} — concordant", grp_mask & (dc_codes == 1)))
-                rt_masks.append((f"{lbl} — single-strand difference", grp_mask & (dc_codes == 0)))
+            rt_masks.append((lbl, np.asarray(raw_mask, dtype=bool)))
 
         rows = []
         for cls_name, cls_mask in class_conds.items():

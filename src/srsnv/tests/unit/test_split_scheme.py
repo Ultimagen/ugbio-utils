@@ -23,6 +23,7 @@ from ugbio_srsnv.split_scheme import (
     resolve_scheme_and_add_columns,
 )
 from ugbio_srsnv.srsnv_utils import (
+    DS,
     DUPLEX_MOL_PAIRED,
     DUPLEX_MOL_SINGLE_STRAND,
     DUPLEX_MOL_SINGLETON,
@@ -102,37 +103,31 @@ class TestResolveScheme:
         data_df = pd.DataFrame({NF: [3, 0, 2, 0], NR: [5, 4, 0, 0], "st": ["MIXED"] * 4, "et": ["MIXED"] * 4})
         assert resolve_scheme(data_df) is DUPLEX_SCHEME
 
-    def test_pe_duplex_mate_present_and_concordant_from_cs_family(self):
-        # PE reads are single-strand (nf XOR nr); duplex-ness is a MOLECULE (CS-family) property, so
-        # mate_present must be derived by grouping on CS -- a family with BOTH a fwd (nf>0) and a rev (nr>0)
-        # member is a paired duplex. duplex_concordant is per-locus: 1 iff both strands call the same
-        # CHROM/POS/ALT, else 0; -1 for non-duplex reads.
+    def test_pe_duplex_mate_present_from_ds(self):
+        # PE-consensus run (has CS + nf/nr). CS only identifies PE consensus; a molecule is a FULL
+        # paired-end duplex iff DS==2 (coverage-based). mate_present is derived from DS, NOT from whether
+        # both strands happen to appear in the featuremap. No duplex_concordant column is produced.
         data_df = pd.DataFrame(
             {
                 "CS": ["X", "X", "Y", "Z", "Z"],
-                "CHROM": ["chr1"] * 5,
-                "POS": [100, 100, 200, 300, 400],
-                "ALT": ["A", "A", "C", "A", "A"],
-                NF: [3, 0, 2, 1, 0],  # X: fwd+rev (concordant @100); Y: fwd-only; Z: fwd@300 + rev@400
+                NF: [3, 0, 2, 1, 0],
                 NR: [0, 5, 0, 0, 1],
+                DS: [2, 2, None, 2, 0],  # X full duplex (DS=2); Y not; Z: one DS=2 row + one non-duplex row
                 "st": ["MIXED"] * 5,
                 "et": ["MIXED"] * 5,
             }
         )
         out, scheme = resolve_scheme_and_add_columns(data_df.copy())
         assert scheme is DUPLEX_SCHEME
-        # X is a duplex molecule (both strands); Y single-strand; Z is duplex (both strands, different loci).
-        assert list(out[MATE_PRESENT].astype(bool)) == [True, True, False, True, True]
+        assert list(out[MATE_PRESENT].astype(bool)) == [True, True, False, True, False]
         assert list(out[READ_GROUP]) == [
             DUPLEX_MOL_PAIRED,
             DUPLEX_MOL_PAIRED,
             DUPLEX_MOL_SINGLE_STRAND,
             DUPLEX_MOL_PAIRED,
-            DUPLEX_MOL_PAIRED,
+            DUPLEX_MOL_SINGLE_STRAND,
         ]
-        # X: both strands at (chr1,100,A) -> concordant (1). Z: strands at different loci -> discordant (0).
-        # Y: not a duplex read -> -1.
-        assert list(out["duplex_concordant"]) == [1, 1, -1, 0, 0]
+        assert "duplex_concordant" not in out.columns
 
     def test_nf_nr_absent_does_not_trigger_duplex(self):
         # nf/nr are the duplex-path signal; classic fs/rs consensus data must still resolve to CONSENSUS.
