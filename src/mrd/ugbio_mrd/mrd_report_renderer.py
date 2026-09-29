@@ -491,9 +491,10 @@ def render_intersection_snvq_combined(  # noqa: PLR0912, PLR0915, C901
     cohort = cohort[cohort >= 40]  # noqa: PLR2004
     db_ctrl = db_ctrl[db_ctrl >= 40]  # noqa: PLR2004
 
-    all_snvq = pd.concat([s for s in [matched, cohort, db_ctrl] if len(s) > 0])
-    if len(all_snvq) == 0:
+    non_empty = [s for s in [matched, cohort, db_ctrl] if len(s) > 0]
+    if len(non_empty) == 0:
         return ""
+    all_snvq = pd.concat(non_empty)
     b_max = int(all_snvq.max()) + 2
     bins = np.arange(40, b_max, 1)
 
