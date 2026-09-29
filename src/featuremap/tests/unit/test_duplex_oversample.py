@@ -139,6 +139,30 @@ def test_priority_preserve_drops_ssc_when_duplex_overflows(tmp_path):
     assert res.filter(pl.col("DS") == 2).height == 20  # only full-duplex reads survived
 
 
+def test_priority_preserve_min_group_fraction_floors_ssc(tmp_path):
+    # Same overflow scenario as above (full alone > budget), but a 10% per-group floor must rescue SSC:
+    # budget 20, floor = round(0.10*20) = 2 -> ssc gets 2 (not 0), full gets the remaining 18.
+    rows = [_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, ds=2) for j in range(90)]
+    rows += [_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, ds=None) for j in range(50)]  # ssc
+    files = _write_parts(tmp_path, [rows])
+    out = str(tmp_path / "out.parquet")
+    _priority_preserve_downsample(
+        files,
+        out,
+        downsample_reads=20,
+        downsample_seed=1,
+        duplex_oversample_priority=DUPLEX_PRIORITY_FP,
+        indel_snv_balance_fraction=None,
+        min_group_fraction=0.10,
+    )
+    res = pl.read_parquet(out)
+    assert res.height == 20
+    full = res.filter(pl.col("DS") == 2).height
+    ssc = res.height - full
+    assert ssc == 2  # floor honored (was 0 without the floor)
+    assert full == 18  # top tier takes only the surplus after the floor
+
+
 def test_balanced_sample_keeps_indel_fraction():
     rows = [_row("chr1", 100 + j, "C", "CA", f"i{j}", 3, 0, ds=2, x_ic="ins") for j in range(20)]
     rows += [_row("chr1", 500 + j, "C", "T", f"s{j}", 3, 0, ds=2) for j in range(80)]
