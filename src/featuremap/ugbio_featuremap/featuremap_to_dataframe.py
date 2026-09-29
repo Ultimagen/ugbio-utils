@@ -917,22 +917,28 @@ def _balanced_sample(frame: pl.DataFrame, n: int, indel_snv_balance_fraction: fl
     return pl.concat(parts, how="vertical") if parts else frame.head(0)
 
 
-def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913
+def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917
     parquet_files: list[str],
     output_path: str,
     downsample_reads: int,
     downsample_seed: int | None,
     duplex_oversample_priority: list[str],
     indel_snv_balance_fraction: float | None,
+    min_group_fraction: float | None = None,
 ) -> None:
     """Downsample to ``downsample_reads`` while preserving reads by ``duplex_group`` priority.
 
     The size budget is filled top-down in ``duplex_oversample_priority`` order: every row of a higher-priority
-    group is kept before any of a lower-priority group. Only the single group that straddles the budget (the
-    "boundary" group) is subsampled; lower groups are dropped. This is the ordered-tier generalization of the
-    ``preserve_field`` keep-all in ``filter_dataframe.py`` and enriches (e.g.) concordant-duplex FP reads
-    relative to SSC/singletons without duplicating any row. When a balance fraction is set, it is applied only
-    within the boundary group's subsample so indel FPs are not decimated there.
+    group is kept before any of a lower-priority group. This enriches (e.g.) concordant-duplex reads relative
+    to SSC/singletons without duplicating any row. When a balance fraction is set, it is applied within each
+    subsampled group so indel FPs are not decimated there.
+
+    ``min_group_fraction`` (0..1, optional) adds a per-``duplex_group`` FLOOR: before the priority fill, every
+    present group is guaranteed at least ``min(round(min_group_fraction * budget), its count)`` rows; the
+    remaining budget is then distributed top-down by priority (so duplex enrichment still uses the surplus).
+    This prevents a flooded high-priority tier (e.g. duplex_pe_full after dropping the dup filter) from
+    starving lower tiers such as SSC. With ``min_group_fraction`` unset the behavior is byte-identical to the
+    strict top-down fill (a single boundary group is subsampled; lower groups dropped).
     """
     seed = downsample_seed if downsample_seed is not None else 0
 
@@ -955,32 +961,39 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913
     ordered = [g for g in duplex_oversample_priority if g in counts]
     ordered += [g for g in counts if g not in ordered]
 
-    keep_n: dict[str, int] = {}
-    boundary: str | None = None
+    keep_n: dict[str, int] = dict.fromkeys(ordered, 0)
     remaining = budget
+    # Phase 1 (optional): reserve a per-group floor so no present group is starved below the floor.
+    if min_group_fraction:
+        floor = round(min_group_fraction * budget)
+        for g in ordered:
+            f = min(floor, counts[g], remaining)
+            keep_n[g] = f
+            remaining -= f
+    # Phase 2: distribute the remaining budget top-down by priority (surplus -> duplex enrichment).
     for g in ordered:
-        take = min(counts[g], remaining)
-        keep_n[g] = take
-        if 0 < take < counts[g]:
-            boundary = g
+        take = min(counts[g] - keep_n[g], remaining)
+        keep_n[g] += take
         remaining -= take
+
     full_groups = [g for g, n in keep_n.items() if n > 0 and n == counts[g]]
+    partial_groups = [g for g, n in keep_n.items() if 0 < n < counts[g]]
 
     log.info(
-        f"Duplex priority-preserve downsample: counts={counts} budget={budget} "
-        f"full_keep={full_groups} boundary={boundary} keep_n={keep_n}"
+        f"Duplex priority-preserve downsample: counts={counts} budget={budget} min_frac={min_group_fraction} "
+        f"full_keep={full_groups} partial={partial_groups} keep_n={keep_n}"
     )
 
-    # Pass 2: collect fully-kept groups in full, and a memory-bounded per-part pre-sample of the boundary.
+    # Pass 2: collect fully-kept groups in full, and a memory-bounded per-part pre-sample of each partial group.
     kept: list[pl.DataFrame] = []
     for i, tmp in enumerate(annotated_files):
         part = pl.read_parquet(tmp)
         if full_groups:
             kept.append(part.filter(pl.col(DUPLEX_GROUP_COL).is_in(full_groups)))
-        if boundary is not None:
-            b = part.filter(pl.col(DUPLEX_GROUP_COL) == boundary)
+        for g in partial_groups:
+            b = part.filter(pl.col(DUPLEX_GROUP_COL) == g)
             if b.height:
-                frac = min(1.0, keep_n[boundary] / counts[boundary] * 1.05 + 1000.0 / counts[boundary])
+                frac = min(1.0, keep_n[g] / counts[g] * 1.05 + 1000.0 / counts[g])
                 kept.append(b.sample(fraction=frac, seed=seed + i))
 
     if kept:
@@ -988,12 +1001,12 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913
     else:
         merged = _add_duplex_group_column(pl.read_parquet(annotated_files[0])).head(0)
 
-    # Exact-trim the boundary group to its target (balanced if requested); leave full-kept groups intact.
-    if boundary is not None:
-        boundary_df = merged.filter(pl.col(DUPLEX_GROUP_COL) == boundary)
-        rest_df = merged.filter(pl.col(DUPLEX_GROUP_COL) != boundary)
-        boundary_df = _balanced_sample(boundary_df, keep_n[boundary], indel_snv_balance_fraction, seed)
-        merged = pl.concat([rest_df, boundary_df], how="vertical")
+    # Exact-trim each partial group to its target (balanced if requested); leave full-kept groups intact.
+    for g in partial_groups:
+        gdf = merged.filter(pl.col(DUPLEX_GROUP_COL) == g)
+        rest_df = merged.filter(pl.col(DUPLEX_GROUP_COL) != g)
+        gdf = _balanced_sample(gdf, keep_n[g], indel_snv_balance_fraction, seed)
+        merged = pl.concat([rest_df, gdf], how="vertical")
 
     # Drop the helper column, shuffle deterministically so groups interleave, write.
     merged = merged.drop(DUPLEX_GROUP_COL).sample(fraction=1.0, shuffle=True, seed=seed)
@@ -1111,6 +1124,7 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
     downsample_seed: int | None = None,
     indel_snv_balance_fraction: float | None = None,
     duplex_oversample_priority: list[str] | None = None,
+    duplex_group_min_fraction: float | None = None,
 ) -> None:
     """
     Merge multiple Parquet files using Polars lazy evaluation for memory efficiency.
@@ -1150,6 +1164,7 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
                     downsample_seed,
                     duplex_oversample_priority,
                     indel_snv_balance_fraction,
+                    duplex_group_min_fraction,
                 )
                 return
 
@@ -1533,6 +1548,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
     downsample_seed: int | None = None,
     indel_snv_balance_fraction: float | None = None,
     duplex_oversample_priority: list[str] | None = None,
+    duplex_group_min_fraction: float | None = None,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -1777,6 +1793,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
                 downsample_seed,
                 indel_snv_balance_fraction,
                 duplex_oversample_priority,
+                duplex_group_min_fraction,
             )
 
         final_row_count = pl.scan_parquet(out).select(pl.len()).collect().item()
@@ -2223,6 +2240,18 @@ def main(argv: list[str] | None = None) -> None:
             "unset, if the CS column is absent (non-duplex run), or if the data already fits the budget."
         ),
     )
+    parser.add_argument(
+        "--duplex-group-min-fraction",
+        type=float,
+        default=None,
+        help=(
+            "Per-duplex_group FLOOR (0..1) applied during the priority-preserve downsample: every present "
+            "duplex_group (duplex_pe_full/duplex/ssc/singleton) is guaranteed at least this fraction of the "
+            "--downsample-reads budget (capped by its available count) before the remaining budget is filled "
+            "top-down by --duplex-oversample-priority. Prevents a flooded high-priority tier from starving "
+            "lower tiers (e.g. SSC). No-op unless --duplex-oversample-priority is also set."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args(argv)
 
@@ -2265,6 +2294,7 @@ def main(argv: list[str] | None = None) -> None:
         downsample_seed=args.downsample_seed,
         indel_snv_balance_fraction=args.indel_snv_balance_fraction,
         duplex_oversample_priority=duplex_oversample_priority,
+        duplex_group_min_fraction=args.duplex_group_min_fraction,
     )
 
 
