@@ -385,7 +385,7 @@ def _classify_baf(baf_values: list[float]) -> dict:
 
     if di_count > tri_count * 2.5:  # noqa: PLR2004
         label, confidence = "DIPLOID", f"({di_frac}% hets in 0.4-0.6 BAF band, n={n_het})"
-    elif tri_count > di_count * 0.4:  # noqa: PLR2004
+    elif tri_count > di_count * 2.5:  # noqa: PLR2004 symmetric to the DIPLOID dominance check above
         label, confidence = "TRIPLOID", f"(diplo={di_frac}%, tri={tri_frac}%, n={n_het})"
     elif di_count > tri_count * 1.5:  # noqa: PLR2004
         label, confidence = "LIKELY_DIPLOID", f"({di_frac}% in 0.4-0.6 band, {tri_frac}% in triploid bands, n={n_het})"

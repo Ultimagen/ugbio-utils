@@ -97,6 +97,20 @@ class TestClassifyBaf:
         result = _classify_baf(baf)
         assert result["label"] in ("TRIPLOID", "LIKELY_DIPLOID", "INCONCLUSIVE")
 
+    def test_diploid_majority_with_noise_is_not_triploid(self):
+        # regression for a reciprocal-threshold bug: a clear diploid majority
+        # (~69% di / ~29% tri, e.g. from low-coverage BAF noise) was previously
+        # mislabeled TRIPLOID because the TRIPLOID check was the negation of
+        # the DIPLOID check instead of its symmetric counterpart.
+        baf = [0.5] * 345 + [0.33] * 146 + [0.67] * 9
+        result = _classify_baf(baf)
+        assert result["label"] == "LIKELY_DIPLOID"
+
+    def test_dominant_triploid_signal(self):
+        baf = [0.33] * 70 + [0.67] * 20 + [0.5] * 10
+        result = _classify_baf(baf)
+        assert result["label"] == "TRIPLOID"
+
 
 class TestUpdateReservoir:
     def test_bounds_sample_size(self):
