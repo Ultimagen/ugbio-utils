@@ -754,34 +754,55 @@ def _collect_reads_from_region(
     )
 
 
-def _record_fragment_evidence(
+def _get_fragment_vote(
     read: pysam.AlignedSegment,
-    fragment: _FragmentEvidence,
     alignment_file: pysam.AlignmentFile,
     interval: tuple[int, int, int],
     pe_config: PairedEndConfig,
-) -> None:
-    """Add one alignment's split-read and discordant-pair evidence to its fragment's bucket."""
+) -> tuple[bool, str, int | None] | None:
+    """
+    Classify one alignment's split-read and discordant-pair evidence.
+
+    Returns
+    -------
+    tuple[bool, str, int | None] | None
+        (from_split, "DUP"/"DEL", event length), or None if the alignment casts no vote
+    """
     start, end, cushion = interval
 
     is_dup, is_del, size = _process_read_for_cnv_evidence(read, alignment_file, start, end, cushion)
-    votes = fragment.split
+    from_split = True
     if not (is_dup or is_del):  # Split evidence outranks pair evidence, so the pair is tested only without it
         is_dup, is_del, size = check_pair_cnv_consistency(read, start, end, cushion, pe_config)
-        votes = fragment.pair
-    if is_dup or is_del:
-        votes.add(read, "DUP" if is_dup else "DEL", size)
+        from_split = False
+    if not (is_dup or is_del):
+        return None
+    return from_split, "DUP" if is_dup else "DEL", size
+
+
+def _may_be_fetched_twice(
+    read: pysam.AlignedSegment,
+    regions: tuple[int, int, int, int],
+    *,
+    from_start_region: bool,
+) -> bool:
+    """Check whether an alignment overlaps both breakpoint regions, so both fetches can return it."""
+    _, start_region_end, end_region_start, _ = regions
+    if from_start_region:
+        return read.reference_end is None or read.reference_end > end_region_start
+    return read.reference_start < start_region_end
 
 
 def _summarize_fragments(
-    fragments: dict[tuple[str, str], _FragmentEvidence],
+    fragments: dict[tuple[str, str], _FragmentEvidence | None],
     interval: tuple[str, int, int],
 ) -> BreakpointEvidence:
     """
     Reduce per-fragment votes (keyed on (query_name, RG)) to interval-level evidence counts.
 
     Each fragment casts at most one DUP/DEL vote, split outranking pair; one whose winning votes disagree
-    counts toward the total only. The winning votes' alignments become the supporting reads.
+    counts toward the total only, as does a None (non-voting) fragment. The winning votes' alignments become
+    the supporting reads.
     """
     chrom, start, end = interval
     counts = {"DUP": 0, "DEL": 0}
@@ -790,6 +811,8 @@ def _summarize_fragments(
     supporting_reads: list[tuple[pysam.AlignedSegment, str]] = []
 
     for fragment in fragments.values():
+        if fragment is None:
+            continue
         from_split = bool(fragment.split.labels)
         votes = fragment.split if from_split else fragment.pair
         if len(votes.labels) != 1:
@@ -833,14 +856,17 @@ def _collect_fragments_from_region(
     _summarize_fragments then reduces the votes to one per fragment.
     """
     start_region_start, start_region_end, end_region_start, end_region_end = regions
-    fragments: dict[tuple[str, str], _FragmentEvidence] = {}
+    # Non-voting fragments are stored as None, to bound memory on pileups
+    fragments: dict[tuple[str, str], _FragmentEvidence | None] = {}
     processed_alignments: set[tuple[str, str, int]] = set()
 
     try:
-        for read in itertools.chain(
-            alignment_file.fetch(chrom, start_region_start, start_region_end, multiple_iterators=True),
-            alignment_file.fetch(chrom, end_region_start, end_region_end, multiple_iterators=True),
-        ):
+        # (from_start_region, reads) for the start and end breakpoint regions
+        fetches = (
+            (True, alignment_file.fetch(chrom, start_region_start, start_region_end, multiple_iterators=True)),
+            (False, alignment_file.fetch(chrom, end_region_start, end_region_end, multiple_iterators=True)),
+        )
+        for from_start_region, read in ((flag, read) for flag, reads in fetches for read in reads):
             if _should_skip_read(read):
                 continue
 
@@ -849,13 +875,24 @@ def _collect_fragments_from_region(
             # Deduplicate per alignment, not per fragment: the breakpoint windows overlap
             # for intervals shorter than 2*cushion, so the same alignment can be fetched
             # twice, but the two mates of a fragment must both be evaluated.
-            alignment_key = (str(read.query_name), rg, read.flag)
-            if alignment_key in processed_alignments:
-                continue
-            processed_alignments.add(alignment_key)
+            if _may_be_fetched_twice(read, regions, from_start_region=from_start_region):
+                alignment_key = (str(read.query_name), rg, read.flag)
+                if alignment_key in processed_alignments:
+                    continue
+                if from_start_region:
+                    processed_alignments.add(alignment_key)
 
-            fragment = fragments.setdefault((str(read.query_name), rg), _FragmentEvidence())
-            _record_fragment_evidence(read, fragment, alignment_file, (start, end, cushion), pe_config)
+            fragment_key = (str(read.query_name), rg)
+            vote = _get_fragment_vote(read, alignment_file, (start, end, cushion), pe_config)
+            if vote is None:
+                fragments.setdefault(fragment_key, None)
+                continue
+
+            fragment = fragments.get(fragment_key)
+            if fragment is None:
+                fragment = fragments[fragment_key] = _FragmentEvidence()
+            from_split, label, size = vote
+            (fragment.split if from_split else fragment.pair).add(read, label, size)
 
     except Exception as e:
         logger.warning(f"Error fetching reads for {chrom}:{start}-{end}: {e}")

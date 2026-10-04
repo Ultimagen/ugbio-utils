@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pysam
 import pytest
+from ugbio_cnv import analyze_cnv_breakpoint_reads
 from ugbio_cnv.analyze_cnv_breakpoint_reads import (
     MIN_PAIR_SPAN,
     PAIR_READ_GROUP,
@@ -1225,21 +1226,19 @@ def test_split_evidence_outranks_pair_evidence_in_one_fragment(pe_bam_factory):
 
 def test_overlapping_breakpoint_windows_count_an_alignment_once(pe_bam_factory):
     """For a CNV shorter than 2*cushion the windows overlap; a read fetched twice votes once."""
-    # Interval 1000-1100 with cushion 100: start window 900-1200, end window 1000-1200.
-    # A read at 1150 sits in both, so it is returned by both fetches. template_length is 0
-    # so that only split-read evidence is exercised.
+    # Windows 900-1100 and 1000-1200 overlap; the primary at 1050-1100 is fetched by both
     primary = _make_pe_mate(
         "frag",
-        1150,
+        1050,
         cigartuples=[(0, 50), (4, 30)],  # 50M30S - right clip, first part
-        sa_tag="chr1,1051,+,30S50M,60,0;",  # second part before the first part -> DUP
+        sa_tag="chr1,1001,+,50S30M,60,0;",  # second part before the first part -> DUP
         template_length=0,
     )
     supplementary = _make_pe_mate(
         "frag",
-        1050,
-        cigartuples=[(4, 30), (0, 50)],
-        sa_tag="chr1,1151,+,50M30S,60,0;",
+        1000,
+        cigartuples=[(4, 50), (0, 30)],
+        sa_tag="chr1,1051,+,50M30S,60,0;",
         is_supplementary=True,
         template_length=0,
     )
@@ -1249,9 +1248,66 @@ def test_overlapping_breakpoint_windows_count_an_alignment_once(pe_bam_factory):
 
     assert evidence.total_reads == 1
     assert evidence.duplication_reads == 1
-    assert evidence.dup_insert_sizes == [150]
+    assert evidence.dup_insert_sizes == [100]
     # Without the per-alignment dedup the doubly fetched read would be written twice
     assert len(evidence.supporting_reads) == 1
+
+
+def test_read_reaching_into_disjoint_end_window_counts_once(pe_bam_factory):
+    """A read overlapping both disjoint windows (900-1100, 1200-1400) is fetched twice but counted once."""
+    primary = _make_pe_mate(
+        "frag",
+        1050,
+        cigartuples=[(0, 40), (3, 120), (0, 10), (4, 30)],  # 40M120N10M30S - ends at 1220, right clip
+        sa_tag="chr1,1301,+,50S30M,60,0;",  # second part after the first part -> DEL
+        template_length=0,
+    )
+    bam_file = pe_bam_factory([primary])
+
+    evidence = _analyze(bam_file, pe_config(), start=1000, end=1300)
+
+    assert evidence.total_reads == 1
+    assert evidence.deletion_reads == 1
+    assert len(evidence.supporting_reads) == 1
+
+
+def test_non_voting_fragments_do_not_allocate_evidence(pe_bam_factory, monkeypatch):
+    """Only voting fragments allocate a _FragmentEvidence."""
+    created = []
+
+    class _CountingFragmentEvidence(_FragmentEvidence):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+    monkeypatch.setattr(analyze_cnv_breakpoint_reads, "_FragmentEvidence", _CountingFragmentEvidence)
+    concordant = [
+        _make_pe_mate(
+            f"concordant{i}", PE_LEFT_START + i, mate_reference_start=PE_LEFT_START + 200 + i, template_length=300
+        )
+        for i in range(50)
+    ]
+    bam_file = pe_bam_factory([*concordant, _make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
+
+    evidence = _analyze(bam_file, pe_config())
+
+    assert evidence.total_reads == 51
+    assert evidence.deletion_reads == 1
+    assert len(created) == 1  # only the discordant fragment, once for both of its mates
+
+
+def test_late_voting_mate_keeps_fragment_order(pe_bam_factory):
+    """A fragment that votes only through its later mate keeps its first-seen position."""
+    a_left = _make_pe_mate("a", PE_LEFT_START, mapping_quality=5)
+    a_right = _make_right_mate("a")
+    b_left = _make_pe_mate("b", PE_LEFT_START + 10, mate_reference_start=PE_RIGHT_START + 10)
+    bam_file = pe_bam_factory([a_left, b_left, a_right])
+
+    evidence = _analyze(bam_file, pe_config())
+
+    assert evidence.total_reads == 2
+    assert evidence.deletion_reads == 2
+    assert [read.query_name for read, _ in evidence.supporting_reads] == ["a", "b"]
 
 
 # --- regressions for the two paired-end bugs ------------------------------
@@ -1367,12 +1423,16 @@ def test_summarize_fragments_prefers_split_values_over_pair_values():
     split_dup.split.add(_make_pe_mate("a", PE_LEFT_START), "DUP", 100)
     pair_dup.pair.add(_make_pe_mate("b", PE_LEFT_START), "DUP", 400)
     pair_del.pair.add(_make_pe_mate("c", PE_LEFT_START), "DEL", 800)
-    fragments = {("a", "RG"): split_dup, ("b", "RG"): pair_dup, ("c", "RG"): pair_del}
+    # None is a non-voting fragment
+    fragments = {("a", "RG"): split_dup, ("b", "RG"): pair_dup, ("c", "RG"): pair_del, ("d", "RG"): None}
 
     evidence = _summarize_fragments(fragments, ("chr1", 1000, 2000))
 
     assert evidence.dup_insert_sizes == [100]  # a single split value outranks the pair value
     assert evidence.del_insert_sizes == [800]  # no split values, so the pair value is used
+    assert evidence.total_reads == 4
+    assert evidence.duplication_reads == 2
+    assert evidence.deletion_reads == 1
 
 
 def _write_evidence_bam(bam_file, fasta_file, config):
