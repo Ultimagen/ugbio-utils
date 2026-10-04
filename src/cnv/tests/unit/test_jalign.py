@@ -420,7 +420,7 @@ class TestFetchReadsAtBreakpoints:
         empty_reads_file.fetch.assert_not_called()
 
     def test_end_past_contig_is_clamped(self, empty_reads_file, default_config):
-        # chrY:56887500-57230000 from BIOIN-3096 overruns chrY by 2,585 bp, more than
+        # chrY:56887500-57230000 overruns chrY by 2,585 bp, more than
         # fetch_read_padding, so an unclamped second window lies entirely off the contig
         _, refs_extents = _fetch_reads_at_breakpoints("chrY", 56_887_500, 57_230_000, empty_reads_file, default_config)
         for rmin, rmax in refs_extents:
