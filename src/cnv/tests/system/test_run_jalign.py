@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import subprocess
 from os.path import join as pjoin
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -168,6 +169,55 @@ class TestRunJalign:
             rg_ids = {rg["ID"] for rg in bam.header["RG"]}
             expected_rgs = {"REF1", "REF2", "DUP", "DEL"}
             assert expected_rgs.issubset(rg_ids)
+
+    def test_run_jalign_keeps_failed_records(self, tmp_path, resources_dir, mock_para_jalign):
+        """A CNV whose alignment fails is written without JALIGN_* fields, not dropped."""
+        input_cram = pjoin(resources_dir, "test.jalign.cram")
+        cnv_vcf = pjoin(resources_dir, "test.jalign.vcf.gz")
+        ref_fasta = pjoin(resources_dir, "chr1.3M.fasta.gz")
+        output_prefix = str(tmp_path / "test_output_failed")
+        failing_cnv = "jalign_chr1_2651000_2658000_"
+
+        def failing_run(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if any(failing_cnv in arg for arg in cmd):
+                raise subprocess.CalledProcessError(returncode=-11, cmd=cmd, stderr="segfault")
+            return mock_para_jalign(*args, **kwargs)
+
+        with (
+            patch("subprocess.run", side_effect=failing_run),
+            patch("shutil.which", return_value="/usr/bin/para_jalign"),
+        ):
+            exit_code = run_jalign.main(
+                [
+                    input_cram,
+                    cnv_vcf,
+                    ref_fasta,
+                    output_prefix,
+                    "--min-mismatches",
+                    "1",
+                    "--softclip-threshold",
+                    "20",
+                    "--threads",
+                    "1",
+                    "--tool-path",
+                    "para_jalign",
+                ]
+            )
+
+        assert exit_code == 0
+
+        with pysam.VariantFile(cnv_vcf) as vcf:
+            n_input = len(list(vcf))
+        with pysam.VariantFile(f"{output_prefix}.jalign.vcf.gz") as vcf:
+            records = list(vcf)
+
+        assert len(records) == n_input, "failed CNVs must not be dropped from the output VCF"
+        failed = [r for r in records if (r.chrom, r.start, r.stop) == ("chr1", 2651000, 2658000)]
+        assert len(failed) == 1
+        assert "JALIGN_DUP_SUPPORT" not in failed[0].info
+        assert "JALIGN_DEL_SUPPORT" not in failed[0].info
+        assert all("JALIGN_DUP_SUPPORT" in r.info for r in records if r is not failed[0])
 
     def test_run_jalign_compare_golden_outputs(self, tmp_path, resources_dir, mock_para_jalign):
         """Test run_jalign output against golden reference files.

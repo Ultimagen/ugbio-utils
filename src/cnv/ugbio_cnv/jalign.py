@@ -462,10 +462,17 @@ def _fetch_reads_at_breakpoints(
     """
     reads = {}
     refs_extents = []
+    # CNV calls can end past the contig end; an unclamped window then yields an empty
+    # reference and para_jalign segfaults
+    contig_len = reads_file.get_reference_length(chrom)
+    if start >= contig_len:
+        # Nothing to realign: the whole CNV lies past the contig end
+        logger.warning(f"CNV {chrom}:{start}-{end} starts past the contig end ({contig_len}), skipping")
+        return reads, refs_extents
 
-    for loc in [start, end]:
+    for loc in [start, min(end, contig_len)]:
         rmin = max(0, loc - config.fetch_read_padding)
-        rmax = loc + config.fetch_read_padding
+        rmax = min(contig_len, loc + config.fetch_read_padding)
 
         for read in reads_file.fetch(
             chrom,
@@ -489,7 +496,7 @@ def _fetch_reads_at_breakpoints(
 
     # Extend references with additional padding
     refs_extents[0][0] = max(0, refs_extents[0][0] - config.fetch_ref_padding)
-    refs_extents[1][1] = refs_extents[1][1] + config.fetch_ref_padding
+    refs_extents[1][1] = min(contig_len, refs_extents[1][1] + config.fetch_ref_padding)
 
     return reads, refs_extents
 
@@ -1099,10 +1106,8 @@ def process_cnv(
         counts = _count_supporting_alignments(result_df, config)
     finally:
         # Clean up temporary files
-        if input_file.exists():
-            input_file.unlink()
-        if output_file.exists():
-            output_file.unlink()
+        input_file.unlink(missing_ok=True)
+        output_file.unlink(missing_ok=True)
 
     if log_file:
         log_file.write(f"<<< alignments: {chrom}:{start}-{end}\n")

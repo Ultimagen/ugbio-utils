@@ -476,6 +476,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                             f"Realigned reads: {read_count} - Time: {cycle_time:.2f}s"
                         )
                     else:
+                        # Keep the CNV, without JALIGN_* annotations, so a jalign failure
+                        # doesn't silently remove it from downstream calls
+                        out_vcf.write(rec)
                         failed_count += 1
                         logger.error(f"Error processing {chrom}:{start}-{end}: {error_msg}")
 
@@ -483,10 +486,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
         reads_file.close()
         reference.close()
 
-        # Clean up temporary BAM files
+        # Clean up temporary BAM files. missing_ok: on network run storage (NFS/EFS) unlink can
+        # report ENOENT for a file that was just removed, which must not fail the task.
         for temp_bam_file in temp_bam_files:
-            if temp_bam_file and temp_bam_file.exists():
-                temp_bam_file.unlink()
+            if temp_bam_file:
+                temp_bam_file.unlink(missing_ok=True)
 
         logger.info(f"Cleaned up {len(temp_bam_files)} temporary BAM files")
 
@@ -497,7 +501,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
 
         logger.info(f"Successfully processed {cnv_count} CNV regions")
         if failed_count > 0:
-            logger.warning(f"Failed to process {failed_count} CNV regions")
+            logger.warning(
+                f"Failed to process {failed_count} CNV regions; they were written without JALIGN_* annotations"
+            )
         return 0
 
     except Exception as e:
