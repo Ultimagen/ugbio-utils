@@ -32,6 +32,7 @@ from ugbio_srsnv.srsnv_utils import (
     CONSENSUS_GROUP_ONE_STRAND,
     CONSENSUS_GROUP_SINGLE,
     CONSENSUS_GROUPS,
+    CS_N_CROSSING,
     DUPLEX_MOL_GROUPS,
     DUPLEX_MOL_PAIRED,
     DUPLEX_MOL_SINGLE_STRAND,
@@ -48,6 +49,11 @@ from ugbio_srsnv.srsnv_utils import (
     NF,
     NONE_GROUP_ALL,
     NR,
+    PE_DUPLEX_GROUP,
+    PE_DUPLEX_GROUP_PE,
+    PE_DUPLEX_GROUP_SE,
+    PE_DUPLEX_GROUP_SSC,
+    PE_DUPLEX_GROUPS,
     READ_GROUP,
     RS,
     ST,
@@ -234,6 +240,17 @@ def _duplex_groups(data_df: pd.DataFrame) -> pd.Categorical:
     return _ordered(g, DUPLEX_MOL_GROUPS)
 
 
+def _pe_duplex_groups(data_df: pd.DataFrame) -> pd.Categorical:
+    """Paired-end-duplex split: SSC / duplex SE / duplex PE (singletons excluded).
+
+    Reads the per-row ``pe_duplex_group`` column assigned by
+    :func:`~ugbio_srsnv.srsnv_utils.add_duplex_columns_to_featuremap_df` from the DNN per-image
+    CS-family stats (``DS``/``mate_present`` + ``cs_n_crossing``). Singletons were mapped to a label
+    outside ``PE_DUPLEX_GROUPS`` and are dropped here (not displayed).
+    """
+    return _ordered(data_df[PE_DUPLEX_GROUP], PE_DUPLEX_GROUPS)
+
+
 def _none_groups(data_df: pd.DataFrame) -> pd.Categorical:
     return _ordered([NONE_GROUP_ALL] * len(data_df), [NONE_GROUP_ALL])
 
@@ -341,6 +358,29 @@ DUPLEX_SCHEME = SplitScheme(
     ),
 )
 
+PE_DUPLEX_SCHEME = SplitScheme(
+    mode=ReportMode.PE_DUPLEX,
+    # Paired-end duplex: detected by the DNN per-image CS-family stat `cs_n_crossing`. Must be checked
+    # before DUPLEX (nf/nr also present) so the SSC / duplex-SE / duplex-PE split wins for pe-duplex runs.
+    detect=lambda cols: CS_N_CROSSING in cols,
+    add_columns=_duplex_add_columns,
+    tag_axis="duplex overlap",
+    variants=(
+        SplitVariant(
+            suffix="pe_duplex",
+            group_fn=_pe_duplex_groups,
+            groups=tuple(PE_DUPLEX_GROUPS),
+            colors={
+                PE_DUPLEX_GROUP_SSC: "tab:gray",
+                PE_DUPLEX_GROUP_SE: "tab:orange",
+                PE_DUPLEX_GROUP_PE: "tab:green",
+            },
+            is_display=True,
+            tag_axis="duplex overlap",
+        ),
+    ),
+)
+
 CONSENSUS_SCHEME = SplitScheme(
     mode=ReportMode.CONSENSUS,
     detect=lambda cols: FS in cols and RS in cols,
@@ -382,7 +422,13 @@ NONE_SCHEME = SplitScheme(
 # DeepSRSNV runs. For those runs the per-molecule duplex split is the point, so it must win over the
 # ppmSeq MIXED split (which also matches because st/et are present). Non-duplex runs lack both
 # `mate_present` and `nf`/`nr`, so MIXED/CONSENSUS/NONE detection is unchanged.
-SPLIT_SCHEMES: tuple[SplitScheme, ...] = (DUPLEX_SCHEME, MIXED_SCHEME, CONSENSUS_SCHEME, NONE_SCHEME)
+SPLIT_SCHEMES: tuple[SplitScheme, ...] = (
+    PE_DUPLEX_SCHEME,
+    DUPLEX_SCHEME,
+    MIXED_SCHEME,
+    CONSENSUS_SCHEME,
+    NONE_SCHEME,
+)
 _BY_MODE: dict[ReportMode, SplitScheme] = {s.mode: s for s in SPLIT_SCHEMES}
 
 

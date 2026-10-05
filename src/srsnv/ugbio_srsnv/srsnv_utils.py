@@ -118,6 +118,21 @@ DUPLEX_MOL_SINGLE_STRAND = "single-strand consensus"  # is_consensus and mate_pr
 DUPLEX_MOL_PAIRED = "duplex molecule"  # mate_present is truthy: both strand-mates present
 DUPLEX_MOL_GROUPS = [DUPLEX_MOL_SINGLETON, DUPLEX_MOL_SINGLE_STRAND, DUPLEX_MOL_PAIRED]
 
+# Per-image CS-family stats (paired-end duplex), produced by the DNN tensorizer from each image's own
+# CS family + focus column and surfaced per row (see ugbio_deep_srsnv.constants.PRED_COL_CS_*).
+CS_FAMILY_SIZE = "cs_family_size"  # reads fetched for the CS (present slots), 1..4
+CS_N_CROSSING = "cs_n_crossing"  # family reads crossing the variant (focus != PAD; GAP counts)
+CS_N_SUPPORTING = "cs_n_supporting"  # crossing reads carrying the ALT at focus
+CS_N_PE_PAIRS = "cs_n_pe_pairs"  # complete (fwd,rev) pairs present, 0..2
+# PE-duplex display groups: SSC / duplex-SE / duplex-PE, driven by DS (mate_present) + cs_n_crossing;
+# singletons are excluded (mapped to DUPLEX_MOL_SINGLETON, which is NOT in PE_DUPLEX_GROUPS so the
+# generic group_masks drops them).
+PE_DUPLEX_GROUP = "pe_duplex_group"
+PE_DUPLEX_GROUP_SSC = "SSC"  # single-strand consensus (DS != 2)
+PE_DUPLEX_GROUP_SE = "duplex SE"  # full duplex (DS==2), 2 reads cross the variant (one PE end)
+PE_DUPLEX_GROUP_PE = "duplex PE"  # full duplex (DS==2), 4 reads cross the variant (both PE ends)
+PE_DUPLEX_GROUPS = [PE_DUPLEX_GROUP_SSC, PE_DUPLEX_GROUP_SE, PE_DUPLEX_GROUP_PE]
+
 # Mixed groups (2), reproducing the historical binary ppmSeq labels/order.
 MIXED_GROUP_NON = "Non-mixed"
 MIXED_GROUP_POS = "Mixed"
@@ -138,6 +153,8 @@ class ReportMode(Enum):
     MIXED = "mixed"  # ppmSeq data: split on mixed vs non-mixed reads (st/et tags)
     CONSENSUS = "consensus"  # consensus data: split on consensus vs non-consensus (fs/rs)
     DUPLEX = "duplex_molecule"  # duplex per-molecule data: split on mate_present (paired vs single-strand)
+    # paired-end duplex (DNN per-image CS-family stats present): SSC / duplex-SE / duplex-PE
+    PE_DUPLEX = "pe_duplex"
     NONE = "none"  # neither available: single "all reads" group
 
 
@@ -232,10 +249,12 @@ def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
     if MATE_PRESENT in data_df.columns:
         # duplex-2 (2-slot): the tensorizer emits a per-molecule mate_present (and duplex_concordant) directly.
         data_df[MATE_PRESENT] = data_df[MATE_PRESENT].fillna(0).astype(bool)
+        _assign_pe_duplex_group(data_df)
         return data_df
 
     if not (has_nf_nr and CS_FAMILY in data_df.columns):
         data_df[MATE_PRESENT] = False
+        _assign_pe_duplex_group(data_df)
         return data_df
 
     # PE-consensus run (identified by the CS family tag). CS only says the reads are PE consensus; it does
@@ -248,7 +267,37 @@ def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
     else:
         logger.warning("PE-consensus featuremap has no DS tag; cannot identify full duplex -> mate_present=False")
         data_df[MATE_PRESENT] = False
+    _assign_pe_duplex_group(data_df)
     return data_df
+
+
+def _assign_pe_duplex_group(data_df: pd.DataFrame) -> None:
+    """Assign the ``pe_duplex_group`` column (SSC / duplex SE / duplex PE) in place, when the DNN
+    per-image CS-family stats are present (paired-end duplex data).
+
+    Grouping (singletons excluded by mapping to ``DUPLEX_MOL_SINGLETON``, which is not a display group):
+
+    - ``cs_family_size <= 1`` -> singleton (excluded from the display groups).
+    - not ``mate_present`` (DS != 2)                 -> SSC (single-strand consensus).
+    - ``mate_present`` and ``cs_n_crossing <= 2``    -> duplex SE (both strands of one PE end).
+    - ``mate_present`` and ``cs_n_crossing >= 3``    -> duplex PE (both PE ends cover the variant).
+
+    No-op when ``cs_n_crossing``/``cs_family_size`` are absent (non-pe-duplex data).
+    """
+    if CS_N_CROSSING not in data_df.columns or CS_FAMILY_SIZE not in data_df.columns:
+        return
+    cross = pd.to_numeric(data_df[CS_N_CROSSING], errors="coerce").fillna(0)
+    fam = pd.to_numeric(data_df[CS_FAMILY_SIZE], errors="coerce").fillna(0)
+    mate = (
+        data_df[MATE_PRESENT].astype(bool)
+        if MATE_PRESENT in data_df.columns
+        else pd.Series(data=False, index=data_df.index)
+    )
+    g = pd.Series(PE_DUPLEX_GROUP_SSC, index=data_df.index, dtype=object)
+    g[mate & (cross <= 2)] = PE_DUPLEX_GROUP_SE  # noqa: PLR2004  (2 reads cross = one PE end)
+    g[mate & (cross >= 3)] = PE_DUPLEX_GROUP_PE  # noqa: PLR2004  (>=3 reads cross = both PE ends)
+    g[fam <= 1] = DUPLEX_MOL_SINGLETON  # excluded from PE_DUPLEX_GROUPS -> dropped by group_masks
+    data_df[PE_DUPLEX_GROUP] = g
 
 
 def add_read_group_column(data_df: pd.DataFrame, mode: ReportMode) -> pd.DataFrame:

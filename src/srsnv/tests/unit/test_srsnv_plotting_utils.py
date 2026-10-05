@@ -896,7 +896,8 @@ def test_snvq_thresholds_duplex_adds_80(consensus_resources, real_models_calc_ru
 
 def test_by_class_hmer_indel_stats(consensus_resources, real_models_calc_run_info):
     """plot_hmer_indel_by_class writes the hmer_indel_class_stats h5 (with a median_snvq column);
-    lines are ins/del only (no duplex concordant/discordant split)."""
+    lines split by the active read-split groups (e.g. duplex molecule / single-strand consensus) in
+    addition to ins/del, when a multi-group read_group is present."""
     df, metadata = consensus_resources
     dfd = _add_duplex_columns(_add_hmer_variant_columns(df))  # noqa: PD901
     with tempfile.TemporaryDirectory() as temp_output_dir:
@@ -907,7 +908,10 @@ def test_by_class_hmer_indel_stats(consensus_resources, real_models_calc_run_inf
             os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5"), key="hmer_indel_class_stats"
         )
         assert "median_snvq" in stats.columns
-        assert set(stats["read_group"]) == {"all"}
+        rg = set(stats["read_group"])
+        # duplex data has >1 read group -> lines are split by group (not the single "all" fallback)
+        assert rg and rg != {"all"}
+        assert rg.issubset(set(report._display_variant.groups))
         assert os.path.exists(by_class + ".png")
 
 
@@ -953,7 +957,7 @@ def test_hmer_indel_context_plot(consensus_resources, real_models_calc_run_info)
         table = pd.read_hdf(h5_file, key="hmer_indel_context_stats")
         assert set(table["ins_del"]) <= {"ins", "del"}
         assert set(table["hmer_base"]) <= set("ACGT")
-        assert table["hmer_len"].max() <= 6  # clipped to the >=6 bucket  # noqa: PLR2004
+        assert table["hmer_len"].max() <= 10  # clipped to the >=10 bucket  # noqa: PLR2004
         assert "read_group" in table.columns
         assert (table["n_TP"] >= 0).all() and (table["n_FP"] >= 0).all()
         assert os.path.exists(ctx + ".png")
@@ -973,3 +977,65 @@ def test_hmer_indel_section_skipped_for_snv_only(consensus_resources, real_model
         if os.path.exists(h5_file):
             with pd.HDFStore(h5_file, "r") as store:
                 assert "/run_quality_summary_table_hmer_indel" not in store.keys()
+
+
+def _add_pe_duplex_columns(df, seed=11):
+    """Add the DNN per-image CS-family stats (+ nf/nr/DS/CS) so the report detects the pe-duplex scheme."""
+    rng = np.random.default_rng(seed)
+    n = len(df)
+    df = df.copy()  # noqa: PD901
+    df["nf"] = rng.integers(0, 4, n)
+    df["nr"] = rng.integers(0, 4, n)
+    df["DS"] = rng.choice([0, 2], n)
+    df["CS"] = [f"cs{i}" for i in range(n)]
+    df["cs_family_size"] = rng.integers(1, 5, n)
+    df["cs_n_crossing"] = rng.integers(1, 5, n)
+    df["cs_n_supporting"] = rng.integers(0, 3, n)
+    df["cs_n_pe_pairs"] = rng.integers(0, 3, n)
+    return df
+
+
+def test_run_info_table_has_cs_family_stats(consensus_resources, real_models_calc_run_info):
+    """Paired-end-duplex run: the per-group run-quality summary gains median CS-family stat rows
+    (family size / crossing / supporting / PE pairs) alongside the SSC / duplex-SE / duplex-PE groups."""
+    df, metadata = consensus_resources
+    dfp = _add_pe_duplex_columns(df)
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        temp_metadata_file = os.path.join(temp_output_dir, "test_metadata.json")
+        with open(temp_metadata_file, "w") as f:
+            json.dump(metadata, f)
+        categorical_features = [feat for feat in metadata["features"] if feat["type"] == "c"]
+        numerical_features = [feat for feat in metadata["features"] if feat["type"] != "c"]
+        params = {
+            "workdir": temp_output_dir,
+            "data_name": "test_run",
+            "categorical_features_names": [feat["name"] for feat in categorical_features],
+            "categorical_features_dict": {f["name"]: list(f["values"].keys()) for f in categorical_features},
+            "numerical_features": [feat["name"] for feat in numerical_features],
+            "fp_regions_bed_file": 1,
+            "num_CV_folds": len(real_models_calc_run_info),
+        }  # no report_mode -> scheme is auto-detected from the columns (pe-duplex via cs_n_crossing)
+        report = SRSNVReport(
+            models=real_models_calc_run_info,
+            data_df=dfp,
+            params=params,
+            out_path=temp_output_dir,
+            srsnv_metadata=temp_metadata_file,
+            base_name="test_",
+            raise_exceptions=True,
+        )
+        assert report.scheme.mode.value == "pe_duplex"
+        report.plot_fq_recall(only_calculate=True)
+        report.calc_run_info_table()
+        summary = pd.read_hdf(
+            os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5"),
+            key="run_quality_summary_table",
+        )
+        row_labels = {idx[0] for idx in summary.index}
+        for expected in (
+            "Median CS family size",
+            "Median reads crossing / CS",
+            "Median reads supporting / CS",
+            "Median PE pairs / CS",
+        ):
+            assert expected in row_labels

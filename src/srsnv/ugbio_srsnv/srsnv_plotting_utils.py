@@ -44,6 +44,10 @@ from ugbio_srsnv.split_scheme import (
     resolve_scheme_and_add_columns,
 )
 from ugbio_srsnv.srsnv_utils import (
+    CS_FAMILY_SIZE,
+    CS_N_CROSSING,
+    CS_N_PE_PAIRS,
+    CS_N_SUPPORTING,
     ET,
     ET_FILLNA,
     FS,
@@ -2009,7 +2013,7 @@ class SRSNVReport:
             }
         return dataset_sizes
 
-    def _calc_run_info_table_by_group(self):
+    def _calc_run_info_table_by_group(self):  # noqa: C901
         """Consensus/none: build run info + quality summary with one column per read group.
 
         Writes the same 5 h5 keys as the binary path; legacy and display tables are identical
@@ -2074,6 +2078,25 @@ class SRSNVReport:
         performance_info[("ROC AUC (Phred)", "All reads")] = signif(roc_auc_phred, SIG_DIGITS)
         for label in groups:
             performance_info[("ROC AUC (Phred)", label)] = signif(grp_roc[label], SIG_DIGITS)
+
+        # Paired-end duplex per-image CS-family stats: median per group (and overall), when present.
+        cs_stat_rows = (
+            ("Median CS family size", CS_FAMILY_SIZE),
+            ("Median reads crossing / CS", CS_N_CROSSING),
+            ("Median reads supporting / CS", CS_N_SUPPORTING),
+            ("Median PE pairs / CS", CS_N_PE_PAIRS),
+        )
+        group_masks = dict(self._group_masks())
+        for row_label, col in cs_stat_rows:
+            if col not in self.data_df.columns:
+                continue
+            col_num = pd.to_numeric(self.data_df[col], errors="coerce")
+            performance_info[(row_label, "All reads")] = signif(col_num.median(), SIG_DIGITS)
+            for label in groups:
+                mask = group_masks.get(label)
+                performance_info[(row_label, label)] = (
+                    signif(col_num[mask].median(), SIG_DIGITS) if mask is not None else np.nan
+                )
 
         training_info = {("Number of CV folds", ""): self.params["num_CV_folds"]}
         dataset_sizes = self.get_dataset_sizes()
@@ -3366,8 +3389,16 @@ class SRSNVReport:
             },
             index=ind.index,
         )
-        # Duplex concordant/discordant split removed: hmer-indel lines are ins/del only (single "all" group).
+        # Split the lines by the active read-split groups when present (e.g. paired-end duplex:
+        # SSC / duplex SE / duplex PE), in addition to ins vs del. Falls back to a single "all" group
+        # (ins/del only) when there is no multi-group read_group column (non-duplex runs).
         group_masks = None
+        if READ_GROUP in ind.columns:
+            rg = ind[READ_GROUP]
+            cats = list(rg.cat.categories) if isinstance(rg.dtype, pd.CategoricalDtype) else list(rg.dropna().unique())
+            present = [c for c in cats if (rg == c).to_numpy().any()]
+            if len(present) > 1:
+                group_masks = [(c, (rg == c).to_numpy()) for c in present]
         if group_masks is None:
             base["read_group"] = "all"
             groups = ["all"]
@@ -3606,7 +3637,7 @@ class SRSNVReport:
 
     # hmer-indel context figure layout constants (trinuc-style): 4 hmer-base blocks, each base-before
     # group spans base-after x length; length capped for readability.
-    _HMER_CTX_LENS = list(range(1, 7))  # hmer length 1..6 (>=6 folded into 6)
+    _HMER_CTX_LENS = list(range(1, 11))  # hmer length 1..10 (>=10 folded into 10)
 
     def _hmer_indel_context_df(self) -> pd.DataFrame | None:
         """Tidy per-(context, read-group) aggregation for the hmer-indel context figure.
@@ -3614,7 +3645,7 @@ class SRSNVReport:
         Context dimensions (all from snvfind, geometry-correct for real + synthetic records):
         - ins/del      : ``X_IC``
         - hmer base    : ``X_HMER_BASE`` (the repeated base of the affected run)
-        - hmer length  : ``X_HMER_RUN``  (affected reference run length; capped at 6)
+        - hmer length  : ``X_HMER_RUN``  (affected reference run length; capped at 10)
         - base-before  : ``X_HMER_PRE``  (reference base 5' of the run)
         - base-after   : ``X_HMER_POST`` (reference base 3' of the run)
         One row per (ins/del, hmer base, base-before, base-after, hmer length, read group) with n_TP /
@@ -3643,7 +3674,7 @@ class SRSNVReport:
             {
                 "ins_del": ind[X_IC].astype(str).str.lower(),
                 "hmer_base": ind[X_HMER_BASE].astype(str).str.upper(),
-                "hmer_len": pd.to_numeric(ind[X_HMER_RUN], errors="coerce").clip(lower=1, upper=6),
+                "hmer_len": pd.to_numeric(ind[X_HMER_RUN], errors="coerce").clip(lower=1, upper=10),
                 "base_before": ind[X_HMER_PRE].astype(str).str.upper(),
                 "base_after": ind[X_HMER_POST].astype(str).str.upper(),
                 "read_group": group.to_numpy(),
