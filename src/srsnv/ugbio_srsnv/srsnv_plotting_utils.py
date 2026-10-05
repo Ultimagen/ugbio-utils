@@ -3360,7 +3360,7 @@ class SRSNVReport:
             )
 
     @exception_handler
-    def plot_hmer_indel_by_class(self, output_filename: str = None):
+    def plot_hmer_indel_by_class(self, output_filename: str = None):  # noqa: PLR0915
         """Homopolymer-indel TP SNVQ + count by indel class (ins/del) and affected homopolymer run length.
 
         Bins by ``X_HMER_RUN`` (the length of the reference homopolymer run the indel actually
@@ -3418,14 +3418,21 @@ class SRSNVReport:
         stats.to_hdf(self.output_h5_filename, key="hmer_indel_class_stats", mode="a")
         fig, axes = plt.subplots(1, 2, figsize=(15, 5))
         group_colors = dict(zip(groups, sns.color_palette(n_colors=len(groups)), strict=False))
+        # Distinguish indel class by BOTH linestyle and marker (solid circle = insertion, dashed X =
+        # deletion) and spell the class out in the legend, so ins vs del is unambiguous even when the
+        # read-group color split adds many lines (dashed-vs-solid alone reads poorly in the legend).
         class_ls = {"ins": "-", "del": "--"}
+        class_marker = {"ins": "o", "del": "X"}
+        class_label = {"ins": "insertion", "del": "deletion"}
         for (g, cls_name), grp_rows in stats.groupby(["read_group", "indel_class"], observed=True):
             srt = grp_rows.sort_values("hmer_length")
             color = group_colors.get(g, "black")
             ls = class_ls.get(cls_name, "-")
-            lbl = cls_name if groups == ["all"] else f"{g} · {cls_name}"
-            axes[0].plot(srt["hmer_length"], srt["median_snvq"], marker="o", ls=ls, color=color, label=lbl)
-            axes[1].plot(srt["hmer_length"], srt["count"], marker="o", ls=ls, color=color, label=lbl)
+            mk = class_marker.get(cls_name, "o")
+            cls_full = class_label.get(cls_name, cls_name)
+            lbl = cls_full if groups == ["all"] else f"{g} · {cls_full}"
+            axes[0].plot(srt["hmer_length"], srt["median_snvq"], marker=mk, ls=ls, color=color, label=lbl)
+            axes[1].plot(srt["hmer_length"], srt["count"], marker=mk, ls=ls, color=color, label=lbl)
         axes[0].set_xlabel("affected homopolymer run length")
         axes[0].set_ylabel("median SNVQ (TP)")
         axes[0].set_title("median SNVQ by class")
