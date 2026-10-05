@@ -147,6 +147,8 @@ class TestRunJalign:
 
         # Validate successful execution
         assert exit_code == 0, "run_jalign should exit successfully with multiple threads"
+        assert not list(tmp_path.glob("jalign_realigned_*")), "temporary BAMs must be removed"
+        assert not list(tmp_path.glob("jalign_chr*")), "per-CNV alignment files must be removed"
 
         # Validate output files exist
         assert os.path.exists(output_vcf), f"Output VCF not found: {output_vcf}"
@@ -169,6 +171,44 @@ class TestRunJalign:
             rg_ids = {rg["ID"] for rg in bam.header["RG"]}
             expected_rgs = {"REF1", "REF2", "DUP", "DEL"}
             assert expected_rgs.issubset(rg_ids)
+
+    def test_run_jalign_fails_when_realigned_reads_are_lost(self, tmp_path, resources_dir, mock_para_jalign):
+        """If the merged temporary BAMs hold fewer reads than the workers reported, the run fails."""
+        input_cram = pjoin(resources_dir, "test.jalign.cram")
+        cnv_vcf = pjoin(resources_dir, "test.jalign.vcf.gz")
+        ref_fasta = pjoin(resources_dir, "chr1.3M.fasta.gz")
+        output_prefix = str(tmp_path / "test_output_lost_reads")
+        real_process_single_cnv = run_jalign.process_single_cnv
+
+        def over_report(*args, **kwargs):
+            result = list(real_process_single_cnv(*args, **kwargs))
+            if result[9]:
+                result[10] += 1  # claim one read more than was written
+            return tuple(result)
+
+        with (
+            patch("subprocess.run", side_effect=mock_para_jalign),
+            patch("shutil.which", return_value="/usr/bin/para_jalign"),
+            patch.object(run_jalign, "process_single_cnv", side_effect=over_report),
+        ):
+            exit_code = run_jalign.main(
+                [
+                    input_cram,
+                    cnv_vcf,
+                    ref_fasta,
+                    output_prefix,
+                    "--min-mismatches",
+                    "1",
+                    "--softclip-threshold",
+                    "20",
+                    "--threads",
+                    "1",
+                    "--tool-path",
+                    "para_jalign",
+                ]
+            )
+
+        assert exit_code == 1
 
     def test_run_jalign_keeps_failed_records(self, tmp_path, resources_dir, mock_para_jalign):
         """A CNV whose alignment fails is written without JALIGN_* fields, not dropped."""

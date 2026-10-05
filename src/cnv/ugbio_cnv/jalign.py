@@ -1106,8 +1106,10 @@ def process_cnv(
         counts = _count_supporting_alignments(result_df, config)
     finally:
         # Clean up temporary files
-        input_file.unlink(missing_ok=True)
-        output_file.unlink(missing_ok=True)
+        if input_file.exists():
+            input_file.unlink()
+        if output_file.exists():
+            output_file.unlink()
 
     if log_file:
         log_file.write(f"<<< alignments: {chrom}:{start}-{end}\n")

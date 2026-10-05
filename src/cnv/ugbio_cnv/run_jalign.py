@@ -12,6 +12,7 @@ import shutil
 import sys
 import time
 from functools import partial
+from multiprocessing import util as mp_util
 from pathlib import Path
 
 import pandas as pd
@@ -19,6 +20,33 @@ import pyfaidx
 import pysam
 from ugbio_cnv.jalign import JAlignConfig, create_bam_header, process_cnv
 from ugbio_core.logger import logger
+
+# Each process appends the realigned reads of all its CNVs to one temporary BAM, instead of
+# writing one file per CNV (tens of thousands of files on the run storage)
+_worker_bam = None
+_worker_bam_path = None
+
+
+def _get_worker_bam(temp_dir: Path, bam_header: pysam.AlignmentHeader) -> pysam.AlignmentFile:
+    """Return this process's temporary BAM, opening it on first use.
+
+    The BAM is closed by _close_worker_bam, which multiprocessing runs when a pool worker
+    exits cleanly (pool.close() + pool.join()).
+    """
+    global _worker_bam, _worker_bam_path  # noqa: PLW0603
+    if _worker_bam is None:
+        _worker_bam_path = temp_dir / f"jalign_realigned_worker_{os.getpid()}.bam"
+        _worker_bam = pysam.AlignmentFile(str(_worker_bam_path), "wb", header=bam_header)
+        mp_util.Finalize(None, _close_worker_bam, exitpriority=10)
+    return _worker_bam
+
+
+def _close_worker_bam() -> None:
+    """Close this process's temporary BAM, if it is open."""
+    global _worker_bam  # noqa: PLW0603
+    if _worker_bam is not None:
+        _worker_bam.close()
+        _worker_bam = None
 
 
 def process_single_cnv(
@@ -49,7 +77,7 @@ def process_single_cnv(
 
     Returns
     -------
-    tuple of (int, str, int, int, int, int, int, int, pd.DataFrame or None, Path or None, float, bool, str or None)
+    tuple of (int, str, int, int, int, int, int, int, pd.DataFrame or None, Path or None, int, float, bool, str or None)
         Results tuple containing:
         - idx : int - CNV record index
         - chrom : str - Chromosome name
@@ -60,7 +88,8 @@ def process_single_cnv(
         - fwd_strong_better : int - Number of reads strongly supporting deletion
         - rev_strong_better : int - Number of reads strongly supporting duplication
         - alignment_results : pd.DataFrame or None - Detailed alignment statistics
-        - temp_bam_file : Path or None - Path to temporary BAM file with realigned reads
+        - worker_bam_file : Path or None - This worker's temporary BAM, holding the realigned reads
+        - n_realigned : int - Number of realigned reads written to worker_bam_file for this CNV
         - cycle_time : float - Processing time in seconds
         - success : bool - Whether processing succeeded
         - error_msg : str or None - Error message if processing failed, None otherwise
@@ -68,8 +97,8 @@ def process_single_cnv(
     Notes
     -----
     - Each parallel worker creates its own pysam.AlignmentFile and pyfaidx.Fasta handles
-    - Temporary BAM files are named with PID and index to avoid collisions. This is preferred
-      instead of pysam.AlignedSegment due to pickling issues with multiprocessing.
+    - Realigned reads are written to a per-process temporary BAM (named with the PID) instead of
+      being returned, due to pickling issues of pysam.AlignedSegment with multiprocessing.
     - File handles are explicitly closed after processing to prevent resource leaks
     """
     idx, chrom, start, end = rec_data
@@ -108,13 +137,13 @@ def process_single_cnv(
 
         cycle_time = time.time() - cycle_start_time
 
-        # Write realigned reads to temporary BAM file
-        temp_bam_file = None
+        # Append realigned reads to this worker's temporary BAM
+        worker_bam_file = None
         if realigned_reads:
-            temp_bam_file = temp_dir / f"jalign_realigned_{chrom}_{start}_{end}_{os.getpid()}_{idx}.bam"
-            with pysam.AlignmentFile(str(temp_bam_file), "wb", header=bam_header) as temp_bam:
-                for read in realigned_reads:
-                    temp_bam.write(read)
+            worker_bam = _get_worker_bam(temp_dir, bam_header)
+            for read in realigned_reads:
+                worker_bam.write(read)
+            worker_bam_file = _worker_bam_path
 
         # Close files
         reads_file.close()
@@ -129,14 +158,15 @@ def process_single_cnv(
             fwd_strong_better,
             rev_strong_better,
             alignment_results,
-            temp_bam_file,
+            worker_bam_file,
+            len(realigned_reads),
             cycle_time,
             True,
             None,
         )
 
     except Exception as e:
-        return (idx, chrom, start, end, 0, 0, 0, 0, None, None, 0.0, False, str(e))
+        return (idx, chrom, start, end, 0, 0, 0, 0, None, None, 0, 0.0, False, str(e))
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -407,9 +437,17 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                 temp_dir=temp_dir,
             )
 
-            # Process in parallel using multiprocessing
-            with mp.Pool(processes=args.threads) as pool:
+            # Process in parallel using multiprocessing. close() + join() rather than terminate(),
+            # so that each worker exits cleanly and closes its temporary BAM
+            pool = mp.Pool(processes=args.threads)
+            try:
                 processing_results = pool.map(worker_func, [rec_data for _, rec_data in cnv_records])
+                pool.close()
+            except BaseException:
+                pool.terminate()
+                raise
+            finally:
+                pool.join()
         else:
             logger.info("Processing sequentially (single thread)")
             # Process CNVs sequentially
@@ -423,13 +461,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                     temp_dir,
                 )
                 processing_results.append(result)
+            _close_worker_bam()
 
         # Write results
         logger.info("Writing results...")
         cnv_count = 0
         failed_count = 0
         alignment_results_list = []
-        temp_bam_files = []
+        worker_bam_files = set()
+        expected_reads = 0
 
         with pysam.VariantFile(output_vcf, "w", header=vcf_header) as out_vcf:
             with pysam.AlignmentFile(realigned_bam, "wb", header=bam_header) as realigned_bam_file:
@@ -444,7 +484,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                         fwd_strong_better,
                         rev_strong_better,
                         alignment_results,
-                        temp_bam_file,
+                        worker_bam_file,
+                        n_realigned,
                         cycle_time,
                         success,
                         error_msg,
@@ -457,14 +498,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                         rec.info["JALIGN_DUP_SUPPORT_STRONG"] = rev_strong_better
                         rec.info["JALIGN_DEL_SUPPORT_STRONG"] = fwd_strong_better
 
-                        # Read and write realigned reads from temporary BAM file
-                        read_count = 0
-                        if temp_bam_file and temp_bam_file.exists():
-                            with pysam.AlignmentFile(temp_bam_file, "rb") as temp_bam:
-                                for read in temp_bam:
-                                    realigned_bam_file.write(read)
-                                    read_count += 1
-                            temp_bam_files.append(temp_bam_file)
+                        if worker_bam_file:
+                            worker_bam_files.add(worker_bam_file)
+                            expected_reads += n_realigned
 
                         out_vcf.write(rec)
                         cnv_count += 1
@@ -473,7 +509,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                         logger.info(
                             f"{chrom}:{start}-{end} - DUP:{rev_better}/{rev_strong_better} "
                             f"DEL:{fwd_better}/{fwd_strong_better} - "
-                            f"Realigned reads: {read_count} - Time: {cycle_time:.2f}s"
+                            f"Realigned reads: {n_realigned} - Time: {cycle_time:.2f}s"
                         )
                     else:
                         # Keep the CNV, without JALIGN_* annotations, so a jalign failure
@@ -482,17 +518,29 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                         failed_count += 1
                         logger.error(f"Error processing {chrom}:{start}-{end}: {error_msg}")
 
+                # Merge the workers' temporary BAMs; every realigned read reported by a worker must be there
+                merged_reads = 0
+                for worker_bam_file in sorted(worker_bam_files):
+                    with pysam.AlignmentFile(str(worker_bam_file), "rb") as worker_bam:
+                        for read in worker_bam:
+                            realigned_bam_file.write(read)
+                            merged_reads += 1
+                if merged_reads != expected_reads:
+                    raise RuntimeError(
+                        f"Merged {merged_reads} realigned reads from {len(worker_bam_files)} temporary BAMs, "
+                        f"but workers reported {expected_reads}"
+                    )
+                logger.info(f"Merged {merged_reads} realigned reads from {len(worker_bam_files)} temporary BAMs")
+
         # Close files
         reads_file.close()
         reference.close()
 
-        # Clean up temporary BAM files. missing_ok: on network run storage (NFS/EFS) unlink can
-        # report ENOENT for a file that was just removed, which must not fail the task.
-        for temp_bam_file in temp_bam_files:
-            if temp_bam_file:
-                temp_bam_file.unlink(missing_ok=True)
+        # Clean up temporary BAM files
+        for worker_bam_file in worker_bam_files:
+            worker_bam_file.unlink()
 
-        logger.info(f"Cleaned up {len(temp_bam_files)} temporary BAM files")
+        logger.info(f"Cleaned up {len(worker_bam_files)} temporary BAM files")
 
         # Save alignment results
         if alignment_results_list:
