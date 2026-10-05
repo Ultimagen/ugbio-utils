@@ -117,8 +117,11 @@ analyze_cnv_breakpoint_reads \
   --reference-fasta Homo_sapiens_assembly38.fasta
 ```
 
-By default only split reads count. With `--paired-end`, discordant pairs count too, in the same
-`CNV_*_READS` / `CNV_*_FRAC` fields. Each fragment votes once, and split evidence outranks pair evidence.
+By default only split reads count. With `--paired-end`, discordant pairs count too, in their own fields:
+`CNV_DUP_PAIRS` / `CNV_DEL_PAIRS`, `CNV_*_PAIRS_FRAC` (over `CNV_TOTAL_READS`) and `*_PAIRS_MEDIAN_SPAN`.
+`CNV_*_READS`, `CNV_*_FRAC` and `*_READS_MEDIAN_INSERT_SIZE` stay split-read only. Each fragment votes at
+most once per kind of evidence, so a fragment with both a split read and a discordant pair counts in both.
+Single-end output is unchanged.
 
 ```bash
 analyze_cnv_breakpoint_reads \

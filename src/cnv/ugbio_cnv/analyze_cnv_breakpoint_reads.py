@@ -5,8 +5,9 @@ This script analyzes reads at CNV breakpoints to identify supporting evidence fo
 duplications and deletions based on read orientation and position patterns. It takes
 a VCF file as input and outputs an annotated VCF with breakpoint evidence in INFO fields.
 
-With --paired-end, discordant read pairs are counted too, folded into the same INFO fields: one vote
-per fragment, split outranking pair. Pair mates go to the evidence BAM under read group PAIR.
+With --paired-end, discordant read pairs are counted too, in their own INFO fields (CNV_*_PAIRS,
+CNV_*_PAIRS_FRAC, *_PAIRS_MEDIAN_SPAN): each fragment votes at most once per kind of evidence, and the
+CNV_*_READS fields stay split-read only. Pair mates go to the evidence BAM under read group PAIR.
 """
 
 import argparse
@@ -46,6 +47,11 @@ class BreakpointEvidence:
     del_insert_sizes: list[int] = field(default_factory=list)
     supporting_reads: list[tuple[pysam.AlignedSegment, str]] = field(default_factory=list)
     supplementary_reads: dict[tuple[str, int], list[pysam.AlignedSegment]] = field(default_factory=dict)
+    # Discordant read pair evidence, populated only in paired-end mode
+    duplication_pairs: int = 0
+    deletion_pairs: int = 0
+    dup_pair_spans: list[int] = field(default_factory=list)
+    del_pair_spans: list[int] = field(default_factory=list)
 
     @property
     def dup_median_insert_size(self) -> float | None:
@@ -60,6 +66,16 @@ class BreakpointEvidence:
         if len(self.del_insert_sizes) < 1:
             return None
         return median(self.del_insert_sizes)
+
+    @property
+    def dup_median_pair_span(self) -> float | None:
+        """Median span of duplication-supporting read pairs."""
+        return median(self.dup_pair_spans) if self.dup_pair_spans else None
+
+    @property
+    def del_median_pair_span(self) -> float | None:
+        """Median span of deletion-supporting read pairs."""
+        return median(self.del_pair_spans) if self.del_pair_spans else None
 
 
 @dataclass(frozen=True)
@@ -92,7 +108,8 @@ class _EvidenceVotes:
     sizes : list[int]
         Event lengths measured by the voting alignments: breakpoint distance for split reads, span for pairs
     alignments : list[pysam.AlignedSegment]
-        The voting alignments, written to the evidence BAM if this evidence wins the fragment's vote
+        The voting alignments; pair alignments are written to the evidence BAM only if the fragment has no
+        split vote
     """
 
     labels: set[str] = field(default_factory=set)
@@ -601,11 +618,16 @@ def check_pair_cnv_consistency(
 
     if not _pair_mates_flank_deleted_segment(read, interval_start, interval_end, cushion):
         return False, False, None
-    # The span overstates the deleted length by about one insert size; split estimates take precedence
+    # The span overstates the deleted length by about one insert size
     return False, True, span
 
 
-def _annotate_vcf_record_with_evidence(record: pysam.VariantRecord, evidence: BreakpointEvidence) -> None:
+def _annotate_vcf_record_with_evidence(
+    record: pysam.VariantRecord,
+    evidence: BreakpointEvidence,
+    *,
+    paired_end: bool = False,
+) -> None:
     """
     Annotate a VCF record with CNV breakpoint evidence.
 
@@ -615,6 +637,8 @@ def _annotate_vcf_record_with_evidence(record: pysam.VariantRecord, evidence: Br
         VCF record to annotate
     evidence : BreakpointEvidence
         Breakpoint evidence data to add to record
+    paired_end : bool, optional
+        Also write the discordant read pair fields (default: False)
     """
     # Add new INFO fields directly to the record
     record.info["CNV_DUP_READS"] = evidence.duplication_reads
@@ -635,6 +659,27 @@ def _annotate_vcf_record_with_evidence(record: pysam.VariantRecord, evidence: Br
     record.info["DEL_READS_MEDIAN_INSERT_SIZE"] = (
         evidence.del_median_insert_size if evidence.del_median_insert_size is not None else 0.0
     )
+
+    if not paired_end:
+        return
+    record.info["CNV_DUP_PAIRS"] = evidence.duplication_pairs
+    record.info["CNV_DEL_PAIRS"] = evidence.deletion_pairs
+    total = evidence.total_reads
+    record.info["CNV_DUP_PAIRS_FRAC"] = evidence.duplication_pairs / total if total > 0 else 0.0
+    record.info["CNV_DEL_PAIRS_FRAC"] = evidence.deletion_pairs / total if total > 0 else 0.0
+    dup_span, del_span = evidence.dup_median_pair_span, evidence.del_median_pair_span
+    record.info["DUP_PAIRS_MEDIAN_SPAN"] = dup_span if dup_span is not None else 0.0
+    record.info["DEL_PAIRS_MEDIAN_SPAN"] = del_span if del_span is not None else 0.0
+
+
+def _add_pair_info_fields(hdr: pysam.VariantHeader) -> None:
+    """Add the discordant read pair INFO fields written in paired-end mode to a VCF header."""
+    hdr.info.add("CNV_DUP_PAIRS", "1", "Integer", "Number of discordant read pairs supporting duplication")
+    hdr.info.add("CNV_DEL_PAIRS", "1", "Integer", "Number of discordant read pairs supporting deletion")
+    hdr.info.add("CNV_DUP_PAIRS_FRAC", "1", "Float", "Fraction of fragments with read pairs supporting duplication")
+    hdr.info.add("CNV_DEL_PAIRS_FRAC", "1", "Float", "Fraction of fragments with read pairs supporting deletion")
+    hdr.info.add("DUP_PAIRS_MEDIAN_SPAN", "1", "Float", "Median span of duplication-supporting read pairs")
+    hdr.info.add("DEL_PAIRS_MEDIAN_SPAN", "1", "Float", "Median span of deletion-supporting read pairs")
 
 
 def _process_primary_read_for_evidence(
@@ -754,30 +799,29 @@ def _collect_reads_from_region(
     )
 
 
-def _get_fragment_vote(
+def _get_fragment_votes(
     read: pysam.AlignedSegment,
     alignment_file: pysam.AlignmentFile,
     interval: tuple[int, int, int],
     pe_config: PairedEndConfig,
-) -> tuple[bool, str, int | None] | None:
+) -> list[tuple[bool, str, int | None]]:
     """
-    Classify one alignment's split-read and discordant-pair evidence.
+    Classify one alignment's split-read and discordant-pair evidence, each on its own.
 
     Returns
     -------
-    tuple[bool, str, int | None] | None
-        (from_split, "DUP"/"DEL", event length), or None if the alignment casts no vote
+    list[tuple[bool, str, int | None]]
+        (from_split, "DUP"/"DEL", event length) for each kind of evidence the alignment votes with
     """
     start, end, cushion = interval
-
-    is_dup, is_del, size = _process_read_for_cnv_evidence(read, alignment_file, start, end, cushion)
-    from_split = True
-    if not (is_dup or is_del):  # Split evidence outranks pair evidence, so the pair is tested only without it
-        is_dup, is_del, size = check_pair_cnv_consistency(read, start, end, cushion, pe_config)
-        from_split = False
-    if not (is_dup or is_del):
-        return None
-    return from_split, "DUP" if is_dup else "DEL", size
+    votes = []
+    for from_split, (is_dup, is_del, size) in (
+        (True, _process_read_for_cnv_evidence(read, alignment_file, start, end, cushion)),
+        (False, check_pair_cnv_consistency(read, start, end, cushion, pe_config)),
+    ):
+        if is_dup or is_del:
+            votes.append((from_split, "DUP" if is_dup else "DEL", size))
+    return votes
 
 
 def _may_be_fetched_twice(
@@ -800,43 +844,49 @@ def _summarize_fragments(
     """
     Reduce per-fragment votes (keyed on (query_name, RG)) to interval-level evidence counts.
 
-    Each fragment casts at most one DUP/DEL vote, split outranking pair; one whose winning votes disagree
-    counts toward the total only, as does a None (non-voting) fragment. The winning votes' alignments become
-    the supporting reads.
+    Split and pair votes are counted separately: a fragment casts at most one DUP/DEL vote of each kind,
+    none if its votes of that kind disagree. Every fragment, including a None (non-voting) one, counts
+    toward the total. Supporting reads are the split votes' alignments, or the pair votes' alignments for
+    a fragment with no split vote.
     """
     chrom, start, end = interval
-    counts = {"DUP": 0, "DEL": 0}
-    split_sizes: dict[str, list[int]] = {"DUP": [], "DEL": []}
-    pair_sizes: dict[str, list[int]] = {"DUP": [], "DEL": []}
+    counts = {kind: {"DUP": 0, "DEL": 0} for kind in ("split", "pair")}
+    sizes: dict[str, dict[str, list[int]]] = {kind: {"DUP": [], "DEL": []} for kind in ("split", "pair")}
     supporting_reads: list[tuple[pysam.AlignedSegment, str]] = []
 
     for fragment in fragments.values():
         if fragment is None:
             continue
-        from_split = bool(fragment.split.labels)
-        votes = fragment.split if from_split else fragment.pair
-        if len(votes.labels) != 1:
-            continue
-        (label,) = votes.labels
+        for kind, votes in (("split", fragment.split), ("pair", fragment.pair)):
+            if len(votes.labels) != 1:
+                continue
+            (label,) = votes.labels
+            counts[kind][label] += 1
+            if votes.sizes:
+                # One observation per fragment, so a multi-vote fragment cannot outweigh a single-vote one
+                sizes[kind][label].append(round(median(votes.sizes)))
 
-        counts[label] += 1
-        if votes.sizes:
-            # One observation per fragment, so a multi-vote fragment cannot outweigh a single-vote one
-            (split_sizes if from_split else pair_sizes)[label].append(round(median(votes.sizes)))
-        read_group = label if from_split else PAIR_READ_GROUP
-        supporting_reads.extend((read, read_group) for read in votes.alignments)
+        if fragment.split.labels:
+            if len(fragment.split.labels) == 1:
+                (label,) = fragment.split.labels
+                supporting_reads.extend((read, label) for read in fragment.split.alignments)
+        elif len(fragment.pair.labels) == 1:
+            supporting_reads.extend((read, PAIR_READ_GROUP) for read in fragment.pair.alignments)
 
     return BreakpointEvidence(
         chrom=chrom,
         start=start,
         end=end,
-        duplication_reads=counts["DUP"],
-        deletion_reads=counts["DEL"],
+        duplication_reads=counts["split"]["DUP"],
+        deletion_reads=counts["split"]["DEL"],
         total_reads=len(fragments),
-        # Split values are base-pair exact, so pair values are used only where there are none
-        dup_insert_sizes=split_sizes["DUP"] or pair_sizes["DUP"],
-        del_insert_sizes=split_sizes["DEL"] or pair_sizes["DEL"],
+        dup_insert_sizes=sizes["split"]["DUP"],
+        del_insert_sizes=sizes["split"]["DEL"],
         supporting_reads=supporting_reads,
+        duplication_pairs=counts["pair"]["DUP"],
+        deletion_pairs=counts["pair"]["DEL"],
+        dup_pair_spans=sizes["pair"]["DUP"],
+        del_pair_spans=sizes["pair"]["DEL"],
     )
 
 
@@ -883,16 +933,16 @@ def _collect_fragments_from_region(
                     processed_alignments.add(alignment_key)
 
             fragment_key = (str(read.query_name), rg)
-            vote = _get_fragment_vote(read, alignment_file, (start, end, cushion), pe_config)
-            if vote is None:
+            votes = _get_fragment_votes(read, alignment_file, (start, end, cushion), pe_config)
+            if not votes:
                 fragments.setdefault(fragment_key, None)
                 continue
 
             fragment = fragments.get(fragment_key)
             if fragment is None:
                 fragment = fragments[fragment_key] = _FragmentEvidence()
-            from_split, label, size = vote
-            (fragment.split if from_split else fragment.pair).add(read, label, size)
+            for from_split, label, size in votes:
+                (fragment.split if from_split else fragment.pair).add(read, label, size)
 
     except Exception as e:
         logger.warning(f"Error fetching reads for {chrom}:{start}-{end}: {e}")
@@ -1121,7 +1171,7 @@ def _process_variants(
         )
 
         # Annotate VCF record with evidence
-        _annotate_vcf_record_with_evidence(record, evidence)
+        _annotate_vcf_record_with_evidence(record, evidence, paired_end=pe_config is not None and pe_config.enabled)
 
         # Write annotated record
         vcf_out.write(record)
@@ -1190,6 +1240,8 @@ def analyze_cnv_breakpoints(
         hdr.info.add("CNV_DEL_FRAC", "1", "Float", "Fraction of reads supporting deletion")
         hdr.info.add("DUP_READS_MEDIAN_INSERT_SIZE", "1", "Float", "Median insert size of duplication-supporting reads")
         hdr.info.add("DEL_READS_MEDIAN_INSERT_SIZE", "1", "Float", "Median insert size of deletion-supporting reads")
+        if pe_config.enabled:
+            _add_pair_info_fields(hdr)
 
         # Open output VCF with modified header
         if output_file:
@@ -1280,7 +1332,7 @@ def get_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argume
         action="store_true",
         default=False,
         help="Input contains paired-end reads: additionally count discordant read pairs as "
-        "breakpoint evidence, folded into the existing CNV_*_READS/CNV_*_FRAC INFO fields "
+        "breakpoint evidence, in the CNV_*_PAIRS/CNV_*_PAIRS_FRAC/*_PAIRS_MEDIAN_SPAN INFO fields "
         "(default: False, single-end behavior)",
     )
     pe_group.add_argument(

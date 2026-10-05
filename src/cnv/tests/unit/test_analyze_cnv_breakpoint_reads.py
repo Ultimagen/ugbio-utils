@@ -1138,15 +1138,18 @@ def test_check_pair_cnv_consistency_ignores_mate_mapping_quality_tag():
 
 
 def test_both_discordant_mates_count_as_one_fragment(pe_bam_factory):
-    """One fragment casts one vote, however many of its alignments are discordant."""
+    """One fragment casts one pair vote, however many of its alignments are discordant."""
     bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
 
     evidence = _analyze(bam_file, pe_config())
 
     assert evidence.total_reads == 1
-    assert evidence.deletion_reads == 1
-    assert evidence.duplication_reads == 0
-    assert evidence.del_median_insert_size == PE_SPAN
+    assert evidence.deletion_pairs == 1
+    assert evidence.duplication_pairs == 0
+    assert evidence.del_median_pair_span == PE_SPAN
+    # Pair evidence stays out of the split-read fields
+    assert (evidence.deletion_reads, evidence.duplication_reads) == (0, 0)
+    assert evidence.del_median_insert_size is None
     # Both mates enter the evidence BAM, under the pair read group
     assert len(evidence.supporting_reads) == 2
     assert {read_group for _, read_group in evidence.supporting_reads} == {PAIR_READ_GROUP}
@@ -1193,8 +1196,8 @@ def test_conflicting_mates_count_towards_denominator_only(pe_bam_factory):
     assert evidence.supporting_reads == []
 
 
-def test_split_evidence_outranks_pair_evidence_in_one_fragment(pe_bam_factory):
-    """When a fragment has both kinds of evidence it votes once, using the split insert size."""
+def test_fragment_with_split_and_pair_evidence_counts_in_both(pe_bam_factory):
+    """A fragment with both kinds of evidence votes once in each; the BAM gets only its split alignment."""
     primary = _make_pe_mate(
         "frag",
         PE_LEFT_START,
@@ -1214,9 +1217,9 @@ def test_split_evidence_outranks_pair_evidence_in_one_fragment(pe_bam_factory):
 
     assert evidence.total_reads == 1
     assert evidence.deletion_reads == 1
+    assert evidence.deletion_pairs == 1
     assert len(evidence.del_insert_sizes) == 1
-    # The pair estimate is discarded because a split estimate exists for this fragment
-    assert evidence.del_median_insert_size == evidence.del_insert_sizes[0]
+    assert evidence.del_pair_spans == [PE_SPAN]
     # Only the split alignment is written, under its label; the pair-supporting mate is not
     assert len(evidence.supporting_reads) == 1
     read, read_group = evidence.supporting_reads[0]
@@ -1292,7 +1295,7 @@ def test_non_voting_fragments_do_not_allocate_evidence(pe_bam_factory, monkeypat
     evidence = _analyze(bam_file, pe_config())
 
     assert evidence.total_reads == 51
-    assert evidence.deletion_reads == 1
+    assert evidence.deletion_pairs == 1
     assert len(created) == 1  # only the discordant fragment, once for both of its mates
 
 
@@ -1306,7 +1309,7 @@ def test_late_voting_mate_keeps_fragment_order(pe_bam_factory):
     evidence = _analyze(bam_file, pe_config())
 
     assert evidence.total_reads == 2
-    assert evidence.deletion_reads == 2
+    assert evidence.deletion_pairs == 2
     assert [read.query_name for read, _ in evidence.supporting_reads] == ["a", "b"]
 
 
@@ -1417,8 +1420,8 @@ def test_disabled_paired_end_config_ignores_discordant_pairs(pe_bam_factory):
 # --- median insert size ---------------------------------------------------
 
 
-def test_summarize_fragments_prefers_split_values_over_pair_values():
-    """Split values are base-pair exact, so any of them suppress the pair values for that class."""
+def test_summarize_fragments_keeps_split_and_pair_values_apart():
+    """Split votes fill the read fields and pair votes the pair fields; neither falls back to the other."""
     split_dup, pair_dup, pair_del = _FragmentEvidence(), _FragmentEvidence(), _FragmentEvidence()
     split_dup.split.add(_make_pe_mate("a", PE_LEFT_START), "DUP", 100)
     pair_dup.pair.add(_make_pe_mate("b", PE_LEFT_START), "DUP", 400)
@@ -1428,15 +1431,16 @@ def test_summarize_fragments_prefers_split_values_over_pair_values():
 
     evidence = _summarize_fragments(fragments, ("chr1", 1000, 2000))
 
-    assert evidence.dup_insert_sizes == [100]  # a single split value outranks the pair value
-    assert evidence.del_insert_sizes == [800]  # no split values, so the pair value is used
     assert evidence.total_reads == 4
-    assert evidence.duplication_reads == 2
-    assert evidence.deletion_reads == 1
+    assert (evidence.duplication_reads, evidence.deletion_reads) == (1, 0)
+    assert (evidence.duplication_pairs, evidence.deletion_pairs) == (1, 1)
+    assert evidence.dup_insert_sizes == [100]
+    assert evidence.del_insert_sizes == []  # no split DEL vote, and pair spans are not used as a fallback
+    assert (evidence.dup_pair_spans, evidence.del_pair_spans) == ([400], [800])
 
 
 def _write_evidence_bam(bam_file, fasta_file, config):
-    """Run analyze_cnv_breakpoints on the standard DEL interval; return (read group IDs, BAM reads)."""
+    """Run analyze_cnv_breakpoints on the standard DEL interval; return (read group IDs, BAM reads, INFO)."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as vcf_f:
         vcf_path = vcf_f.name
         vcf_f.write("##fileformat=VCFv4.2\n")
@@ -1464,11 +1468,25 @@ def _write_evidence_bam(bam_file, fasta_file, config):
         with pysam.AlignmentFile(output_bam_path, "rb") as bam_out:
             rg_ids = {rg["ID"] for rg in bam_out.header.to_dict()["RG"]}
             reads = list(bam_out)
+        with pysam.VariantFile(output_vcf_path) as vcf_out:
+            info = dict(next(iter(vcf_out)).info)
     finally:
         Path(vcf_path).unlink(missing_ok=True)
         Path(output_vcf_path).unlink(missing_ok=True)
         Path(output_bam_path).unlink(missing_ok=True)
-    return rg_ids, reads
+    return rg_ids, reads, info
+
+
+def test_pair_fields_are_written_in_paired_end_mode(pe_bam_factory, dummy_fasta_file):
+    """The VCF record carries pair counts, fractions and spans next to the unchanged split-read fields."""
+    bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
+
+    _, _, info = _write_evidence_bam(bam_file, dummy_fasta_file, pe_config())
+
+    assert (info["CNV_DEL_PAIRS"], info["CNV_DUP_PAIRS"]) == (1, 0)
+    assert (info["CNV_DEL_PAIRS_FRAC"], info["CNV_DUP_PAIRS_FRAC"]) == (1.0, 0.0)
+    assert (info["DEL_PAIRS_MEDIAN_SPAN"], info["DUP_PAIRS_MEDIAN_SPAN"]) == (PE_SPAN, 0.0)
+    assert (info["CNV_DEL_READS"], info["CNV_DEL_FRAC"], info["DEL_READS_MEDIAN_INSERT_SIZE"]) == (0, 0.0, 0.0)
 
 
 def test_pair_only_support_is_written_under_the_pair_read_group(pe_bam_factory, dummy_fasta_file):
@@ -1479,7 +1497,7 @@ def test_pair_only_support_is_written_under_the_pair_read_group(pe_bam_factory, 
     """
     bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
 
-    rg_ids, reads = _write_evidence_bam(bam_file, dummy_fasta_file, pe_config())
+    rg_ids, reads, _ = _write_evidence_bam(bam_file, dummy_fasta_file, pe_config())
 
     assert {"DUP", "DEL", PAIR_READ_GROUP} <= rg_ids
     assert sorted(read.reference_start for read in reads) == [PE_LEFT_START, PE_RIGHT_START]
@@ -1491,7 +1509,7 @@ def test_single_end_evidence_bam_header_has_no_pair_read_group(pe_bam_factory, d
     """Without paired-end evidence the evidence BAM header is unchanged: no PAIR read group."""
     bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
 
-    rg_ids, reads = _write_evidence_bam(bam_file, dummy_fasta_file, pe_config(enabled=False))
+    rg_ids, reads, _ = _write_evidence_bam(bam_file, dummy_fasta_file, pe_config(enabled=False))
 
     assert rg_ids == {"REF1", "REF2", "DUP", "DEL"}
     assert reads == []
@@ -1501,7 +1519,7 @@ def test_single_end_evidence_bam_header_has_no_pair_read_group(pe_bam_factory, d
 
 
 def test_paired_end_flag_is_harmless_on_single_end_input(dummy_fasta_file, temp_bam_file, temp_vcf_file):
-    """Passing --paired-end on unpaired input leaves the output unchanged: unpaired reads never qualify."""
+    """Passing --paired-end on unpaired input leaves the split-read fields unchanged; the pair fields are 0."""
     with tempfile.NamedTemporaryFile(suffix=".vcf", delete=False) as f:
         pe_output = f.name
     with tempfile.NamedTemporaryFile(suffix=".vcf", delete=False) as f:
@@ -1518,7 +1536,14 @@ def test_paired_end_flag_is_harmless_on_single_end_input(dummy_fasta_file, temp_
                 paired_end_config=config,
             )
 
-        assert Path(se_output).read_text() == Path(pe_output).read_text()
+        pair_fields = ("CNV_DUP_PAIRS", "CNV_DEL_PAIRS", "CNV_DUP_PAIRS_FRAC", "CNV_DEL_PAIRS_FRAC")
+        span_fields = ("DUP_PAIRS_MEDIAN_SPAN", "DEL_PAIRS_MEDIAN_SPAN")
+        with pysam.VariantFile(se_output) as se_vcf, pysam.VariantFile(pe_output) as pe_vcf:
+            assert not set(pair_fields + span_fields) & set(se_vcf.header.info)
+            for se_record, pe_record in zip(se_vcf, pe_vcf, strict=True):
+                pe_info = dict(pe_record.info)
+                assert all(pe_info.pop(name) == 0 for name in pair_fields + span_fields)
+                assert pe_info == dict(se_record.info)
     finally:
         Path(se_output).unlink(missing_ok=True)
         Path(pe_output).unlink(missing_ok=True)

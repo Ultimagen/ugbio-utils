@@ -226,3 +226,54 @@ class TestTransformers:
         ]:
             assert col in result.columns
             assert (result[col] == 0).all()
+
+    @staticmethod
+    def _cnv_df():
+        """One-row CNV dataframe with every single-end feature, and none of the paired-end ones."""
+        return pd.DataFrame(
+            {
+                "svtype": ["DEL"],
+                "pytorq0": [0.1],
+                "pytorp2": [0.2],
+                "pytorrd": [0.3],
+                "pytorp1": [0.4],
+                "pytorp3": [0.5],
+                "gap_percentage": [0.01],
+                "cnv_dup_reads": [10],
+                "cnv_del_reads": [5],
+                "cnv_dup_frac": [0.6],
+                "cnv_del_frac": [0.3],
+                "del_reads_median_insert_size": [100.0],
+                "dup_reads_median_insert_size": [200.0],
+                "jalign_dup_support": [8],
+                "jalign_del_support": [4],
+                "jalign_dup_support_strong": [6],
+                "jalign_del_support_strong": [3],
+                "svlen": [(1000,)],
+                "cn": [2],
+                "copynumber": [3],
+                "cnv_source": [("cn.mops",)],
+                "cipos": [(-100, 100)],
+            }
+        )
+
+    def test_cnv_transformer_uses_pair_fields(self):
+        test_df = self._cnv_df().assign(
+            cnv_dup_pairs=[0],
+            cnv_del_pairs=[7],
+            cnv_dup_pairs_frac=[0.0],
+            cnv_del_pairs_frac=[0.07],
+            dup_pairs_median_span=[None],
+            del_pairs_median_span=[1450.0],
+        )
+        result = get_transformer(VcfType.CNV).fit_transform(test_df)
+        assert result["pair_evidence__cnv_del_pairs"].iloc[0] == 7
+        assert result["pair_evidence__del_pairs_median_span"].iloc[0] == 1450.0
+        assert result["pair_evidence__dup_pairs_median_span"].iloc[0] == 0
+
+    def test_cnv_transformer_fills_absent_pair_fields(self):
+        # Single-end data and training sets built before the pair fields existed have no pair columns
+        result = get_transformer(VcfType.CNV).fit_transform(self._cnv_df())
+        pair_columns = [c for c in result.columns if c.startswith("pair_evidence__")]
+        assert len(pair_columns) == 6
+        assert (result[pair_columns] == 0).all().all()
