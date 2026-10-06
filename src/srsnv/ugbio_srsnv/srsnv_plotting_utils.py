@@ -52,6 +52,7 @@ from ugbio_srsnv.srsnv_utils import (
     ET_FILLNA,
     FS,
     MAX_PHRED,
+    PE_DUPLEX_GROUP,
     READ_GROUP,
     RS,
     ST,
@@ -3236,8 +3237,9 @@ class SRSNVReport:
 
         Covers every scheme's raw group inputs (mixed: is_mixed/_start; consensus: fs/rs; duplex:
         mate_present/is_consensus); a new scheme should add its raw group columns here so its group_fn
-        can run on the sliced frame."""
-        candidates = [IS_MIXED, IS_MIXED_START, FS, RS, MATE_PRESENT, IS_CONSENSUS]
+        can run on the sliced frame. The pe-duplex group_fn reads the pre-assigned ``pe_duplex_group``
+        column directly (it is not recomputed from raw inputs), so include it too."""
+        candidates = [IS_MIXED, IS_MIXED_START, FS, RS, MATE_PRESENT, IS_CONSENSUS, PE_DUPLEX_GROUP]
         return [c for c in candidates if c in self.data_df.columns]
 
     def _plot_logit_variant(self, plot_df, ax, variant, alpha=0.4):
@@ -3390,7 +3392,7 @@ class SRSNVReport:
             index=ind.index,
         )
         # Split the lines by the active read-split groups when present (e.g. paired-end duplex:
-        # SSC / duplex SE / duplex PE), in addition to ins vs del. Falls back to a single "all" group
+        # simplex / duplex SE / duplex PE), in addition to ins vs del. Falls back to a single "all" group
         # (ins/del only) when there is no multi-group read_group column (non-duplex runs).
         group_masks = None
         if READ_GROUP in ind.columns:

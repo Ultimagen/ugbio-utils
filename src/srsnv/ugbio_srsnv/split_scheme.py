@@ -52,8 +52,8 @@ from ugbio_srsnv.srsnv_utils import (
     PE_DUPLEX_GROUP,
     PE_DUPLEX_GROUP_PE,
     PE_DUPLEX_GROUP_SE,
-    PE_DUPLEX_GROUP_SSC_PE,
-    PE_DUPLEX_GROUP_SSC_SE,
+    PE_DUPLEX_GROUP_SIMPLEX_PE,
+    PE_DUPLEX_GROUP_SIMPLEX_SE,
     PE_DUPLEX_GROUPS,
     READ_GROUP,
     RS,
@@ -242,7 +242,7 @@ def _duplex_groups(data_df: pd.DataFrame) -> pd.Categorical:
 
 
 def _pe_duplex_groups(data_df: pd.DataFrame) -> pd.Categorical:
-    """Paired-end-duplex split: SSC / duplex SE / duplex PE (singletons excluded).
+    """Paired-end-duplex split: simplex / duplex SE / duplex PE (singletons excluded).
 
     Reads the per-row ``pe_duplex_group`` column assigned by
     :func:`~ugbio_srsnv.srsnv_utils.add_duplex_columns_to_featuremap_df` from the DNN per-image
@@ -362,7 +362,7 @@ DUPLEX_SCHEME = SplitScheme(
 PE_DUPLEX_SCHEME = SplitScheme(
     mode=ReportMode.PE_DUPLEX,
     # Paired-end duplex: detected by the DNN per-image CS-family stat `cs_n_crossing`. Must be checked
-    # before DUPLEX (nf/nr also present) so the SSC-SE / SSC-PE / duplex-SE / duplex-PE split wins for
+    # before DUPLEX (nf/nr also present) so the simplex-SE / simplex-PE / duplex-SE / duplex-PE split wins for
     # pe-duplex runs.
     detect=lambda cols: CS_N_CROSSING in cols,
     add_columns=_duplex_add_columns,
@@ -373,8 +373,8 @@ PE_DUPLEX_SCHEME = SplitScheme(
             group_fn=_pe_duplex_groups,
             groups=tuple(PE_DUPLEX_GROUPS),
             colors={
-                PE_DUPLEX_GROUP_SSC_SE: "tab:gray",
-                PE_DUPLEX_GROUP_SSC_PE: "tab:purple",
+                PE_DUPLEX_GROUP_SIMPLEX_SE: "tab:gray",
+                PE_DUPLEX_GROUP_SIMPLEX_PE: "tab:purple",
                 PE_DUPLEX_GROUP_SE: "tab:orange",
                 PE_DUPLEX_GROUP_PE: "tab:green",
             },

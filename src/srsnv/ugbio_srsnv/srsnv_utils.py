@@ -124,16 +124,17 @@ CS_FAMILY_SIZE = "cs_family_size"  # reads fetched for the CS (present slots), 1
 CS_N_CROSSING = "cs_n_crossing"  # family reads crossing the variant (focus != PAD; GAP counts)
 CS_N_SUPPORTING = "cs_n_supporting"  # crossing reads carrying the ALT at focus
 CS_N_PE_PAIRS = "cs_n_pe_pairs"  # complete (fwd,rev) pairs present, 0..2
-# PE-duplex display groups: SSC-SE / SSC-PE / duplex-SE / duplex-PE, driven by DS (mate_present) +
-# cs_n_crossing; singletons are excluded (mapped to DUPLEX_MOL_SINGLETON, which is NOT in
-# PE_DUPLEX_GROUPS so the generic group_masks drops them). Ordered by ascending support
-# (single-strand before duplex; within each, one PE end before both).
+# PE-duplex display groups: simplex-SE / simplex-PE / duplex-SE / duplex-PE, driven by DS
+# (mate_present) + cs_n_crossing; singletons are excluded (mapped to DUPLEX_MOL_SINGLETON, which is
+# NOT in PE_DUPLEX_GROUPS so the generic group_masks drops them). Ordered by ascending support
+# (simplex/single-strand before duplex; within each, one PE end before both). "simplex" = a
+# single-strand consensus (DS != 2); "duplex" = both strands (DS == 2).
 PE_DUPLEX_GROUP = "pe_duplex_group"
-PE_DUPLEX_GROUP_SSC_SE = "SSC SE"  # single-strand consensus (DS != 2), 1 read crosses (one PE end)
-PE_DUPLEX_GROUP_SSC_PE = "SSC PE"  # single-strand consensus (DS != 2), 2 reads cross (both PE ends)
+PE_DUPLEX_GROUP_SIMPLEX_SE = "simplex SE"  # single strand (DS != 2), 1 read crosses (one PE end)
+PE_DUPLEX_GROUP_SIMPLEX_PE = "simplex PE"  # single strand (DS != 2), 2 reads cross (both PE ends)
 PE_DUPLEX_GROUP_SE = "duplex SE"  # full duplex (DS==2), 2 reads cross the variant (one PE end)
 PE_DUPLEX_GROUP_PE = "duplex PE"  # full duplex (DS==2), 4 reads cross the variant (both PE ends)
-PE_DUPLEX_GROUPS = [PE_DUPLEX_GROUP_SSC_SE, PE_DUPLEX_GROUP_SSC_PE, PE_DUPLEX_GROUP_SE, PE_DUPLEX_GROUP_PE]
+PE_DUPLEX_GROUPS = [PE_DUPLEX_GROUP_SIMPLEX_SE, PE_DUPLEX_GROUP_SIMPLEX_PE, PE_DUPLEX_GROUP_SE, PE_DUPLEX_GROUP_PE]
 
 # Mixed groups (2), reproducing the historical binary ppmSeq labels/order.
 MIXED_GROUP_NON = "Non-mixed"
@@ -155,7 +156,7 @@ class ReportMode(Enum):
     MIXED = "mixed"  # ppmSeq data: split on mixed vs non-mixed reads (st/et tags)
     CONSENSUS = "consensus"  # consensus data: split on consensus vs non-consensus (fs/rs)
     DUPLEX = "duplex_molecule"  # duplex per-molecule data: split on mate_present (paired vs single-strand)
-    # paired-end duplex (DNN per-image CS-family stats present): SSC / duplex-SE / duplex-PE
+    # paired-end duplex (DNN per-image CS-family stats present): simplex / duplex-SE / duplex-PE
     PE_DUPLEX = "pe_duplex"
     NONE = "none"  # neither available: single "all reads" group
 
@@ -274,20 +275,21 @@ def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _assign_pe_duplex_group(data_df: pd.DataFrame) -> None:
-    """Assign the ``pe_duplex_group`` column (SSC SE / SSC PE / duplex SE / duplex PE) in place, when
-    the DNN per-image CS-family stats are present (paired-end duplex data).
+    """Assign the ``pe_duplex_group`` column (simplex SE / simplex PE / duplex SE / duplex PE) in
+    place, when the DNN per-image CS-family stats are present (paired-end duplex data). "simplex" is a
+    single-strand consensus (DS != 2); "duplex" has both strands (DS == 2).
 
     Grouping (singletons excluded by mapping to ``DUPLEX_MOL_SINGLETON``, which is not a display group):
 
     - ``cs_family_size <= 1`` -> singleton (excluded from the display groups).
-    - not ``mate_present`` (DS != 2), ``cs_n_crossing <= 1`` -> SSC SE (single strand, one PE end).
-    - not ``mate_present`` (DS != 2), ``cs_n_crossing >= 2`` -> SSC PE (single strand, both PE ends).
+    - not ``mate_present`` (DS != 2), ``cs_n_crossing <= 1`` -> simplex SE (single strand, one PE end).
+    - not ``mate_present`` (DS != 2), ``cs_n_crossing >= 2`` -> simplex PE (single strand, both PE ends).
     - ``mate_present`` and ``cs_n_crossing <= 2``            -> duplex SE (both strands of one PE end).
     - ``mate_present`` and ``cs_n_crossing >= 3``            -> duplex PE (both PE ends cover the variant).
 
-    The SSC split mirrors the duplex one halved: a single strand contributes one read per PE end
+    The simplex split mirrors the duplex one halved: a single strand contributes one read per PE end
     (so 1 crossing read = one end = SE, 2 = both ends = PE), whereas a full duplex contributes two
-    (both strands) per end. ``cs_n_pe_pairs`` can't distinguish SSC SE/PE (it is 0 for a single
+    (both strands) per end. ``cs_n_pe_pairs`` can't distinguish simplex SE/PE (it is 0 for a single
     strand, which has no fwd/rev mate), so the crossing count is the discriminator.
 
     No-op when ``cs_n_crossing``/``cs_family_size`` are absent (non-pe-duplex data).
@@ -301,8 +303,8 @@ def _assign_pe_duplex_group(data_df: pd.DataFrame) -> None:
         if MATE_PRESENT in data_df.columns
         else pd.Series(data=False, index=data_df.index)
     )
-    g = pd.Series(PE_DUPLEX_GROUP_SSC_SE, index=data_df.index, dtype=object)  # single strand, one PE end
-    g[~mate & (cross >= 2)] = PE_DUPLEX_GROUP_SSC_PE  # noqa: PLR2004  (single strand, both PE ends)
+    g = pd.Series(PE_DUPLEX_GROUP_SIMPLEX_SE, index=data_df.index, dtype=object)  # single strand, one PE end
+    g[~mate & (cross >= 2)] = PE_DUPLEX_GROUP_SIMPLEX_PE  # noqa: PLR2004  (single strand, both PE ends)
     g[mate & (cross <= 2)] = PE_DUPLEX_GROUP_SE  # noqa: PLR2004  (2 reads cross = one PE end)
     g[mate & (cross >= 3)] = PE_DUPLEX_GROUP_PE  # noqa: PLR2004  (>=3 reads cross = both PE ends)
     g[fam <= 1] = DUPLEX_MOL_SINGLETON  # excluded from PE_DUPLEX_GROUPS -> dropped by group_masks

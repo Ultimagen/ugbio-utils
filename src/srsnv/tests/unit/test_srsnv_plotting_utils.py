@@ -680,6 +680,59 @@ def test_consensus_mode_histograms_run(consensus_resources, real_models_calc_run
             assert k in keys, f"missing {k}"
 
 
+def _make_pe_duplex_report(df, metadata, temp_output_dir, models):
+    """Helper: build an SRSNVReport in paired-end-duplex mode (df must carry the CS-family stats)."""
+    temp_metadata_file = os.path.join(temp_output_dir, "test_metadata.json")
+    with open(temp_metadata_file, "w") as f:
+        json.dump(metadata, f)
+    categorical_features = [f for f in metadata["features"] if f["type"] == "c"]
+    numerical_features = [f for f in metadata["features"] if f["type"] != "c"]
+    params = {
+        "workdir": temp_output_dir,
+        "data_name": "test_run",
+        "categorical_features_names": [f["name"] for f in categorical_features],
+        "categorical_features_dict": {f["name"]: list(f["values"].keys()) for f in categorical_features},
+        "numerical_features": [f["name"] for f in numerical_features],
+        "fp_regions_bed_file": 1,
+        "num_CV_folds": len(models),
+        "report_mode": "pe_duplex",
+    }
+    return SRSNVReport(
+        models=models,
+        data_df=df.copy(),
+        params=params,
+        out_path=temp_output_dir,
+        srsnv_metadata=temp_metadata_file,
+        base_name="test_",
+        raise_exceptions=True,
+    )
+
+
+def test_pe_duplex_logit_histograms_run(consensus_resources, real_models_calc_run_info):
+    """Regression: the pe-duplex logit histogram must not raise and must produce the figure.
+
+    The pe-duplex group_fn reads the pre-assigned ``pe_duplex_group`` column (not recomputed from raw
+    inputs), so it must be carried into the logit-histogram column slice via ``_logit_extra_cols``;
+    otherwise the figure throws ``KeyError: 'pe_duplex_group'`` and the PNG is never written.
+    """
+    base_df, metadata = consensus_resources
+    pe_df = base_df.copy()
+    rng = np.random.default_rng(5)
+    pe_df["DS"] = rng.choice([1, 2], len(pe_df))  # 2 == full duplex; else single-strand (simplex)
+    pe_df["cs_family_size"] = rng.integers(2, 5, len(pe_df))  # >=2 so none drop out as singletons
+    pe_df["cs_n_crossing"] = rng.integers(1, 5, len(pe_df))
+    pe_df["cs_n_supporting"] = rng.integers(0, 3, len(pe_df))
+    pe_df["cs_n_pe_pairs"] = rng.integers(0, 3, len(pe_df))
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_pe_duplex_report(pe_df, metadata, temp_output_dir, real_models_calc_run_info)
+        assert report.report_mode.value == "pe_duplex"
+        assert "pe_duplex_group" in report.data_df.columns
+        assert "pe_duplex_group" in report._logit_extra_cols()
+        out = os.path.join(temp_output_dir, "logit_hist")
+        report.plot_logit_histograms(output_filename=out, plot_by_fold=False)
+        assert os.path.exists(out + ".png")
+
+
 def test_none_mode_graceful(test_resources_calc_run_info, real_models_calc_run_info):
     """With neither ppmSeq tags nor fs/rs, the report runs as a single group (NONE mode)."""
     featuremap_df, metadata, _ = test_resources_calc_run_info

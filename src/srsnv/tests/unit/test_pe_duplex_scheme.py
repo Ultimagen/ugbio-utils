@@ -1,8 +1,8 @@
-"""Unit tests for the paired-end-duplex split scheme (SSC SE / SSC PE / duplex SE / duplex PE).
+"""Unit tests for the paired-end-duplex split scheme (simplex SE / simplex PE / duplex SE / duplex PE).
 
 Covers the pe-duplex grouping driven by the DNN per-image CS-family stats (``cs_n_crossing`` +
 ``DS``/``mate_present``): scheme detection/priority over the generic DUPLEX scheme, the
-SSC-SE / SSC-PE / duplex-SE / duplex-PE assignment, singleton exclusion, and the legacy fallback
+simplex-SE / simplex-PE / duplex-SE / duplex-PE assignment, singleton exclusion, and the legacy fallback
 when the CS stats are absent.
 """
 
@@ -24,8 +24,8 @@ from ugbio_srsnv.srsnv_utils import (
     NR,
     PE_DUPLEX_GROUP_PE,
     PE_DUPLEX_GROUP_SE,
-    PE_DUPLEX_GROUP_SSC_PE,
-    PE_DUPLEX_GROUP_SSC_SE,
+    PE_DUPLEX_GROUP_SIMPLEX_PE,
+    PE_DUPLEX_GROUP_SIMPLEX_SE,
     PE_DUPLEX_GROUPS,
     READ_GROUP,
     ReportMode,
@@ -33,8 +33,8 @@ from ugbio_srsnv.srsnv_utils import (
 
 
 def _pe_duplex_df() -> pd.DataFrame:
-    """One row per group: SSC SE (DS!=2, both PE ends on the single strand so fam==2 but only one
-    crosses -> cross==1), SSC PE (DS!=2 & cross==2), duplex SE (DS==2 & cross==2), duplex PE
+    """One row per group: simplex SE (DS!=2, both PE ends on the single strand so fam==2 but only one
+    crosses -> cross==1), simplex PE (DS!=2 & cross==2), duplex SE (DS==2 & cross==2), duplex PE
     (DS==2 & cross==4), and a singleton (family size 1) that must be excluded from the display groups."""
     return pd.DataFrame(
         {
@@ -69,9 +69,9 @@ def test_pe_duplex_grouping_ssc_se_pe_and_singleton_excluded():
     out, scheme = resolve_scheme_and_add_columns(frame.copy())
     assert scheme is PE_DUPLEX_SCHEME
     rg = list(out[READ_GROUP])
-    # SSC SE / SSC PE / duplex SE / duplex PE for the first four rows; singleton -> NaN (dropped).
-    assert rg[0] == PE_DUPLEX_GROUP_SSC_SE
-    assert rg[1] == PE_DUPLEX_GROUP_SSC_PE
+    # simplex SE / simplex PE / duplex SE / duplex PE for the first four rows; singleton -> NaN (dropped).
+    assert rg[0] == PE_DUPLEX_GROUP_SIMPLEX_SE
+    assert rg[1] == PE_DUPLEX_GROUP_SIMPLEX_PE
     assert rg[2] == PE_DUPLEX_GROUP_SE
     assert rg[3] == PE_DUPLEX_GROUP_PE
     assert pd.isna(rg[4])
@@ -79,8 +79,8 @@ def test_pe_duplex_grouping_ssc_se_pe_and_singleton_excluded():
     masks = scheme.display_variant.group_masks(out)
     assert set(masks) == set(PE_DUPLEX_GROUPS)
     assert {k: int(v.sum()) for k, v in masks.items()} == {
-        PE_DUPLEX_GROUP_SSC_SE: 1,
-        PE_DUPLEX_GROUP_SSC_PE: 1,
+        PE_DUPLEX_GROUP_SIMPLEX_SE: 1,
+        PE_DUPLEX_GROUP_SIMPLEX_PE: 1,
         PE_DUPLEX_GROUP_SE: 1,
         PE_DUPLEX_GROUP_PE: 1,
     }
@@ -95,8 +95,8 @@ def test_duplex_se_boundary_three_crossing_is_pe():
 
 
 def test_ssc_boundary_two_crossing_is_ssc_pe():
-    # single strand (DS!=2): 1 crossing read -> SSC SE, 2 -> SSC PE.
+    # single strand (DS!=2): 1 crossing read -> simplex SE, 2 -> simplex PE.
     frame = _pe_duplex_df()
-    frame.loc[0, CS_N_CROSSING] = 2  # the SSC SE row -> now both ends cross
+    frame.loc[0, CS_N_CROSSING] = 2  # the simplex SE row -> now both ends cross
     out, _ = resolve_scheme_and_add_columns(frame.copy())
-    assert out[READ_GROUP].iloc[0] == PE_DUPLEX_GROUP_SSC_PE
+    assert out[READ_GROUP].iloc[0] == PE_DUPLEX_GROUP_SIMPLEX_PE
