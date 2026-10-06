@@ -55,11 +55,12 @@ MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD: float = 0.01
 # otherwise fall below the Bonferroni threshold even though the filter never acts on it.
 _MIN_READS_TO_QC: int = 2
 
-# Fraction of matched-signature reads with SNVQ == 0 (an SRSNV "unscored" sentinel) above
+# Fraction of matched-signature reads with SNVQ == 0 (an SRSNV "unscored" sentinel) at
 # which the primary read filter (snvq>threshold) starves for a reason unrelated to ctDNA
-# signal — almost certainly an SRSNV scoring failure rather than a clean negative. When
-# reached, the call is forced to Indeterminate regardless of the Binomial outcome.
-MAX_SNVQ_ZERO_FRACTION: float = 0.99
+# signal — almost certainly an SRSNV scoring failure rather than a clean negative. Only
+# triggers when literally zero matched reads received a valid (non-zero) SNVQ score, so
+# the call is forced to Indeterminate regardless of the Binomial outcome.
+MAX_SNVQ_ZERO_FRACTION: float = 1.0
 
 
 @dataclass
@@ -282,9 +283,10 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         Target recall used for the personal LOD calculation (default 0.95).
     matched_snvq_zero_fraction : float, optional
         Fraction of matched-signature reads (before any read filter) with SNVQ == 0.
-        When this reaches ``MAX_SNVQ_ZERO_FRACTION``, the call is forced to Indeterminate
-        with a warning, since the primary read filter is starving due to an apparent SRSNV
-        scoring failure rather than a genuine absence of ctDNA signal.
+        When this reaches ``MAX_SNVQ_ZERO_FRACTION`` (i.e. literally no reads received a
+        valid SNVQ score), the call is forced to Indeterminate with a warning, since the
+        primary read filter is starving due to an apparent SRSNV scoring failure rather
+        than a genuine absence of ctDNA signal.
 
     Returns
     -------
@@ -534,7 +536,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     # Using >= (i.e. p_value <= alpha) gives poor calibration at the boundary
     # where VAF == threshold; strict > excludes that ambiguous boundary read count.
     #
-    # Override: if (nearly) all matched reads have SNVQ == 0 (unscored by SRSNV), the
+    # Override: if ALL matched reads have SNVQ == 0 (unscored by SRSNV), the
     # snvq>threshold read filter starves for a data-quality reason, not because there is
     # no ctDNA signal. Reporting "Not Detected" here would be misleading, so force
     # Indeterminate and surface a warning instead — this takes priority over the ordinary

@@ -327,7 +327,7 @@ class TestComputePersonalLod:
         assert result.call == "Indeterminate", f"Expected Indeterminate when db_control coverage=0, got {result.call}"
 
     def test_snvq_zero_fraction_forces_indeterminate(self, mock_df_tf_not_detected, mock_df_signatures_filt):
-        """All (or nearly all) matched reads with SNVQ=0 must force Indeterminate + warning.
+        """All matched reads with SNVQ=0 must force Indeterminate + warning.
 
         Regression for misleading 'MRD Not Detected' calls caused by an SRSNV scoring
         failure (reads never receiving a valid SNVQ) rather than a genuine absence of
@@ -346,11 +346,11 @@ class TestComputePersonalLod:
     def test_snvq_zero_fraction_below_threshold_does_not_override(
         self, mock_df_tf_not_detected, mock_df_signatures_filt
     ):
-        """A low SNVQ=0 fraction should not affect the ordinary detection call."""
+        """Anything less than literally all reads (e.g. 99%) must not override the call."""
         result = run_detection_analysis(
             df_tf=mock_df_tf_not_detected,
             df_signatures_filt=mock_df_signatures_filt,
-            matched_snvq_zero_fraction=0.5,
+            matched_snvq_zero_fraction=0.99,
         )
         assert result.call == "MRD Not Detected"
         assert result.warning is None
