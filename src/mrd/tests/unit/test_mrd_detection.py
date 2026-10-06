@@ -1,5 +1,8 @@
 """Unit tests for ugbio_mrd.mrd_detection module."""
 
+from types import SimpleNamespace
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -8,6 +11,7 @@ from ugbio_mrd.mrd_detection import (
     DetectionResult,
     compute_sample_specific_lod,
     format_scientific,
+    plot_cohort_scatter,
     run_detection_analysis,
 )
 
@@ -614,6 +618,25 @@ class TestFormatScientific:
     def test_power_of_ten(self):
         result = format_scientific(1e-6)
         assert "10" in result
+
+
+class TestPlotCohortScatter:
+    def test_x_axis_in_k_events(self):
+        detection = SimpleNamespace(matched_ctdna_vaf=1e-5, signature_size=2500, matched_supporting_reads=3)
+        idx = pd.MultiIndex.from_tuples([("control", "c0"), ("control", "c1")], names=["signature_type", "signature"])
+        df_tf = pd.DataFrame({"ctdna_vaf": [1e-6, 2e-6], "supporting_reads": [1, 2]}, index=idx)
+        ctrl_n_loci = pd.Series({"c0": 1000, "c1": 4500})
+
+        _, ax = plt.subplots()
+        plot_cohort_scatter(detection, df_tf, ctrl_n_loci, ax=ax)
+        fig = ax.figure
+        fig.canvas.draw()
+
+        assert ax.get_xlabel() == "Signature size (k events)"
+        labels = [t.get_text() for t in ax.get_xticklabels() if t.get_text()]
+        assert labels
+        assert all(float(label) < 100 for label in labels)  # raw loci counts would be >= 1000
+        plt.close(fig)
 
 
 class TestDetectionBoundaryStrict:
