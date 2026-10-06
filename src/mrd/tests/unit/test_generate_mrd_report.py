@@ -98,6 +98,7 @@ def test_generate_mrd_report_detection_output(output_path, mrd_report_inputs):
     expected_fields = [
         "call",
         "detected",
+        "warning",
         "p_value",
         "matched_supporting_reads",
         "matched_ctdna_vaf",
@@ -115,6 +116,9 @@ def test_generate_mrd_report_detection_output(output_path, mrd_report_inputs):
 
     # Verify detection call is one of valid values
     assert detection["call"] in ("MRD Detected", "MRD Not Detected", "Indeterminate")
+
+    # Normal test data has real SNVQ scores, so the SRSNV-scoring-failure override must not fire
+    assert detection["warning"] is None
 
     # Verify p-value is in valid range [0, 1]
     assert 0 <= detection["p_value"] <= 1.0
