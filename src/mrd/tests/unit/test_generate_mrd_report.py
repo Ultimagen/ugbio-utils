@@ -137,6 +137,47 @@ def test_generate_mrd_report_detection_output(output_path, mrd_report_inputs):
     assert detection["mean_coverage"] > 0
 
 
+def test_generate_mrd_report_snvq_scoring_failure_forces_indeterminate(output_path, mrd_report_inputs, monkeypatch):
+    """End-to-end regression: all matched reads with SNVQ=0 must force Indeterminate + warning.
+
+    Exercises the real wiring (df_features -> matched_snvq_zero_fraction -> run_detection_analysis
+    -> JSON / HDF5 / both HTML banners), not just the unit-level override in mrd_detection.py, so a
+    column-name, fraction, persistence, or template regression would be caught here.
+    """
+    import ugbio_mrd.generate_mrd_report as generate_mrd_report_module
+
+    original_read_and_filter = generate_mrd_report_module.mrd.read_and_filter_features_parquet
+
+    def _zero_out_matched_snvq(*args, **kwargs):
+        df_features, df_features_filt, filtering_ratio, excluded_per_sig = original_read_and_filter(*args, **kwargs)
+        df_features = df_features.copy()
+        df_features.loc[df_features["signature_type"] == "matched", "snvq"] = 0.0
+        # Matched reads now fail "snvq>60", mirroring the real SRSNV-scoring-failure scenario.
+        df_features_filt = df_features_filt[df_features_filt["signature_type"] != "matched"]
+        return df_features, df_features_filt, filtering_ratio, excluded_per_sig
+
+    monkeypatch.setattr(generate_mrd_report_module.mrd, "read_and_filter_features_parquet", _zero_out_matched_snvq)
+
+    results_html, qc_html = generate_mrd_report(mrd_report_inputs)
+
+    # JSON
+    with open(output_path / "test_report.detection_result.json") as f:
+        detection_json = json.load(f)
+    assert detection_json["call"] == "Indeterminate"
+    assert detection_json["detected"] is None
+    assert detection_json["warning"] is not None
+    assert "SNVQ = 0" in detection_json["warning"]
+
+    # HDF5
+    detection_record = pd.read_hdf(output_path / "test_report.ctdna_vaf.h5", key="detection_result")
+    assert detection_record["call"].iloc[0] == "Indeterminate"
+    assert detection_record["warning"].iloc[0] == detection_json["warning"]
+
+    # Both HTML reports must render the critical warning banner.
+    assert detection_json["warning"] in results_html.read_text()
+    assert detection_json["warning"] in qc_html.read_text()
+
+
 def test_generate_mrd_report_html_contains_detection_banner(output_path, mrd_report_inputs):
     """Test that the results HTML report contains the detection result banner."""
     results_html, _qc_html = generate_mrd_report(mrd_report_inputs)
