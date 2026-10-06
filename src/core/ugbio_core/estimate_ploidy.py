@@ -26,7 +26,7 @@ from ugbio_core.vcfbed.vcftools import is_pass_record
 
 DEFAULT_SEX_CHROMOSOMES = ("chrX", "chrY", "X", "Y")
 _STANDARD_BASES = {"A", "C", "G", "T"}
-_COVERAGE_SAMPLE_COUNT = 5000
+_COVERAGE_SAMPLE_COUNT = 50000
 
 _AUTOSOME_CHR = re.compile(r"^chr(\d+)$")
 _AUTOSOME_NOCHR = re.compile(r"^(\d+)$")
