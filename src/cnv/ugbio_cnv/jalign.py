@@ -13,6 +13,7 @@ import json
 import os
 import random
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1069,15 +1070,15 @@ def process_cnv(
     if header is None:
         header = create_bam_header(reads_file.header)
 
-    # Write alignment input file
-    input_file, reads_in_order = _write_alignment_input(reads, refs, temp_dir, chrom, start, end, config, log_file)
-
-    # Create output JSON file path
-    output_file = temp_dir / f"jalign_{chrom}_{start}_{end}_{os.getpid()}_output.json"
-    alignment_cmd = config.build_alignment_command(input_file, output_file)
-
-    # Run jump alignment tool
+    # Isolate temporary files so concurrent calls cannot overwrite each other.
+    temp_workspace = tempfile.TemporaryDirectory(prefix="jalign_", dir=temp_dir)
     try:
+        work_dir = Path(temp_workspace.name)
+        input_file, reads_in_order = _write_alignment_input(reads, refs, work_dir, chrom, start, end, config, log_file)
+        output_file = work_dir / f"jalign_{chrom}_{start}_{end}_output.json"
+        alignment_cmd = config.build_alignment_command(input_file, output_file)
+
+        # Run jump alignment tool
         run_alignment_tool(alignment_cmd, log_file)
 
         # Parse results from JSON file
@@ -1105,11 +1106,7 @@ def process_cnv(
         # Count supporting alignments
         counts = _count_supporting_alignments(result_df, config)
     finally:
-        # Clean up temporary files
-        if input_file.exists():
-            input_file.unlink()
-        if output_file.exists():
-            output_file.unlink()
+        temp_workspace.cleanup()
 
     if log_file:
         log_file.write(f"<<< alignments: {chrom}:{start}-{end}\n")

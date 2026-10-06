@@ -519,6 +519,7 @@ class TestProcessCNV:
                 # Verify header
                 assert header is not None
                 assert isinstance(header, pysam.AlignmentHeader)
+                assert list(tmp_path.iterdir()) == []
 
 
 class TestIntegration:
