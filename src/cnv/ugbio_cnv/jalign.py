@@ -13,8 +13,8 @@ import json
 import os
 import random
 import subprocess
-import tempfile
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
@@ -539,6 +539,7 @@ def _write_alignment_input(
     end: int,
     config: JAlignConfig,
     log_file: TextIO | None = None,
+    name_tag: str = "",
 ) -> tuple[Path, list[pysam.AlignedSegment]]:
     """Write input file for jump alignment tool.
 
@@ -560,6 +561,8 @@ def _write_alignment_input(
         Configuration parameters
     log_file : file-like object, optional
         Log file for recording input
+    name_tag : str, optional
+        Suffix that makes the file name unique for this call
 
     Returns
     -------
@@ -574,7 +577,7 @@ def _write_alignment_input(
         logger.info(f"Subsampling reads with ratio {subsample_ratio:.3f}")
 
     # Create input file
-    input_file = temp_dir / f"jalign_{chrom}_{start}_{end}_{os.getpid()}.txt"
+    input_file = temp_dir / f"jalign_{chrom}_{start}_{end}_{os.getpid()}{name_tag}.txt"
     reads_in_order = []
     ref_emitted = False
 
@@ -1070,15 +1073,20 @@ def process_cnv(
     if header is None:
         header = create_bam_header(reads_file.header)
 
-    # Isolate temporary files so concurrent calls cannot overwrite each other.
-    temp_workspace = tempfile.TemporaryDirectory(prefix="jalign_", dir=temp_dir)
-    try:
-        work_dir = Path(temp_workspace.name)
-        input_file, reads_in_order = _write_alignment_input(reads, refs, work_dir, chrom, start, end, config, log_file)
-        output_file = work_dir / f"jalign_{chrom}_{start}_{end}_output.json"
-        alignment_cmd = config.build_alignment_command(input_file, output_file)
+    # Unique tag per call, so CNVs with identical coordinates never share temporary file names
+    name_tag = f"_{uuid.uuid4().hex[:12]}"
 
-        # Run jump alignment tool
+    # Write alignment input file
+    input_file, reads_in_order = _write_alignment_input(
+        reads, refs, temp_dir, chrom, start, end, config, log_file, name_tag
+    )
+
+    # Create output JSON file path
+    output_file = temp_dir / f"jalign_{chrom}_{start}_{end}_{os.getpid()}{name_tag}_output.json"
+    alignment_cmd = config.build_alignment_command(input_file, output_file)
+
+    # Run jump alignment tool
+    try:
         run_alignment_tool(alignment_cmd, log_file)
 
         # Parse results from JSON file
@@ -1106,7 +1114,11 @@ def process_cnv(
         # Count supporting alignments
         counts = _count_supporting_alignments(result_df, config)
     finally:
-        temp_workspace.cleanup()
+        # Clean up temporary files
+        if input_file.exists():
+            input_file.unlink()
+        if output_file.exists():
+            output_file.unlink()
 
     if log_file:
         log_file.write(f"<<< alignments: {chrom}:{start}-{end}\n")
