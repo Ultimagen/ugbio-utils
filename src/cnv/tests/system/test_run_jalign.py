@@ -211,7 +211,7 @@ class TestRunJalign:
         assert exit_code == 1
 
     def test_run_jalign_keeps_failed_records(self, tmp_path, resources_dir, mock_para_jalign):
-        """A CNV whose alignment fails is written without JALIGN_* fields, not dropped."""
+        """A CNV whose alignment fails is written with JALIGN_* = 0, not dropped."""
         input_cram = pjoin(resources_dir, "test.jalign.cram")
         cnv_vcf = pjoin(resources_dir, "test.jalign.vcf.gz")
         ref_fasta = pjoin(resources_dir, "chr1.3M.fasta.gz")
@@ -255,8 +255,13 @@ class TestRunJalign:
         assert len(records) == n_input, "failed CNVs must not be dropped from the output VCF"
         failed = [r for r in records if (r.chrom, r.start, r.stop) == ("chr1", 2651000, 2658000)]
         assert len(failed) == 1
-        assert "JALIGN_DUP_SUPPORT" not in failed[0].info
-        assert "JALIGN_DEL_SUPPORT" not in failed[0].info
+        for field in (
+            "JALIGN_DUP_SUPPORT",
+            "JALIGN_DEL_SUPPORT",
+            "JALIGN_DUP_SUPPORT_STRONG",
+            "JALIGN_DEL_SUPPORT_STRONG",
+        ):
+            assert failed[0].info[field] == 0, field
         assert all("JALIGN_DUP_SUPPORT" in r.info for r in records if r is not failed[0])
 
     def test_run_jalign_compare_golden_outputs(self, tmp_path, resources_dir, mock_para_jalign):

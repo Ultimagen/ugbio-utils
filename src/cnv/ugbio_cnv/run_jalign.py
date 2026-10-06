@@ -512,8 +512,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                             f"Realigned reads: {n_realigned} - Time: {cycle_time:.2f}s"
                         )
                     else:
-                        # Keep the CNV, without JALIGN_* annotations, so a jalign failure
-                        # doesn't silently remove it from downstream calls
+                        # Keep the CNV, with zero jalign support, so a jalign failure doesn't
+                        # silently remove it from downstream calls. FilterVCF rejects missing values.
+                        rec.info["JALIGN_DUP_SUPPORT"] = 0
+                        rec.info["JALIGN_DEL_SUPPORT"] = 0
+                        rec.info["JALIGN_DUP_SUPPORT_STRONG"] = 0
+                        rec.info["JALIGN_DEL_SUPPORT_STRONG"] = 0
                         out_vcf.write(rec)
                         failed_count += 1
                         logger.error(f"Error processing {chrom}:{start}-{end}: {error_msg}")
@@ -549,9 +553,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
 
         logger.info(f"Successfully processed {cnv_count} CNV regions")
         if failed_count > 0:
-            logger.warning(
-                f"Failed to process {failed_count} CNV regions; they were written without JALIGN_* annotations"
-            )
+            logger.warning(f"Failed to process {failed_count} CNV regions; they were written with JALIGN_* = 0")
         return 0
 
     except Exception as e:
