@@ -81,6 +81,10 @@ X_HMER_RUN = "X_HMER_RUN"  # snvfind: affected reference homopolymer run length
 X_HMER_BASE = "X_HMER_BASE"  # snvfind: the repeated base of the affected homopolymer run
 X_HMER_PRE = "X_HMER_PRE"  # snvfind: reference base immediately 5' of the affected run
 X_HMER_POST = "X_HMER_POST"  # snvfind: reference base immediately 3' of the affected run
+# GATK-style tandem-repeat tags emitted by snvfind for indels (used by the non-hmer STR section)
+RU = "RU"  # tandem-repeat unit / motif (bases); repeat period = len(RU)
+RPA = "RPA"  # number of repeat-unit copies in the alt allele
+STR = "STR"  # flag: the indel is a whole-unit short tandem repeat (set <-> RU present)
 X_NEXT1 = FeatureMapFields.X_NEXT1.value  # base at POS+1 == first base of the affected hmer run
 REF = FeatureMapFields.REF.value
 VARIANT_TYPE_SNV = "snv"
@@ -339,6 +343,9 @@ def create_srsnv_report_html(
     logit_histogram_hmer_indel = os.path.join(out_path, f"{out_basename}logit_histogram_hmer_indel")
     # non-hmer indel section (parallel to hmer; files exist only when has_non_hmer_indels).
     logit_histogram_non_hmer_indel = os.path.join(out_path, f"{out_basename}logit_histogram_non_hmer_indel")
+    non_hmer_indel_by_class_plot = os.path.join(out_path, f"{out_basename}non_hmer_indel_by_class")
+    non_hmer_indel_str_plot = os.path.join(out_path, f"{out_basename}non_hmer_indel_str")
+    non_hmer_indel_str_context_plot = os.path.join(out_path, f"{out_basename}non_hmer_indel_str_context")
 
     [
         FQ_vs_recall_plot,  # noqa: N806
@@ -380,6 +387,9 @@ def create_srsnv_report_html(
         "hmer_indel_by_class_plot": hmer_indel_by_class_plot,
         "hmer_indel_fq_recall_plot": hmer_indel_fq_recall_plot,
         "hmer_indel_context_plot": hmer_indel_context_plot,
+        "non_hmer_indel_by_class_plot": non_hmer_indel_by_class_plot,
+        "non_hmer_indel_str_plot": non_hmer_indel_str_plot,
+        "non_hmer_indel_str_context_plot": non_hmer_indel_str_context_plot,
     }
 
     generate_report(
@@ -3916,6 +3926,392 @@ class SRSNVReport:
         self._save_plt(output_filename=output_filename, fig=fig, tight_layout=False)
         plt.close(fig)
 
+    def _indel_read_group_split(self, ind, base):
+        """Add a ``read_group`` column to ``base`` from ``ind[READ_GROUP]``; return (groups, base).
+
+        Mirrors the read-group split in ``plot_hmer_indel_by_class``: when a multi-group ``read_group``
+        column is present, one line per present group; otherwise a single ``"all"`` group. Rows in no
+        display group (e.g. singletons) are dropped.
+        """
+        base = base.copy()
+        group_masks = None
+        if READ_GROUP in ind.columns:
+            rg = ind[READ_GROUP]
+            cats = list(rg.cat.categories) if isinstance(rg.dtype, pd.CategoricalDtype) else list(rg.dropna().unique())
+            present = [c for c in cats if (rg == c).to_numpy().any()]
+            if len(present) > 1:
+                group_masks = [(c, (rg == c).to_numpy()) for c in present]
+        if group_masks is None:
+            base["read_group"] = "all"
+            return ["all"], base
+        rg = pd.Series("", index=ind.index, dtype=object)
+        for lbl, mask in group_masks:
+            rg[np.asarray(mask, dtype=bool)] = lbl
+        base["read_group"] = rg.to_numpy()
+        base = base[base["read_group"] != ""]
+        return [lbl for lbl, _ in group_masks], base
+
+    @staticmethod
+    def _plot_indel_class_lines(axes, stats, groups, *, x):
+        """Draw median-SNVQ (``axes[0]``) and count (``axes[1]``) lines vs ``x``, one per
+        (read_group, indel_class). Shared styling: color = read-group, ins = solid/●, del = dashed/✕,
+        full-word legend (same convention as the hmer by-class figure)."""
+        group_colors = dict(zip(groups, sns.color_palette(n_colors=len(groups)), strict=False))
+        class_ls = {"ins": "-", "del": "--"}
+        class_marker = {"ins": "o", "del": "X"}
+        class_label = {"ins": "insertion", "del": "deletion"}
+        for (g, cls_name), grp_rows in stats.groupby(["read_group", "indel_class"], observed=True):
+            srt = grp_rows.sort_values(x)
+            color = group_colors.get(g, "black")
+            ls = class_ls.get(cls_name, "-")
+            mk = class_marker.get(cls_name, "o")
+            cls_full = class_label.get(cls_name, cls_name)
+            lbl = cls_full if groups == ["all"] else f"{g} · {cls_full}"
+            axes[0].plot(srt[x], srt["median_snvq"], marker=mk, ls=ls, color=color, label=lbl)
+            axes[1].plot(srt[x], srt["count"], marker=mk, ls=ls, color=color, label=lbl)
+
+    @exception_handler
+    def plot_non_hmer_indel_by_class(self, output_filename: str = None):
+        """Non-homopolymer-indel TP SNVQ + count by indel class (ins/del) and indel length.
+
+        The non-hmer analogue of ``plot_hmer_indel_by_class``: bins TP non-hmer-indel rows by indel
+        length ``|X_IL|`` (clipped 1..12) and plots median SNVQ and TP count vs length, one line per
+        indel class (ins/del) × read-group. Writes the per-(read_group, indel_class, indel_length)
+        table to the QC h5 under ``non_hmer_indel_class_stats``. Self-skips when there are no non-hmer
+        TP rows / the required columns are missing.
+        """
+        if any(c not in self.data_df.columns for c in (VARIANT_TYPE, X_IC, X_IL)):
+            logger.info("plot_non_hmer_indel_by_class: variant_type / X_IC / X_IL missing; skipping")
+            return
+        data = self.data_df
+        ind = data[(data[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL) & data[LABEL].astype(bool)]
+        if ind.empty:
+            logger.info("plot_non_hmer_indel_by_class: no non-hmer-indel TP rows; skipping")
+            return
+        indel_len = pd.to_numeric(ind[X_IL], errors="coerce").abs().clip(lower=1, upper=12)
+        base = pd.DataFrame(
+            {
+                "indel_length": indel_len.to_numpy(),
+                "indel_class": ind[X_IC].astype(str).str.lower().to_numpy(),
+                "snvq": pd.to_numeric(ind[QUAL], errors="coerce").to_numpy(),
+            },
+            index=ind.index,
+        )
+        groups, base = self._indel_read_group_split(ind, base)
+        stats = (
+            base.dropna(subset=["indel_length"])
+            .groupby(["read_group", "indel_class", "indel_length"], observed=True)
+            .agg(median_snvq=("snvq", "median"), count=("snvq", "size"))
+            .reset_index()
+        )
+        stats.to_hdf(self.output_h5_filename, key="non_hmer_indel_class_stats", mode="a")
+        fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+        self._plot_indel_class_lines(axes, stats, groups, x="indel_length")
+        axes[0].set_xlabel("non-homopolymer indel length (bp)")
+        axes[0].set_ylabel("median SNVQ (TP)")
+        axes[0].set_title("median SNVQ by class")
+        axes[1].set_xlabel("non-homopolymer indel length (bp)")
+        axes[1].set_ylabel("TP count")
+        axes[1].set_title("TP count by class")
+        axes[1].set_yscale("log")
+        fig.suptitle("Non-homopolymer-indel by indel class and read-type")
+        for ax in axes:
+            ax.legend(fontsize=8)
+            ax.grid(visible=True, alpha=0.3)
+        self._save_plt(output_filename=output_filename, fig=fig)
+        plt.close(fig)
+
+    @exception_handler
+    def plot_non_hmer_indel_str(self, output_filename: str = None):  # noqa: PLR0915
+        """Non-homopolymer STR (tandem-repeat) indel SNVQ + count by repeat period and copy number.
+
+        Restricts to TP non-hmer indels that sit in a tandem repeat (``STR`` set, i.e. ``RU`` present),
+        then shows median SNVQ and TP count vs (A) repeat-unit length / period = ``len(RU)`` (clipped
+        1..6) and (B) repeat copy number ``RPA`` (clipped 1..6), each split ins/del × read-group.
+        Writes the combined long-form table (``axis`` ∈ {period, copies}) to the QC h5 under
+        ``non_hmer_indel_str_stats``. Self-skips when absent.
+        """
+        if any(c not in self.data_df.columns for c in (VARIANT_TYPE, X_IC, RU, RPA)):
+            logger.info("plot_non_hmer_indel_str: variant_type / X_IC / RU / RPA missing; skipping")
+            return
+        data = self.data_df
+        ru = data[RU].astype(str)
+        is_str = (
+            (data[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL)
+            & data[LABEL].astype(bool)
+            & ru.ne(".")
+            & ru.ne("")
+            & ru.str.upper().str.fullmatch("[ACGT]+").fillna(value=False)
+        )
+        ind = data[is_str]
+        if ind.empty:
+            logger.info("plot_non_hmer_indel_str: no non-hmer STR TP rows; skipping")
+            return
+        base = pd.DataFrame(
+            {
+                "period": ind[RU].astype(str).str.len().clip(lower=1, upper=6).to_numpy(),
+                "copies": pd.to_numeric(ind[RPA], errors="coerce").clip(lower=1, upper=6).to_numpy(),
+                "indel_class": ind[X_IC].astype(str).str.lower().to_numpy(),
+                "snvq": pd.to_numeric(ind[QUAL], errors="coerce").to_numpy(),
+            },
+            index=ind.index,
+        )
+        groups, base = self._indel_read_group_split(ind, base)
+
+        def _agg(axis_col):
+            return (
+                base.dropna(subset=[axis_col])
+                .groupby(["read_group", "indel_class", axis_col], observed=True)
+                .agg(median_snvq=("snvq", "median"), count=("snvq", "size"))
+                .reset_index()
+                .rename(columns={axis_col: "value"})
+            )
+
+        by_period = _agg("period")
+        by_period["axis"] = "period"
+        by_copies = _agg("copies")
+        by_copies["axis"] = "copies"
+        pd.concat([by_period, by_copies], ignore_index=True).to_hdf(
+            self.output_h5_filename, key="non_hmer_indel_str_stats", mode="a"
+        )
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+        self._plot_indel_class_lines(
+            [axes[0, 0], axes[1, 0]], by_period.rename(columns={"value": "period"}), groups, x="period"
+        )
+        self._plot_indel_class_lines(
+            [axes[0, 1], axes[1, 1]], by_copies.rename(columns={"value": "copies"}), groups, x="copies"
+        )
+        axes[0, 0].set_title("median SNVQ by repeat period")
+        axes[0, 0].set_ylabel("median SNVQ (TP)")
+        axes[1, 0].set_title("TP count by repeat period")
+        axes[1, 0].set_ylabel("TP count")
+        axes[1, 0].set_yscale("log")
+        axes[1, 0].set_xlabel("repeat-unit length / period = len(RU) (bp; 6 = 6+)")
+        axes[0, 1].set_title("median SNVQ by repeat copies")
+        axes[1, 1].set_title("TP count by repeat copies")
+        axes[1, 1].set_yscale("log")
+        axes[1, 1].set_xlabel("repeat copy number RPA (6 = 6+)")
+        for ax in axes.ravel():
+            ax.legend(fontsize=7)
+            ax.grid(visible=True, alpha=0.3)
+        fig.suptitle("Non-homopolymer STR indels (tandem repeats)")
+        self._save_plt(output_filename=output_filename, fig=fig)
+        plt.close(fig)
+
+    _STR_CTX_PERIODS = [2, 3, 4]  # di / tri / tetra nucleotide bands
+    _STR_CTX_TOPK = 10  # top-K motifs per period band (by total count) kept on the x-axis
+
+    @staticmethod
+    def _canonical_repeat_unit(ru: str) -> str:
+        """Canonical tandem-repeat motif = min over all rotations of the unit and its reverse complement.
+
+        Groups phase/strand variants of the same repeat (AC/CA/GT/TG -> ``AC``). Returns ``""`` for
+        non-ACGT input.
+        """
+        ru = str(ru).upper()
+        if not ru or any(b not in "ACGT" for b in ru):
+            return ""
+        comp = {"A": "T", "C": "G", "G": "C", "T": "A"}
+        rc = "".join(comp[b] for b in reversed(ru))
+        rotations = [ru[i:] + ru[:i] for i in range(len(ru))] + [rc[i:] + rc[:i] for i in range(len(rc))]
+        return min(rotations)
+
+    def _non_hmer_str_context_df(self) -> pd.DataFrame | None:
+        """Tidy per-(period, motif, ins/del, read-group) aggregation for the STR context figure.
+
+        Restricts to non-hmer indel rows that carry a repeat unit (``RU``); the motif is canonicalized
+        (phase + strand collapsed) and the period = ``len(motif)`` kept to di/tri/tetra. One row per
+        (period, motif, ins/del, read group) with ``n_TP`` / ``n_FP`` / ``median_snvq_tp``. Returns
+        ``None`` for runs without non-hmer STR rows / missing columns.
+        """
+        if not self._has_non_hmer_indel_rows():
+            return None
+        data = self.data_df
+        missing = {X_IC, RU, RPA} - set(data.columns)
+        if missing:
+            logger.warning("non-hmer STR context figure skipped: missing columns %s", sorted(missing))
+            return None
+        ru = data[RU].astype(str)
+        sel = (data[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL) & ru.ne(".") & ru.ne("")
+        ind = data[sel].copy()
+        if ind.empty:
+            return None
+        group = pd.Series(index=ind.index, dtype=object)
+        for label, mask in self._group_masks(data_df=ind):
+            group[np.asarray(mask, dtype=bool)] = label
+        ctx = pd.DataFrame(
+            {
+                "ins_del": ind[X_IC].astype(str).str.lower(),
+                "motif": ind[RU].map(self._canonical_repeat_unit).to_numpy(),
+                "read_group": group.to_numpy(),
+                "is_tp": ind[LABEL].astype(bool).to_numpy(),
+                "snvq": pd.to_numeric(ind[QUAL], errors="coerce").to_numpy(),
+            }
+        )
+        ctx["period"] = ctx["motif"].str.len()
+        ctx = ctx[ctx["ins_del"].isin(["ins", "del"]) & ctx["motif"].ne("") & ctx["period"].isin(self._STR_CTX_PERIODS)]
+        if ctx.empty:
+            return None
+        ctx["snvq_tp"] = ctx["snvq"].where(ctx["is_tp"])
+        table = (
+            ctx.groupby(["period", "motif", "ins_del", "read_group"], observed=True)
+            .agg(n_TP=("is_tp", "sum"), n_rows=("is_tp", "size"), median_snvq_tp=("snvq_tp", "median"))
+            .reset_index()
+        )
+        table["n_FP"] = table["n_rows"] - table["n_TP"]
+        return table.drop(columns=["n_rows"])
+
+    @exception_handler
+    def calc_and_plot_non_hmer_str_context_plot(self, output_filename: str = None):  # noqa: C901, PLR0915
+        """STR-indel context figure: one band per repeat period (di/tri/tetra), each an INS pair over a
+        DEL pair (median-SNVQ panel over a TP-vs-FP normalized-density panel), x-axis = repeat motif
+        (top-K per period). The motif-level analogue of the hmer context figure; repeat-tract flanks are
+        not shown (not emitted for non-hmer indels). Writes ``non_hmer_indel_str_context_stats`` to the
+        QC h5. Self-skips when there are no non-hmer STR rows.
+        """
+        table = self._non_hmer_str_context_df()
+        if table is None:
+            logger.info("calc_and_plot_non_hmer_str_context_plot: no non-hmer STR context; skipping")
+            return
+        table.to_hdf(self.output_h5_filename, key="non_hmer_indel_str_context_stats", mode="a")
+        palette = self._variant_palette()
+        groups = [g for g in [lbl for lbl, _ in self._group_masks()] if g in set(table["read_group"])]
+        hist_colors = {"TP": "#3B76AF", "FP": "#C7382F"}
+        periods = [p for p in self._STR_CTX_PERIODS if p in set(table["period"])]
+        if not periods:
+            logger.info("calc_and_plot_non_hmer_str_context_plot: no di/tri/tetra motifs; skipping")
+            return
+        motif_order = {}
+        for p in periods:
+            sub = table[table["period"] == p]
+            tot = sub.groupby("motif")[["n_TP", "n_FP"]].sum().sum(axis=1).sort_values(ascending=False)
+            motif_order[p] = list(tot.head(self._STR_CTX_TOPK).index)
+
+        _snvq_vals = pd.to_numeric(table["median_snvq_tp"], errors="coerce").dropna()
+        _pad, _min_span = 3.0, 10.0
+        if len(_snvq_vals):
+            y_lo = max(0.0, float(np.floor(_snvq_vals.min())) - _pad)
+            y_hi = min(float(self.max_qual) + 2, float(np.ceil(_snvq_vals.max())) + _pad)
+            if y_hi - y_lo < _min_span:
+                y_lo = max(0.0, y_hi - _min_span)
+        else:
+            y_lo, y_hi = 40.0, 100.0
+
+        fig = plt.figure(figsize=(20, 7 * len(periods)))
+        n_bands = len(periods)
+        top0, bot0, band_gap, pair_gap = 0.95, 0.07, 0.05, 0.016
+        band_h = (top0 - bot0 - band_gap * (n_bands - 1)) / n_bands
+        pair_h = (band_h - pair_gap) / 2.0
+        period_name = {2: "dinucleotide", 3: "trinucleotide", 4: "tetranucleotide"}
+
+        def _draw_pair(period, cls, gs):
+            motifs = motif_order[period]
+            kidx = {m: i for i, m in enumerate(motifs)}
+            n_cols = max(len(motifs), 1)
+            xs = np.arange(len(motifs))
+            xext = (
+                np.concatenate([[-0.5], np.arange(len(motifs)), [len(motifs) - 0.5]])
+                if motifs
+                else np.array([-0.5, 0.5])
+            )
+            sub = table[(table["period"] == period) & (table["ins_del"] == cls)]
+            qax = fig.add_subplot(gs[0])
+            hax = fig.add_subplot(gs[1], sharex=qax)
+            for g in groups:
+                gsub = sub[sub["read_group"] == g]
+                if gsub.empty or not motifs:
+                    continue
+                med = np.full(len(motifs), np.nan)
+                for _, row in gsub.iterrows():
+                    ci = kidx.get(row["motif"])
+                    if ci is not None:
+                        med[ci] = row["median_snvq_tp"]
+                qax.step(
+                    xext,
+                    np.concatenate([[med[0]], med, [med[-1]]]),
+                    where="mid",
+                    color=palette.get(g, "grey"),
+                    alpha=0.9,
+                    lw=1.3,
+                )
+            qax.axhline(60, color="k", ls=":", lw=0.8, alpha=0.5)
+            qax.set_ylabel(f"SNVQ ({cls})", fontsize=11)
+            qax.set_ylim(y_lo, y_hi)
+            qax.set_xlim(-0.5, n_cols - 0.5)
+            qax.grid(visible=True, axis="y", alpha=0.5, ls=":")
+            plt.setp(qax.get_xticklabels(), visible=False)
+            qax.tick_params(axis="x", length=0)
+            if cls == "ins":
+                qax.annotate(
+                    f"period {period} ({period_name.get(period, period)})",
+                    xy=(0.5, 1.0),
+                    xytext=(0, 8),
+                    xycoords="axes fraction",
+                    textcoords="offset points",
+                    ha="center",
+                    fontsize=14,
+                    fontweight="bold",
+                )
+            tp, fp = np.zeros(len(motifs)), np.zeros(len(motifs))
+            for _, row in sub.iterrows():
+                ci = kidx.get(row["motif"])
+                if ci is None:
+                    continue
+                tp[ci] += row["n_TP"]
+                fp[ci] += row["n_FP"]
+            tp = tp / tp.sum() if tp.sum() else tp
+            fp = fp / fp.sum() if fp.sum() else fp
+            hax.bar(xs, tp, color=hist_colors["TP"], width=1.0, alpha=0.5, label="TP")
+            hax.bar(xs, fp, color=hist_colors["FP"], width=1.0, alpha=0.5, label="FP")
+            hax.set_ylabel(f"Density ({cls})", fontsize=11)
+            hax.set_xlim(-0.5, n_cols - 0.5)
+            hax.set_ylim(0, max(tp.max() if len(motifs) else 0.0, fp.max() if len(motifs) else 0.0, 1e-6) * 1.05)
+            hax.grid(visible=True, axis="y", alpha=0.4, ls=":")
+            hax.set_xticks(xs)
+            hax.set_xticklabels(motifs, fontsize=8, rotation=90)
+            hax.set_xlabel("repeat motif (canonical RU; top motifs by count)", fontsize=10)
+
+        for k, period in enumerate(periods):
+            band_top = top0 - k * (band_h + band_gap)
+            ins_top, ins_bot = band_top, band_top - pair_h
+            del_top, del_bot = ins_bot - pair_gap, ins_bot - pair_gap - pair_h
+            gs_ins = gridspec.GridSpec(2, 1, height_ratios=[1, 2], hspace=0.0, top=ins_top, bottom=ins_bot)
+            gs_del = gridspec.GridSpec(2, 1, height_ratios=[1, 2], hspace=0.0, top=del_top, bottom=del_bot)
+            _draw_pair(period, "ins", gs_ins)
+            _draw_pair(period, "del", gs_del)
+
+        grp_handles = [mlines.Line2D([0], [0], color=palette.get(g, "grey"), lw=2, label=g) for g in groups]
+        hist_handles = [
+            Patch(facecolor=hist_colors["TP"], alpha=0.5, label="TP"),
+            Patch(facecolor=hist_colors["FP"], alpha=0.5, label="FP"),
+        ]
+        fig.legend(
+            handles=grp_handles,
+            title="median SNVQ by read type",
+            loc="lower center",
+            bbox_to_anchor=(0.35, 0.004),
+            ncol=len(groups) or 1,
+            frameon=False,
+            fontsize=11,
+            title_fontsize=11,
+        )
+        fig.legend(
+            handles=hist_handles,
+            title="density (normalized within period × ins/del)",
+            loc="lower center",
+            bbox_to_anchor=(0.72, 0.004),
+            ncol=2,
+            frameon=False,
+            fontsize=11,
+            title_fontsize=11,
+        )
+        fig.suptitle(
+            "Non-homopolymer STR-indel context (per repeat motif) — INS pair over DEL pair",
+            fontsize=16,
+        )
+        self._save_plt(output_filename=output_filename, fig=fig, tight_layout=False)
+        plt.close(fig)
+
     def create_report(self):
         """Generate plots for report and save data in hdf5 file."""
         logger.info("Creating report")
@@ -3991,6 +4387,20 @@ class SRSNVReport:
         self.plot_hmer_indel_fq_recall(output_filename=hmer_indel_fq_recall_plot)
         hmer_indel_context_plot = os.path.join(self.params["workdir"], f"{self.params['data_name']}hmer_indel_context")
         self.calc_and_plot_hmer_indel_context_plot(output_filename=hmer_indel_context_plot)
+
+        # non-hmer-indel section (only writes files when non-hmer indels are present; same naming
+        # convention create_srsnv_report_html reconstructs). General by-length figure + STR-specific
+        # (period/copies summary and per-motif context). Each self-skips SNV-only / hmer-only runs.
+        non_hmer_indel_by_class_plot = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}non_hmer_indel_by_class"
+        )
+        self.plot_non_hmer_indel_by_class(output_filename=non_hmer_indel_by_class_plot)
+        non_hmer_indel_str_plot = os.path.join(self.params["workdir"], f"{self.params['data_name']}non_hmer_indel_str")
+        self.plot_non_hmer_indel_str(output_filename=non_hmer_indel_str_plot)
+        non_hmer_indel_str_context_plot = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}non_hmer_indel_str_context"
+        )
+        self.calc_and_plot_non_hmer_str_context_plot(output_filename=non_hmer_indel_str_context_plot)
 
         # # Create LoD plot
         # # TODO: Update the following to new conform with new report logic

@@ -974,6 +974,85 @@ def test_removed_hmer_methods_absent():
         assert not hasattr(SRSNVReport, name)
 
 
+def _add_non_hmer_variant_columns(df, n_indel=300, seed=11):
+    """Set non-hmer indel rows (variant_type=non_hmer_indel) with X_IC/X_IL + tandem-repeat tags
+    (RU/RPA/STR), so the non-hmer sections are exercised. ~half the indels sit in a tandem repeat."""
+    df = df.copy()  # noqa: PD901
+    rng = np.random.default_rng(seed)
+    n_indel = min(n_indel, len(df) // 2)
+    is_indel = np.zeros(len(df), dtype=bool)
+    is_indel[:n_indel] = True
+    xic = np.array([None] * len(df), dtype=object)
+    xic[: n_indel // 2] = "ins"
+    xic[n_indel // 2 : n_indel] = "del"
+    df["X_IC"] = xic
+    df["variant_type"] = np.where(is_indel, "non_hmer_indel", "snv")
+    df["X_IL"] = np.where(is_indel, rng.integers(1, 10, len(df)), np.nan)
+    motifs = ["AC", "AG", "AT", "CA", "ATG", "CAG", "TAGC", "AAAT"]
+    ru = np.array(["."] * len(df), dtype=object)
+    for i in range(0, n_indel, 2):  # ~half the indels are STR (carry a repeat unit)
+        ru[i] = rng.choice(motifs)
+    df["RU"] = ru
+    df["RPA"] = np.where(ru != ".", rng.integers(1, 7, len(df)), np.nan)
+    df["STR"] = np.where(ru != ".", 1, np.nan)
+    return df
+
+
+def test_non_hmer_indel_sections(consensus_resources, real_models_calc_run_info):
+    """The three non-hmer figures render and write their h5 stats; read-group split is exercised via a
+    duplex report (multi-group). Mirrors the hmer by-class/context tests."""
+    df, metadata = consensus_resources
+    dfd = _add_duplex_columns(_add_non_hmer_variant_columns(df))  # noqa: PD901
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
+        assert report._has_non_hmer_indel_rows()
+        h5 = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+
+        by_class = os.path.join(temp_output_dir, "nh_by_class")
+        report.plot_non_hmer_indel_by_class(output_filename=by_class)
+        assert os.path.exists(by_class + ".png")
+        stats = pd.read_hdf(h5, key="non_hmer_indel_class_stats")
+        assert {"median_snvq", "indel_length", "indel_class", "read_group"}.issubset(stats.columns)
+        assert set(stats["read_group"]) and set(stats["read_group"]) != {"all"}
+
+        str_fig = os.path.join(temp_output_dir, "nh_str")
+        report.plot_non_hmer_indel_str(output_filename=str_fig)
+        assert os.path.exists(str_fig + ".png")
+        str_stats = pd.read_hdf(h5, key="non_hmer_indel_str_stats")
+        assert set(str_stats["axis"]) == {"period", "copies"}
+
+        ctx = os.path.join(temp_output_dir, "nh_ctx")
+        report.calc_and_plot_non_hmer_str_context_plot(output_filename=ctx)
+        assert os.path.exists(ctx + ".png")
+        ctx_stats = pd.read_hdf(h5, key="non_hmer_indel_str_context_stats")
+        assert {"period", "motif", "ins_del", "read_group", "n_TP", "n_FP"}.issubset(ctx_stats.columns)
+        assert set(ctx_stats["period"]).issubset({2, 3, 4})
+
+
+def test_non_hmer_indel_sections_skip_snv_only(consensus_resources, real_models_calc_run_info):
+    """SNV-only run (no indel columns): all three non-hmer methods self-skip cleanly (no raise under
+    raise_exceptions=True, no PNG written)."""
+    df, metadata = consensus_resources
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        for method, stem in (
+            (report.plot_non_hmer_indel_by_class, "a"),
+            (report.plot_non_hmer_indel_str, "b"),
+            (report.calc_and_plot_non_hmer_str_context_plot, "c"),
+        ):
+            out = os.path.join(temp_output_dir, stem)
+            method(output_filename=out)
+            assert not os.path.exists(out + ".png")
+
+
+def test_canonical_repeat_unit():
+    """Phase/strand variants of a repeat collapse to one canonical motif."""
+    f = SRSNVReport._canonical_repeat_unit
+    assert f("AC") == f("CA") == f("GT") == f("TG")  # dinucleotide: rotations + revcomp
+    assert f("AAT") == f("ATA") == f("TAA")  # trinucleotide rotations
+    assert f("N") == "" and f("") == ""  # non-ACGT -> empty
+
+
 def test_logit_histograms_split_hmer_indel(consensus_resources, real_models_calc_run_info):
     """The logit histogram splits into an SNV figure and a separate hmer-indel figure when hmer rows
     are present; an SNV-only run produces only the SNV figure."""
