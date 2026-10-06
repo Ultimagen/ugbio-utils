@@ -125,10 +125,10 @@ CS_N_CROSSING = "cs_n_crossing"  # family reads crossing the variant (focus != P
 CS_N_SUPPORTING = "cs_n_supporting"  # crossing reads carrying the ALT at focus
 CS_N_PE_PAIRS = "cs_n_pe_pairs"  # complete (fwd,rev) pairs present, 0..2
 # PE-duplex display groups: simplex-SE / simplex-PE / duplex-SE / duplex-PE, driven by DS
-# (mate_present) + cs_n_crossing; singletons are excluded (mapped to DUPLEX_MOL_SINGLETON, which is
-# NOT in PE_DUPLEX_GROUPS so the generic group_masks drops them). Ordered by ascending support
-# (simplex/single-strand before duplex; within each, one PE end before both). "simplex" = a
-# single-strand consensus (DS != 2); "duplex" = both strands (DS == 2).
+# (mate_present) + cs_n_crossing. Every molecule is displayed (a single-read family, cs_family_size==1,
+# is a valid simplex-SE observation). Ordered by ascending support (simplex/single-strand before
+# duplex; within each, one PE end before both). "simplex" = a single-strand consensus (DS != 2);
+# "duplex" = both strands (DS == 2).
 PE_DUPLEX_GROUP = "pe_duplex_group"
 PE_DUPLEX_GROUP_SIMPLEX_SE = "simplex SE"  # single strand (DS != 2), 1 read crosses (one PE end)
 PE_DUPLEX_GROUP_SIMPLEX_PE = "simplex PE"  # single strand (DS != 2), 2 reads cross (both PE ends)
@@ -279,10 +279,10 @@ def _assign_pe_duplex_group(data_df: pd.DataFrame) -> None:
     place, when the DNN per-image CS-family stats are present (paired-end duplex data). "simplex" is a
     single-strand consensus (DS != 2); "duplex" has both strands (DS == 2).
 
-    Grouping (singletons excluded by mapping to ``DUPLEX_MOL_SINGLETON``, which is not a display group):
+    Grouping (every molecule is displayed; a single-read family is a valid simplex-SE observation):
 
-    - ``cs_family_size <= 1`` -> singleton (excluded from the display groups).
-    - not ``mate_present`` (DS != 2), ``cs_n_crossing <= 1`` -> simplex SE (single strand, one PE end).
+    - not ``mate_present`` (DS != 2), ``cs_n_crossing <= 1`` -> simplex SE (single strand, one PE end;
+      includes ``cs_family_size == 1``, a single read crossing the variant).
     - not ``mate_present`` (DS != 2), ``cs_n_crossing >= 2`` -> simplex PE (single strand, both PE ends).
     - ``mate_present`` and ``cs_n_crossing <= 2``            -> duplex SE (both strands of one PE end).
     - ``mate_present`` and ``cs_n_crossing >= 3``            -> duplex PE (both PE ends cover the variant).
@@ -297,7 +297,6 @@ def _assign_pe_duplex_group(data_df: pd.DataFrame) -> None:
     if CS_N_CROSSING not in data_df.columns or CS_FAMILY_SIZE not in data_df.columns:
         return
     cross = pd.to_numeric(data_df[CS_N_CROSSING], errors="coerce").fillna(0)
-    fam = pd.to_numeric(data_df[CS_FAMILY_SIZE], errors="coerce").fillna(0)
     mate = (
         data_df[MATE_PRESENT].astype(bool)
         if MATE_PRESENT in data_df.columns
@@ -307,7 +306,6 @@ def _assign_pe_duplex_group(data_df: pd.DataFrame) -> None:
     g[~mate & (cross >= 2)] = PE_DUPLEX_GROUP_SIMPLEX_PE  # noqa: PLR2004  (single strand, both PE ends)
     g[mate & (cross <= 2)] = PE_DUPLEX_GROUP_SE  # noqa: PLR2004  (2 reads cross = one PE end)
     g[mate & (cross >= 3)] = PE_DUPLEX_GROUP_PE  # noqa: PLR2004  (>=3 reads cross = both PE ends)
-    g[fam <= 1] = DUPLEX_MOL_SINGLETON  # excluded from PE_DUPLEX_GROUPS -> dropped by group_masks
     data_df[PE_DUPLEX_GROUP] = g
 
 
