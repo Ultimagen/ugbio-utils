@@ -353,7 +353,9 @@ def modify_features_based_on_vcf_type(  # noqa C901
             (
                 "pair_evidence",
                 preprocessing.FunctionTransformer(optional_numeric_df, kw_args={"columns": pair_fields}),
-                compose.make_column_selector(),
+                # svtype is always present; the pair fields only when the data has them. Selecting every
+                # column would make the fitted model require training-only columns such as label.
+                lambda df: ["svtype"] + [c for c in pair_fields if c in df.columns],
             )
         )
 

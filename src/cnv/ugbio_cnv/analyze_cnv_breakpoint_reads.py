@@ -526,12 +526,7 @@ def _calculate_breakpoint_regions(
 
 
 def _pair_is_analyzable(read: pysam.AlignedSegment, pe_config: PairedEndConfig) -> bool:
-    """
-    Check whether a read's pair can be used as breakpoint evidence.
-
-    is_proper_pair is not required, since discordant pairs are never proper. The mapping quality floor applies
-    to this alignment only: the mate's quality would need the MQ tag, which Ultima pipelines do not emit.
-    """
+    """Check whether a read's pair can be used as breakpoint evidence."""
     return (
         read.is_paired
         and not read.mate_is_unmapped
@@ -567,12 +562,7 @@ def _pair_mates_flank_deleted_segment(
     interval_end: int,
     cushion: int,
 ) -> bool:
-    """
-    Check that both mates lie outside the deleted segment, whose bases are absent from the sample.
-
-    Bracketing pins the rightmost mate's end, not its start. Starts only: mate ends need the absent
-    MC tag. Deletion-only - an everted pair has both mates inside the duplication by construction.
-    """
+    """Check that both mates lie outside the deleted segment, whose bases are absent from the sample."""
     interior_start = interval_start + cushion
     interior_end = interval_end - cushion
     if interior_start >= interior_end:  # Windows cover the interval; no interior to be inside of

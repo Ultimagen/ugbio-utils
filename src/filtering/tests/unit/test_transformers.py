@@ -277,3 +277,9 @@ class TestTransformers:
         pair_columns = [c for c in result.columns if c.startswith("pair_evidence__")]
         assert len(pair_columns) == 6
         assert (result[pair_columns] == 0).all().all()
+
+    def test_cnv_transformer_does_not_require_training_only_columns(self):
+        # Training data carries a label column that the VCFs filtered later do not have
+        transformer = get_transformer(VcfType.CNV).fit(self._cnv_df().assign(label=[1]))
+        result = transformer.transform(self._cnv_df())
+        assert len(result) == 1
