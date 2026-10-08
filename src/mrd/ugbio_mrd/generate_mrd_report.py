@@ -13,7 +13,7 @@ from ugbio_core.consts import FileExtension
 from ugbio_core.logger import logger
 
 import ugbio_mrd.mrd_utils as mrd
-from ugbio_mrd.mrd_detection import DEFAULT_ALPHA, DEFAULT_LOD_FPR, run_detection_analysis
+from ugbio_mrd.mrd_detection import DEFAULT_ALPHA, DEFAULT_CI_LEVEL, DEFAULT_LOD_FPR, run_detection_analysis
 from ugbio_mrd.mrd_report_renderer import render_analysis_report, render_qc_report
 
 RESULTS_HTML_REPORT = ".mrd_analysis_report.html"
@@ -48,6 +48,7 @@ class MrdReportInputs:
     alpha: float = DEFAULT_ALPHA
     lod_fpr: float = DEFAULT_LOD_FPR
     lod_recall: float = DEFAULT_LOD_RECALL
+    ci_level: float = DEFAULT_CI_LEVEL
     thresh_noise_lq_reads: float | None = DEFAULT_THRESH_NOISE_LQ_READS
     thresh_multi_read_pvalue: float | None = DEFAULT_THRESH_MULTI_READ_PVALUE
     filter_funnel_json: str = None
@@ -480,6 +481,8 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             lod_recall=mrd_report_inputs.lod_recall,
             df_supporting_reads_per_locus=df_supporting_pre_multi,
             matched_snvq_zero_fraction=matched_snvq_zero_fraction,
+            ci_level=mrd_report_inputs.ci_level,
+            snvq_recall=snvq_recall,
         )
         logger.info("Multi-read filter: Bonferroni p-value threshold=%.4f", thresh_multi_read_pvalue)
     if thresh_multi_read_pvalue is not None:
@@ -618,6 +621,8 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         lod_recall=mrd_report_inputs.lod_recall,
         df_supporting_reads_per_locus=detection_per_locus,
         matched_snvq_zero_fraction=matched_snvq_zero_fraction,
+        ci_level=mrd_report_inputs.ci_level,
+        snvq_recall=snvq_recall,
     )
 
     # 5. Build applied filters (used by the QC report only; the analysis report shows
@@ -748,11 +753,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         "null_median_reads": detection.null_median_reads,
         "null_max_reads": detection.null_max_reads,
         "n_synthetic_controls": detection.n_synthetic_controls,
-        "detection_threshold": (
-            detection.detection_threshold / detection.corrected_coverage
-            if detection.detection_threshold is not None and detection.corrected_coverage > 0
-            else None
-        ),
+        "detection_threshold": detection.detection_threshold_vaf,
         "sample_specific_lod": detection.sample_specific_lod,
         "signature_size": detection.signature_size,
         "mean_coverage": detection.mean_coverage,
@@ -762,6 +763,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             for c in detection.qc_checks
         ],
         "alpha": detection.alpha,
+        "matched_ctdna_vaf_ci_low": detection.vaf_ci_low,
+        "matched_ctdna_vaf_ci_high": detection.vaf_ci_high,
+        "ci_level": detection.ci_level,
     }
     detection_json_path = (
         Path(mrd_report_inputs.output_dir) / f"{mrd_report_inputs.output_basename}.detection_result.json"
@@ -787,11 +791,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         "null_median_reads": detection.null_median_reads,
         "null_max_reads": detection.null_max_reads,
         "n_synthetic_controls": detection.n_synthetic_controls,
-        "detection_threshold": (
-            detection.detection_threshold / detection.corrected_coverage
-            if detection.detection_threshold is not None and detection.corrected_coverage > 0
-            else None
-        ),
+        "detection_threshold": detection.detection_threshold_vaf,
         "sample_specific_lod": detection.sample_specific_lod,
         "signature_size": detection.signature_size,
         "mean_coverage": detection.mean_coverage,
@@ -867,6 +867,8 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             lod_fpr=mrd_report_inputs.lod_fpr,
             lod_recall=mrd_report_inputs.lod_recall,
             matched_snvq_zero_fraction=matched_snvq_zero_fraction,
+            ci_level=mrd_report_inputs.ci_level,
+            snvq_recall=snvq_recall,
         )
 
     # Secondary analysis 1: filtered reads + unfiltered signatures
@@ -884,6 +886,8 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         lod_fpr=mrd_report_inputs.lod_fpr,
         lod_recall=mrd_report_inputs.lod_recall,
         matched_snvq_zero_fraction=matched_snvq_zero_fraction,
+        ci_level=mrd_report_inputs.ci_level,
+        snvq_recall=snvq_recall,
     )
 
     # Secondary analysis 2: No SNVQ Filter — derive from the already-loaded df_features.
@@ -944,6 +948,8 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         lod_fpr=mrd_report_inputs.lod_fpr,
         lod_recall=mrd_report_inputs.lod_recall,
         matched_snvq_zero_fraction=matched_snvq_zero_fraction,
+        ci_level=mrd_report_inputs.ci_level,
+        snvq_recall=snvq_recall_no_snvq,
     )
 
     # Save HDF5 tables (secondary)
@@ -1224,8 +1230,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=DEFAULT_LOD_RECALL,
         help=("Target recall used for personal LOD estimation. " f"Default: {DEFAULT_LOD_RECALL}."),
     )
+    parser.add_argument(
+        "--ci-level",
+        type=float,
+        default=DEFAULT_CI_LEVEL,
+        help=("Confidence level of the interval reported on the ctDNA VAF. " f"Default: {DEFAULT_CI_LEVEL}."),
+    )
     parser.add_argument("--filter-funnel-json", type=str, default=None, help="Path to filter funnel JSON from WDL")
     args = parser.parse_args(argv[1:])
+    if not 0 < args.ci_level < 1:
+        parser.error("--ci-level must be in the range (0, 1)")
     if args.thresh_noise_lq_reads is not None and not (0 < args.thresh_noise_lq_reads <= 1):
         parser.error("--thresh-noise-lq-reads must be in the range (0, 1]; use 1.0 or pass without a value to disable")
     # Convert 1.0 → None: threshold of 1.0 can never filter anything; skip the computation
@@ -1259,6 +1273,7 @@ def main(argv: list[str] | None = None):
         alpha=args_in.alpha,
         lod_fpr=args_in.lod_fpr,
         lod_recall=args_in.lod_recall,
+        ci_level=args_in.ci_level,
         thresh_noise_lq_reads=args_in.thresh_noise_lq_reads,
         thresh_multi_read_pvalue=args_in.thresh_multi_read_pvalue,
         filter_funnel_json=args_in.filter_funnel_json,
