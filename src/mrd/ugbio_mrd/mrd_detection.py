@@ -178,6 +178,12 @@ class DetectionResult:
         return (self.detection_threshold / self.snvq_recall) / self.total_coverage
 
 
+def _validate_ci_level(ci_level: float) -> None:
+    """Raise ValueError unless 0 < ci_level < 1."""
+    if not 0.0 < ci_level < 1.0:
+        raise ValueError(f"ci_level must be in the range (0, 1), got {ci_level}")
+
+
 def compute_vaf_confidence_interval(
     k: int,
     n: int,
@@ -200,19 +206,25 @@ def compute_vaf_confidence_interval(
     snvq_recall : float
         P, the fraction of true signal reads passing the read filter.
     ci_level : float
-        Confidence level (default 0.95).
+        Confidence level in (0, 1) (default 0.95).
 
     Returns
     -------
     tuple[float, float] or None
-        (low, high) VAF bounds, capped at 1; None when N or P is not positive.
+        (low, high) VAF bounds, both capped at 1; None when N or P is not positive.
+
+    Raises
+    ------
+    ValueError
+        If ci_level is not in (0, 1).
     """
+    _validate_ci_level(ci_level)
     if n <= 0 or snvq_recall <= 0:
         return None
     tail = (1.0 - ci_level) / 2.0
     low = 0.0 if k <= 0 else float(beta.ppf(tail, k, n - k + 1))
     high = 1.0 if k >= n else float(beta.ppf(1.0 - tail, k + 1, n - k))
-    return low / snvq_recall, min(high / snvq_recall, 1.0)
+    return min(low / snvq_recall, 1.0), min(high / snvq_recall, 1.0)
 
 
 def compute_sample_specific_lod(  # noqa: PLR0911
@@ -357,6 +369,8 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     DetectionResult
         Complete detection analysis results.
     """
+    _validate_ci_level(ci_level)
+
     # Extract matched signature data
     try:
         matched_data = df_tf.loc["matched"]

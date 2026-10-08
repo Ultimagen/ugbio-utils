@@ -801,6 +801,16 @@ class TestComputeVafConfidenceInterval:
         _, high = compute_vaf_confidence_interval(10, 10, snvq_recall=0.5)
         assert high == 1.0
 
+    def test_both_endpoints_capped_and_ordered(self):
+        """K=N with P<1 pushes the lower bound above 1 before capping; the interval must stay ordered."""
+        low, high = compute_vaf_confidence_interval(10, 10, snvq_recall=0.5)
+        assert low <= high <= 1.0
+
+    @pytest.mark.parametrize("ci_level", [0.0, 1.0, -0.1, 1.5, float("nan")])
+    def test_invalid_ci_level_raises(self, ci_level):
+        with pytest.raises(ValueError, match="ci_level"):
+            compute_vaf_confidence_interval(5, 1000, snvq_recall=0.5, ci_level=ci_level)
+
     @pytest.mark.parametrize("n,p", [(0, 0.5), (-1, 0.5), (1000, 0.0)])
     def test_invalid_inputs_return_none(self, n, p):
         assert compute_vaf_confidence_interval(1, n, snvq_recall=p) is None
@@ -842,6 +852,10 @@ class TestDetectionConfidenceInterval:
         assert result.vaf_ci_low < result.matched_ctdna_vaf < result.vaf_ci_high
         expected = compute_vaf_confidence_interval(10, 50_000, SNVQ_RECALL)
         assert (result.vaf_ci_low, result.vaf_ci_high) == expected
+
+    def test_invalid_ci_level_raises(self, df_tf, df_signatures_filt):
+        with pytest.raises(ValueError, match="ci_level"):
+            run_detection_analysis(df_tf=df_tf, df_signatures_filt=df_signatures_filt, ci_level=1.5)
 
     def test_ci_level_is_configurable(self, df_tf, df_signatures_filt):
         narrow = run_detection_analysis(df_tf=df_tf, df_signatures_filt=df_signatures_filt, ci_level=0.8)
