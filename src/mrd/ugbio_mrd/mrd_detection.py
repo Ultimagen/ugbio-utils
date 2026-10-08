@@ -779,7 +779,8 @@ def plot_cohort_scatter(
     )
 
     ax.set_yscale("log")
-    ax.set_xlabel("Signature size (loci)", fontsize=10)
+    ax.set_xlabel("Signature size (k events)", fontsize=10)
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x / 1000:g}"))
     ax.set_ylabel("ctDNA VAF", fontsize=10)
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y, _: format_scientific(y) if y > 0 else "0"))
     ax.set_title("Cohort controls: signature size vs. ctDNA VAF", fontsize=11, fontweight="bold")
