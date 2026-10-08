@@ -55,6 +55,13 @@ MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD: float = 0.01
 # otherwise fall below the Bonferroni threshold even though the filter never acts on it.
 _MIN_READS_TO_QC: int = 2
 
+# Fraction of matched-signature reads with SNVQ == 0 (an SRSNV "unscored" sentinel) at
+# which the primary read filter (snvq>threshold) starves for a reason unrelated to ctDNA
+# signal — almost certainly an SRSNV scoring failure rather than a clean negative. Only
+# triggers when literally zero matched reads received a valid (non-zero) SNVQ score, so
+# the call is forced to Indeterminate regardless of the Binomial outcome.
+MAX_SNVQ_ZERO_FRACTION: float = 1.0
+
 
 @dataclass
 class QcCheck:
@@ -143,6 +150,10 @@ class DetectionResult:
     alpha: float = DEFAULT_ALPHA
     lod_fpr: float = DEFAULT_LOD_FPR
     lod_recall: float = 0.95
+
+    # Set when the call was forced to Indeterminate by a data-quality override (e.g. all
+    # matched reads have SNVQ = 0) rather than by the ordinary Binomial/missing-controls path.
+    warning: str | None = None
 
 
 def compute_sample_specific_lod(  # noqa: PLR0911
@@ -242,6 +253,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     lod_fpr: float = DEFAULT_LOD_FPR,
     lod_recall: float = 0.95,
     df_supporting_reads_per_locus: pd.DataFrame | None = None,
+    matched_snvq_zero_fraction: float | None = None,
 ) -> DetectionResult:
     """
     Run the full MRD detection analysis.
@@ -269,6 +281,12 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         FPR used for the personal LOD calculation (default ``DEFAULT_LOD_FPR`` = 0.05).
     lod_recall : float
         Target recall used for the personal LOD calculation (default 0.95).
+    matched_snvq_zero_fraction : float, optional
+        Fraction of matched-signature reads (before any read filter) with SNVQ == 0.
+        When this reaches ``MAX_SNVQ_ZERO_FRACTION`` (i.e. literally no reads received a
+        valid SNVQ score), the call is forced to Indeterminate with a warning, since the
+        primary read filter is starving due to an apparent SRSNV scoring failure rather
+        than a genuine absence of ctDNA signal.
 
     Returns
     -------
@@ -517,7 +535,22 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     # Detection call: require matched_reads > detection_threshold (strict).
     # Using >= (i.e. p_value <= alpha) gives poor calibration at the boundary
     # where VAF == threshold; strict > excludes that ambiguous boundary read count.
-    if len(syn_reads) == 0 or n_effective == 0:
+    #
+    # Override: if ALL matched reads have SNVQ == 0 (unscored by SRSNV), the
+    # snvq>threshold read filter starves for a data-quality reason, not because there is
+    # no ctDNA signal. Reporting "Not Detected" here would be misleading, so force
+    # Indeterminate and surface a warning instead — this takes priority over the ordinary
+    # Binomial/missing-controls path.
+    warning: str | None = None
+    if matched_snvq_zero_fraction is not None and matched_snvq_zero_fraction >= MAX_SNVQ_ZERO_FRACTION:
+        detected = None
+        call = "Indeterminate"
+        warning = (
+            f"{matched_snvq_zero_fraction:.0%} of patient-signature reads have SNVQ = 0 "
+            "(no reads received a valid SNVQ score) — likely an SRSNV scoring failure rather "
+            "than absence of ctDNA signal. Detection call forced to Indeterminate."
+        )
+    elif len(syn_reads) == 0 or n_effective == 0:
         detected = None
         call = "Indeterminate"
     elif detection_threshold is not None and matched_reads > detection_threshold:
@@ -561,6 +594,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         alpha=alpha,
         lod_fpr=lod_fpr,
         lod_recall=lod_recall,
+        warning=warning,
     )
 
 

@@ -422,6 +422,21 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     snvq_recall, filt_ratio, _ = mrd.calc_tumor_fraction_denominator_ratio(
         mrd_report_inputs.featuremap_file, mrd_report_inputs.srsnv_metadata_json, read_filter_query
     )
+
+    # Fraction of matched-signature reads (before any read filter) with SNVQ == 0. When this is
+    # (near) 1.0, the snvq>threshold read filter starves for a data-quality reason (SRSNV scoring
+    # failure) rather than a genuine absence of ctDNA signal — run_detection_analysis uses this to
+    # force the call to Indeterminate instead of misreporting "Not Detected".
+    _matched_all_reads = (
+        df_features[df_features["signature_type"] == "matched"]
+        if "signature_type" in df_features.columns
+        else df_features.iloc[0:0]
+    )
+    matched_snvq_zero_fraction = (
+        float((_matched_all_reads["snvq"] == 0).mean())
+        if len(_matched_all_reads) > 0 and "snvq" in _matched_all_reads.columns
+        else None
+    )
     # Pre-compute snvq_recall for the No-SNVQ-Filter secondary analysis.
     # More reads pass without the SNVQ threshold, so the corrected coverage is larger.
     _no_snvq_q_pre = " and ".join(
@@ -464,6 +479,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             lod_fpr=mrd_report_inputs.lod_fpr,
             lod_recall=mrd_report_inputs.lod_recall,
             df_supporting_reads_per_locus=df_supporting_pre_multi,
+            matched_snvq_zero_fraction=matched_snvq_zero_fraction,
         )
         logger.info("Multi-read filter: Bonferroni p-value threshold=%.4f", thresh_multi_read_pvalue)
     if thresh_multi_read_pvalue is not None:
@@ -601,6 +617,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         lod_fpr=mrd_report_inputs.lod_fpr,
         lod_recall=mrd_report_inputs.lod_recall,
         df_supporting_reads_per_locus=detection_per_locus,
+        matched_snvq_zero_fraction=matched_snvq_zero_fraction,
     )
 
     # 5. Build applied filters (used by the QC report only; the analysis report shows
@@ -724,6 +741,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     detection_json = {
         "call": detection.call,
         "detected": detection.detected,
+        "warning": detection.warning,
         "p_value": detection.p_value,
         "matched_supporting_reads": detection.matched_supporting_reads,
         "matched_ctdna_vaf": detection.matched_ctdna_vaf,
@@ -762,6 +780,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     detection_record = {
         "call": detection.call,
         "detected": detection.detected,
+        "warning": detection.warning,
         "p_value": detection.p_value,
         "matched_supporting_reads": detection.matched_supporting_reads,
         "matched_ctdna_vaf": detection.matched_ctdna_vaf,
@@ -847,6 +866,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             alpha=mrd_report_inputs.alpha,
             lod_fpr=mrd_report_inputs.lod_fpr,
             lod_recall=mrd_report_inputs.lod_recall,
+            matched_snvq_zero_fraction=matched_snvq_zero_fraction,
         )
 
     # Secondary analysis 1: filtered reads + unfiltered signatures
@@ -863,6 +883,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         alpha=mrd_report_inputs.alpha,
         lod_fpr=mrd_report_inputs.lod_fpr,
         lod_recall=mrd_report_inputs.lod_recall,
+        matched_snvq_zero_fraction=matched_snvq_zero_fraction,
     )
 
     # Secondary analysis 2: No SNVQ Filter — derive from the already-loaded df_features.
@@ -922,6 +943,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         alpha=mrd_report_inputs.alpha,
         lod_fpr=mrd_report_inputs.lod_fpr,
         lod_recall=mrd_report_inputs.lod_recall,
+        matched_snvq_zero_fraction=matched_snvq_zero_fraction,
     )
 
     # Save HDF5 tables (secondary)
