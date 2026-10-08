@@ -198,12 +198,20 @@ def render_sbs96_profile(df_features_filt: pd.DataFrame) -> str:
     return _fig_to_base64(fig)
 
 
+def _format_vaf_ci(detection: DetectionResult) -> str:
+    """Format the ctDNA VAF confidence interval as 'low – high', or 'N/A' when it is not available."""
+    if detection.vaf_ci_low is None or detection.vaf_ci_high is None:
+        return "N/A"
+    low = format_scientific(detection.vaf_ci_low) if detection.vaf_ci_low > 0 else "0"
+    return f"{low} – {format_scientific(detection.vaf_ci_high)}"
+
+
 def render_binomial_distribution(detection: DetectionResult) -> str:
     """Render Binomial null distribution PMF with observed reads and detection threshold marked."""
     from scipy.stats import binom as _binom  # noqa: PLC0415
 
-    n = detection.n_effective
-    p = detection.noise_rate
+    n = int(detection.total_coverage)
+    p = detection.snvq_recall * detection.noise_rate
     obs = detection.matched_supporting_reads
     alpha = getattr(detection, "alpha", 0.01)
 
@@ -260,7 +268,7 @@ def render_binomial_distribution(detection: DetectionResult) -> str:
             fontsize=9,
         )
 
-    noise_label = format_scientific(p) if p > 0 else "0"
+    noise_label = format_scientific(detection.noise_rate) if detection.noise_rate > 0 else "0"
     ax.set_xlabel("Supporting reads", fontsize=10)
     ax.set_ylabel("Probability", fontsize=10)
     ax.set_title(
@@ -1289,8 +1297,9 @@ def render_analysis_report(  # noqa: PLR0913
     noise_rate_str = format_scientific(detection.noise_rate) if detection.noise_rate > 0 else "0"
     # T = K/P: supporting reads corrected for SNVQ recall → total signal estimate
     total_signal_t = detection.matched_supporting_reads / snvq_recall if snvq_recall > 0 else 0.0
-    # N = total coverage at signature loci (back-computed from corrected_coverage / P)
-    total_coverage_n = detection.corrected_coverage / snvq_recall if snvq_recall > 0 else 0.0
+    total_coverage_n = detection.total_coverage
+    vaf_ci_str = _format_vaf_ci(detection)
+    ci_level_str = f"{detection.ci_level:.0%}"
 
     context = {
         "report_title": "MRD Analysis Report",
@@ -1305,6 +1314,8 @@ def render_analysis_report(  # noqa: PLR0913
         "total_coverage_n": total_coverage_n,
         "snvq_threshold": _snvq_thr,
         "lod_str": format_scientific(detection.sample_specific_lod) if detection.sample_specific_lod else "N/A",
+        "vaf_ci_str": vaf_ci_str,
+        "ci_level_str": ci_level_str,
         "signal_noise_img": patient_controls_img,
         "sbs96_plots": sbs96_plots,
         "sbs6_vaf_plots": sbs6_vaf_plots,
@@ -1645,7 +1656,9 @@ def render_qc_report(  # noqa: PLR0912, PLR0913, PLR0915, C901
     binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
     noise_rate_str = format_scientific(detection.noise_rate) if detection.noise_rate > 0 else "0"
     total_signal_t = detection.matched_supporting_reads / snvq_recall if snvq_recall > 0 else 0.0
-    total_coverage_n = detection.corrected_coverage / snvq_recall if snvq_recall > 0 else 0.0
+    total_coverage_n = detection.total_coverage
+    vaf_ci_str = _format_vaf_ci(detection)
+    ci_level_str = f"{detection.ci_level:.0%}"
 
     context = {
         "report_title": "MRD QC Report",
@@ -1660,6 +1673,8 @@ def render_qc_report(  # noqa: PLR0912, PLR0913, PLR0915, C901
         "total_coverage_n": total_coverage_n,
         "snvq_threshold": _snvq_thr,
         "lod_str": format_scientific(detection.sample_specific_lod) if detection.sample_specific_lod else "N/A",
+        "vaf_ci_str": vaf_ci_str,
+        "ci_level_str": ci_level_str,
         "snvq_recall": snvq_recall,
         "signal_noise_img": patient_controls_img,
         "sbs96_plots": sbs96_plots,

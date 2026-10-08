@@ -14,9 +14,12 @@ ctDNA VAF estimation
   T = total signal = K / P  (K corrected for recall)
   ctDNA VAF = T / N
 
-The Binomial test uses n_effective = N × P (= corrected_coverage) as the trial count
-and K as the observed count. The noise rate p_err is estimated from db_control synthetic
+Under the model K ~ Binom(N, P × f) (each true-signal read is observed with probability P) the
+Binomial test uses the raw coverage N as the trial count and P × p_err as the per-read noise
+probability. The noise rate p_err = (k_db / P) / N_db is estimated from db_control synthetic
 signatures via MLE; a Jeffreys-prior floor is applied when zero background reads are observed.
+The confidence interval on ctDNA VAF is the exact (Clopper-Pearson) interval on K out of N,
+divided by P.
 """
 
 from dataclasses import dataclass, field
@@ -26,7 +29,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
-from scipy.stats import binom, poisson
+from scipy.stats import beta, binom, poisson
 from ugbio_core.logger import logger
 
 # Significance threshold (alpha) for the MRD detection call.
@@ -37,6 +40,9 @@ DEFAULT_ALPHA: float = 0.01
 # recall-threshold approach: LOD is the TF that achieves 95% recall at
 # the 5th-percentile detection boundary, independent of the call alpha).
 DEFAULT_LOD_FPR: float = 0.05
+
+# Confidence level of the two-sided interval reported on the ctDNA VAF.
+DEFAULT_CI_LEVEL: float = 0.95
 
 # QC thresholds — displayed as checkboxes in the report
 MIN_SIGNATURE_SIZE: int = 500  # minimum filtered signature loci
@@ -73,23 +79,23 @@ class QcCheck:
     passed: bool
 
 
-def _binom_detection_threshold(n: int, p_err: float, alpha: float) -> int | None:
+def _binom_detection_threshold(n: int, p_obs: float, alpha: float) -> int | None:
     """Return the smallest read count k at which the Binomial right-tail probability falls below *alpha*.
 
-    Formally, returns ``min{k : P(X ≥ k | Binom(n, p_err)) < alpha}``, i.e., the minimum number of
+    Formally, returns ``min{k : P(X ≥ k | Binom(n, p_obs)) < alpha}``, i.e., the minimum number of
     supporting reads required to reject the noise-only null hypothesis at significance level *alpha*.
 
     The search range upper bound is set dynamically via the Binomial PPF at the 99.99th percentile
-    plus a small safety buffer of 10, so the function remains correct even when ``n * p_err`` is large
+    plus a small safety buffer of 10, so the function remains correct even when ``n * p_obs`` is large
     (a fixed cap would miss the true threshold in high-coverage or high-noise-rate regimes).
 
     Parameters
     ----------
     n : int
-        Effective Binomial trial count (N × P = total_coverage × SNVQ_recall = corrected_coverage).
-    p_err : float
-        Per-locus background noise rate (MLE from db_control signatures, or Jeffreys-prior floor
-        when zero background reads were observed).
+        Binomial trial count: the raw coverage N at the signature loci.
+    p_obs : float
+        Probability that a covering read is a background supporting read, i.e. P × p_err
+        (p_err from db_control, MLE or Jeffreys-prior floor when no background reads were observed).
     alpha : float
         Significance level; the caller supplies either the detection alpha or the LOD FPR.
 
@@ -99,8 +105,8 @@ def _binom_detection_threshold(n: int, p_err: float, alpha: float) -> int | None
         Detection threshold k, or ``None`` when no k satisfies the criterion (meaning the noise
         distribution is so diffuse that significance cannot be achieved at the given alpha).
     """
-    k_max = int(binom.ppf(0.9999, n, max(p_err, 1e-12))) + 10
-    sf_vals = binom.sf(np.arange(k_max + 1) - 1, n, p_err)
+    k_max = int(binom.ppf(0.9999, n, max(p_obs, 1e-12))) + 10
+    sf_vals = binom.sf(np.arange(k_max + 1) - 1, n, p_obs)
     hits = np.where(sf_vals < alpha)[0]
     return int(hits[0]) if len(hits) > 0 else None
 
@@ -113,12 +119,12 @@ class DetectionResult:
     detected: bool | None  # True/False/None (indeterminate)
     call: str  # "MRD Detected" / "MRD Not Detected" / "Indeterminate"
 
-    # Binomial p-value: P(X >= matched_reads | n_effective, noise_rate)
+    # Binomial p-value: P(X >= matched_reads | Binom(N, P × noise_rate))
     p_value: float
 
     # Observed signal
     matched_supporting_reads: int  # K: supporting reads passing SNVQ threshold
-    matched_ctdna_vaf: float  # T/N where T = K/P (total signal) and N = total coverage
+    matched_ctdna_vaf: float  # (K/P)/N: K/P estimates the true signal reads, N = raw coverage
 
     # Null distribution summary
     null_median_reads: float
@@ -135,12 +141,12 @@ class DetectionResult:
     # Assay metrics
     signature_size: int  # number of loci in filtered signature
     mean_coverage: float  # mean coverage at signature loci; N = signature_size × mean_coverage
-    corrected_coverage: float  # N × P = total_coverage × SNVQ_recall (Binomial trial count)
+    corrected_coverage: float  # output-only (N × P from df_tf); not used in any calculation
     detection_threshold: int | None  # minimum reads for p < alpha from fitted null; None when no threshold exists
 
     # Binomial model fields
-    noise_rate: float  # background error rate from db_control (p_err)
-    n_effective: int  # = corrected_coverage = N × P, used as Binomial n
+    noise_rate: float  # background VAF from db_control: p_err = (k_db / P) / N_db
+    n_effective: int  # output-only int(corrected_coverage); not used in any calculation
     jeffreys_prior_applied: bool  # True when no db_control reads observed (p_err floor via prior)
 
     # QC checks (shown as pass/fail checkboxes in the report)
@@ -155,23 +161,89 @@ class DetectionResult:
     # matched reads have SNVQ = 0) rather than by the ordinary Binomial/missing-controls path.
     warning: str | None = None
 
+    # Binomial model inputs: raw matched coverage N and SNVQ recall P (K ~ Binom(N, P × f)).
+    total_coverage: float = 0.0
+    snvq_recall: float = 1.0
+
+    # Two-sided CI on the ctDNA VAF (total, background included); None when N or P is not valid.
+    vaf_ci_low: float | None = None
+    vaf_ci_high: float | None = None
+    ci_level: float = DEFAULT_CI_LEVEL
+
+    @property
+    def detection_threshold_vaf(self) -> float | None:
+        """Detection threshold on the VAF scale, (threshold / P) / N."""
+        if self.detection_threshold is None or self.total_coverage <= 0 or self.snvq_recall <= 0:
+            return None
+        return (self.detection_threshold / self.snvq_recall) / self.total_coverage
+
+
+def _validate_ci_level(ci_level: float) -> None:
+    """Raise ValueError unless 0 < ci_level < 1."""
+    if not 0.0 < ci_level < 1.0:
+        raise ValueError(f"ci_level must be in the range (0, 1), got {ci_level}")
+
+
+def compute_vaf_confidence_interval(
+    k: int,
+    n: int,
+    snvq_recall: float,
+    ci_level: float = DEFAULT_CI_LEVEL,
+) -> tuple[float, float] | None:
+    """
+    Exact two-sided (Clopper-Pearson) confidence interval on the ctDNA VAF (K/P)/N.
+
+    K ~ Binom(N, P × f), so the exact interval on the observed proportion K/N is divided by P to
+    give the interval on f. P is treated as known; the interval is on the total VAF (background
+    included) and does not use the background noise estimate.
+
+    Parameters
+    ----------
+    k : int
+        Supporting reads (K).
+    n : int
+        Raw coverage at the signature loci (N).
+    snvq_recall : float
+        P, the fraction of true signal reads passing the read filter.
+    ci_level : float
+        Confidence level in (0, 1) (default 0.95).
+
+    Returns
+    -------
+    tuple[float, float] or None
+        (low, high) VAF bounds, both capped at 1; None when N or P is not positive.
+
+    Raises
+    ------
+    ValueError
+        If ci_level is not in (0, 1).
+    """
+    _validate_ci_level(ci_level)
+    if n <= 0 or snvq_recall <= 0:
+        return None
+    tail = (1.0 - ci_level) / 2.0
+    low = 0.0 if k <= 0 else float(beta.ppf(tail, k, n - k + 1))
+    high = 1.0 if k >= n else float(beta.ppf(1.0 - tail, k + 1, n - k))
+    return min(low / snvq_recall, 1.0), min(high / snvq_recall, 1.0)
+
 
 def compute_sample_specific_lod(  # noqa: PLR0911
     n: int,
     p_err: float,
     target_recall: float = 0.95,
     fpr: float = DEFAULT_LOD_FPR,
+    snvq_recall: float = 1.0,
 ) -> float | None:
     """
     Estimate personal LOD via analytical Binomial model.
 
-    Mirrors the notebook's ``find_lod_at_tpr`` approach:
+    Mirrors the notebook's ``find_lod_at_tpr`` approach, with K ~ Binom(N, q) where q = P × (VAF):
 
-    1. Use the pre-computed effective trial count N (= corrected_coverage for the matched signature).
+    1. Use the raw coverage N of the matched signature as the trial count.
     2. Derive the detection threshold ``n_th`` as the smallest k such that
-       Binomial.sf(k-1, N, p_err) < fpr  (analytic FPR control on the null).
+       Binomial.sf(k-1, N, P × p_err) < fpr  (analytic FPR control on the null).
     3. Find the smallest TF where recall >= target_recall, i.e.
-       Binomial.sf(n_th-1, N, p_err + TF) = target_recall.
+       Binomial.sf(n_th-1, N, P × (p_err + TF)) = target_recall.
        Since recall is monotone increasing in TF, the root is bracketed on
        [0, 1 - p_err] and solved with ``scipy.optimize.brentq``.
 
@@ -183,31 +255,28 @@ def compute_sample_specific_lod(  # noqa: PLR0911
     Parameters
     ----------
     n : int
-        Effective Binomial trial count (N × P = total_coverage × SNVQ_recall = corrected_coverage).
-        Callers should pass the ``corrected_coverage`` value already computed by
-        ``get_tf_from_filtered_data`` (= ceil(sum(coverage) * SNVQ_recall))
-        so that the LOD and the reported ctDNA VAF share exactly the same
-        denominator.
+        Raw coverage N at the matched signature loci (the Binomial trial count).
     p_err : float
-        Background error rate estimated from db_control synthetic controls
-        (total supporting reads / total corrected coverage).
+        Background VAF estimated from db_control synthetic controls, (k_db / P) / N_db.
     target_recall : float
         Required detection probability (default 0.95).
     fpr : float
         False-positive rate used to set the detection threshold (default 0.05).
+    snvq_recall : float
+        P, the fraction of true signal reads passing the read filter (default 1, i.e. no filter).
 
     Returns
     -------
     float or None
         Personal LOD (tumor fraction above background) or None if not computable.
     """
-    if n <= 0:
-        logger.warning("Cannot compute personal LOD: n=%d", n)
+    if n <= 0 or snvq_recall <= 0:
+        logger.warning("Cannot compute personal LOD: n=%d, snvq_recall=%s", n, snvq_recall)
         return None
 
     # Step 1: analytic detection threshold at the given FPR under the null.
-    # n_th = smallest k s.t. P(X >= k | Binom(n, p_err)) < fpr
-    n_th = _binom_detection_threshold(n, p_err, fpr)
+    # n_th = smallest k s.t. P(X >= k | Binom(n, P * p_err)) < fpr
+    n_th = _binom_detection_threshold(n, snvq_recall * p_err, fpr)
     if n_th is None:
         logger.debug(
             "Personal LOD: no threshold satisfies FPR<%.3f (N=%d, p_err=%.2e) — LOD indeterminate",
@@ -218,12 +287,12 @@ def compute_sample_specific_lod(  # noqa: PLR0911
         return None
 
     # Step 2: find the smallest TF where recall >= target_recall.
-    # recall(tf) = binom.sf(n_th - 1, n, p_err + tf) is monotone increasing in tf.
+    # recall(tf) = binom.sf(n_th - 1, n, P * (p_err + tf)) is monotone increasing in tf.
     # Use brentq on the signed residual over the bracket [0, 1 - p_err]:
-    #   at tf=0  recall = binom.sf(n_th-1, n, p_err) < fpr <= target_recall → residual < 0
-    #   at tf=1-p_err  p=1  recall=1 >= target_recall                        → residual > 0
+    #   at tf=0  recall = binom.sf(n_th-1, n, P*p_err) < fpr <= target_recall → residual < 0
+    #   at tf=1-p_err  VAF=1  recall >= target_recall when P*n is large                → residual > 0
     def _recall_residual(tf):
-        return binom.sf(n_th - 1, n, p_err + tf) - target_recall
+        return binom.sf(n_th - 1, n, snvq_recall * (p_err + tf)) - target_recall
 
     tf_lo, tf_hi = 0.0, 1.0 - p_err
     try:
@@ -254,6 +323,9 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     lod_recall: float = 0.95,
     df_supporting_reads_per_locus: pd.DataFrame | None = None,
     matched_snvq_zero_fraction: float | None = None,
+    ci_level: float = DEFAULT_CI_LEVEL,
+    *,
+    snvq_recall: float,
 ) -> DetectionResult:
     """
     Run the full MRD detection analysis.
@@ -261,18 +333,18 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     Extracts matched and synthetic control supporting read counts from
     the existing df_tf dataframe, computes a Binomial p-value against
     a noise model derived from db_control signatures, makes a detection
-    call, and estimates personal LOD.
+    call, estimates personal LOD and a confidence interval on the ctDNA VAF.
+
+    Model: K ~ Binom(N, P × f) with N the raw coverage and P the SNVQ recall, so that
+    VAF = (K/P)/N. N and P are used directly; no "corrected coverage" is computed.
 
     Parameters
     ----------
     df_tf : pd.DataFrame
         Tumor fraction dataframe as produced by get_tf_from_filtered_data.
         Index: (signature_type, signature).
-        Columns: supporting_reads (K), coverage (N raw), corrected_coverage (N×P), ctdna_vaf (T/N).
-        The ``corrected_coverage`` column is the single authoritative Binomial
-        trial count (= ceil(N × P)) and is used directly
-        for the p-value, detection threshold, and LOD calculations so that all
-        three share exactly the same denominator as the reported ctDNA VAF.
+        Columns: supporting_reads (K), coverage (N raw), ctdna_vaf ((K/P)/N); the
+        ``corrected_coverage`` column is carried through to the output only.
     df_signatures_filt : pd.DataFrame
         Filtered signature dataframe with per-locus coverage (used for QC metrics).
     alpha : float
@@ -287,12 +359,18 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         valid SNVQ score), the call is forced to Indeterminate with a warning, since the
         primary read filter is starving due to an apparent SRSNV scoring failure rather
         than a genuine absence of ctDNA signal.
+    ci_level : float
+        Confidence level of the two-sided interval on the ctDNA VAF (default 0.95).
+    snvq_recall : float
+        P, the fraction of true signal reads passing the read filter (keyword-only).
 
     Returns
     -------
     DetectionResult
         Complete detection analysis results.
     """
+    _validate_ci_level(ci_level)
+
     # Extract matched signature data
     try:
         matched_data = df_tf.loc["matched"]
@@ -318,6 +396,8 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             n_effective=0,
             jeffreys_prior_applied=False,
             qc_checks=[],
+            snvq_recall=snvq_recall,
+            ci_level=ci_level,
         )
 
     # Handle single or multiple matched signatures (take first)
@@ -328,7 +408,8 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
 
     matched_reads = int(matched_row["supporting_reads"])
     matched_vaf = float(matched_row["ctdna_vaf"])
-    corrected_coverage = float(matched_row["corrected_coverage"])
+    total_coverage = float(matched_row["coverage"])
+    corrected_coverage = float(matched_row["corrected_coverage"])  # output-only
 
     # Extract synthetic control (db_control) supporting reads + background error rate
     syn_names: list[str] = []
@@ -338,28 +419,30 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             syn_reads = np.array([int(db_control_data["supporting_reads"])])
             syn_names = [str(db_control_data.name)]
             db_total_reads = float(db_control_data["supporting_reads"])
-            db_total_cov = float(db_control_data["corrected_coverage"])
+            db_total_cov = float(db_control_data["coverage"])
         else:
             syn_reads = db_control_data["supporting_reads"].to_numpy().astype(int)
             syn_names = [str(s) for s in db_control_data.index.get_level_values("signature")]
             db_total_reads = float(db_control_data["supporting_reads"].sum())
-            db_total_cov = float(db_control_data["corrected_coverage"].sum())
-        # Noise rate estimation:
-        # - When background reads are observed, use MLE: p_err = k / N.
-        # - When zero reads are observed, apply Jeffreys prior: p_err = 0.5 / (N + 1)
+            db_total_cov = float(db_control_data["coverage"].sum())
+        # Noise rate (a VAF, same scale as ctdna_vaf) estimation:
+        # - When background reads are observed, use MLE: p_err = (k / P) / N.
+        # - When zero reads are observed, apply Jeffreys prior: p_err = (0.5 / P) / (N + 1)
         #   to avoid a hard zero that would make the null Binomial degenerate.
-        # If total corrected coverage is zero the null model has no depth; treat as
+        # If total coverage is zero the null model has no depth; treat as
         # missing controls (p_err=0.0 + syn_reads empty) so the call is Indeterminate.
         raw_reads_zero = db_total_reads == 0
-        if db_total_cov > 0:
+        if db_total_cov > 0 and snvq_recall > 0:
             if raw_reads_zero:
-                p_err = 0.5 / (db_total_cov + 1)  # Jeffreys prior floor
+                p_err = (0.5 / snvq_recall) / (db_total_cov + 1)  # Jeffreys prior floor
             else:
-                p_err = db_total_reads / db_total_cov  # MLE
+                p_err = (db_total_reads / snvq_recall) / db_total_cov  # MLE
         else:
             logger.warning(
-                "db_control corrected_coverage is zero despite %d synthetic control(s) present — "
-                "null model depth invalid; setting call to Indeterminate.",
+                "db_control coverage (%s) or SNVQ recall (%s) is not positive despite %d synthetic control(s) "
+                "present — null model depth invalid; setting call to Indeterminate.",
+                db_total_cov,
+                snvq_recall,
                 len(syn_reads),
             )
             syn_reads = np.array([])  # force Indeterminate path
@@ -398,14 +481,13 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             else 0.0
         )
 
-    # Binomial p-value: P(X >= observed | N, p_err) under null Binom(n_effective, p_err).
-    # n_effective comes directly from df_tf corrected_coverage, which is the same denominator
-    # used to compute ctdna_vaf — ensuring p-value, LOD, and VAF all share a single N.
-    n_effective = int(corrected_coverage)
-    if len(syn_reads) == 0 or n_effective == 0:
+    # Binomial p-value: P(X >= K | Binom(N, P * p_err)) under the noise-only null, N = raw coverage.
+    n_total = int(total_coverage)
+    n_effective = int(corrected_coverage)  # output-only
+    if len(syn_reads) == 0 or n_total == 0 or snvq_recall <= 0:
         p_value = 1.0
     else:
-        p_value = float(binom.sf(matched_reads - 1, n_effective, p_err))
+        p_value = float(binom.sf(matched_reads - 1, n_total, snvq_recall * p_err))
 
     # QC checks — displayed as pass/fail checkboxes; do NOT force Indeterminate
     qc_checks: list[QcCheck] = [
@@ -525,10 +607,10 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Could not compute %s multi-read support QC check: %s", ctrl_type, exc)
 
-    # Detection threshold from Binomial model: smallest k s.t. Binom.sf(k-1, n_effective, p_err) < alpha.
+    # Detection threshold from Binomial model: smallest k s.t. Binom.sf(k-1, N, P * p_err) < alpha.
     # Returns None when no integer threshold satisfies the criterion (e.g. noise too diffuse for alpha).
-    if n_effective > 0 and p_err > 0:
-        detection_threshold = _binom_detection_threshold(n_effective, p_err, alpha)
+    if n_total > 0 and p_err > 0 and snvq_recall > 0:
+        detection_threshold = _binom_detection_threshold(n_total, snvq_recall * p_err, alpha)
     else:
         detection_threshold = None
 
@@ -550,7 +632,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             "(no reads received a valid SNVQ score) — likely an SRSNV scoring failure rather "
             "than absence of ctDNA signal. Detection call forced to Indeterminate."
         )
-    elif len(syn_reads) == 0 or n_effective == 0:
+    elif len(syn_reads) == 0 or n_total == 0 or snvq_recall <= 0:
         detected = None
         call = "Indeterminate"
     elif detection_threshold is not None and matched_reads > detection_threshold:
@@ -564,12 +646,15 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     # Stored as total VAF so it sits on the same scale as matched_ctdna_vaf and the
     # LOD line shown in the patient vs controls plot.
     _lod_incremental = compute_sample_specific_lod(
-        n=n_effective,
+        n=n_total,
         p_err=p_err,
         target_recall=lod_recall,
         fpr=lod_fpr,
+        snvq_recall=snvq_recall,
     )
     sample_specific_lod = (p_err + _lod_incremental) if _lod_incremental is not None else None
+
+    vaf_ci = compute_vaf_confidence_interval(matched_reads, n_total, snvq_recall, ci_level)
 
     return DetectionResult(
         detected=detected,
@@ -595,6 +680,11 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         lod_fpr=lod_fpr,
         lod_recall=lod_recall,
         warning=warning,
+        total_coverage=total_coverage,
+        snvq_recall=snvq_recall,
+        vaf_ci_low=vaf_ci[0] if vaf_ci else None,
+        vaf_ci_high=vaf_ci[1] if vaf_ci else None,
+        ci_level=ci_level,
     )
 
 
@@ -607,10 +697,10 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
     Vertical strip/violin plot: patient vs. synthetic controls.
 
     Left Y-axis (log): ctDNA VAF.
-    Right Y-axis (log): Signature supporting reads (= VAF × corrected_coverage).
+    Right Y-axis (log): Signature supporting reads (= VAF × N × P).
 
-    * Synthetic controls: synthetic_signatures_supporting_reads / corrected_coverage (VAF scale).
-    * Patient: matched_ctdna_vaf; legend includes read count.
+    * Synthetic controls: synthetic_signatures_supporting_reads / (N × P) (VAF scale).
+    * Patient: matched_ctdna_vaf with its confidence interval; legend includes read count.
     * Cohort controls are shown in a separate scatter plot.
     """
     if ax is None:
@@ -618,7 +708,9 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
 
     null = detection.synthetic_signatures_supporting_reads  # array of per-signature supporting reads
     obs = detection.matched_supporting_reads
-    corr_cov = detection.corrected_coverage
+    n_total = int(detection.total_coverage)
+    # Expected supporting reads per unit VAF; only the VAF <-> reads axis conversion uses it.
+    reads_per_vaf = detection.total_coverage * detection.snvq_recall
     _vaf_floor = 1e-7
 
     def _safe_vaf(v):
@@ -626,8 +718,8 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
 
     # ── Synthetic controls ────────────────────────────────────────────────────
     x_emp, x_fit = 0.0, 0.6
-    if len(null) > 0 and corr_cov > 0:
-        null_vafs = np.array([_safe_vaf(v / corr_cov) for v in null])
+    if len(null) > 0 and reads_per_vaf > 0:
+        null_vafs = np.array([_safe_vaf(v / reads_per_vaf) for v in null])
         rng = np.random.default_rng(42)
         ax.scatter(
             x_emp + rng.uniform(-0.14, 0.14, size=len(null)),
@@ -639,19 +731,20 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
             label=f"Synthetic controls (n={len(null)})",
         )
 
-        n_eff = getattr(detection, "n_effective", 0)
         p_err_val = getattr(detection, "noise_rate", 0.0)
         rng2 = np.random.default_rng(7)
-        if n_eff > 0:
-            fit_reads = binom.rvs(n_eff, p_err_val, size=max(len(null) * 20, 500), random_state=rng2)
+        if n_total > 0:
+            fit_reads = binom.rvs(
+                n_total, detection.snvq_recall * p_err_val, size=max(len(null) * 20, 500), random_state=rng2
+            )
             p_err_str = format_scientific(p_err_val) if p_err_val > 0 else "0"
             fit_label = f"Binomial null (p_err={p_err_str})"
-            fit_vafs = np.array([_safe_vaf(r / n_eff) for r in fit_reads])
+            fit_vafs = np.array([_safe_vaf(r / reads_per_vaf) for r in fit_reads])
         else:
             lam = float(np.mean(null)) if len(null) > 0 else 0.01
             fit_reads = poisson.rvs(max(lam, 1e-9), size=max(len(null) * 20, 500), random_state=rng2)
             fit_label = f"Poisson fallback (λ={lam:.2f})"
-            fit_vafs = np.array([_safe_vaf(r / max(corr_cov, 1)) for r in fit_reads])
+            fit_vafs = np.array([_safe_vaf(r / max(reads_per_vaf, 1)) for r in fit_reads])
         vp = ax.violinplot(fit_vafs, positions=[x_fit], widths=0.35, showmedians=True, showextrema=True)
         for body in vp["bodies"]:
             body.set_facecolor("#3a9ad9")
@@ -664,35 +757,47 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
 
     # ── Compute threshold in VAF before plotting ──────────────────────────────
     det_vaf = None
-    n_eff_plot = getattr(detection, "n_effective", 0)
     p_err_plot = getattr(detection, "noise_rate", 0.0)
     _alpha_plot = getattr(detection, "alpha", DEFAULT_ALPHA)
-    if n_eff_plot > 0 and corr_cov > 0:
-        n_th = _binom_detection_threshold(n_eff_plot, p_err_plot, _alpha_plot)
+    if n_total > 0 and reads_per_vaf > 0:
+        n_th = _binom_detection_threshold(n_total, detection.snvq_recall * p_err_plot, _alpha_plot)
         if n_th is not None:
-            det_vaf = n_th / corr_cov
+            det_vaf = n_th / reads_per_vaf
 
     # ── Patient signal ────────────────────────────────────────────────────────
     x_pat = 1.5
     pat_vaf = _safe_vaf(detection.matched_ctdna_vaf)
     pat_vaf_str = format_scientific(detection.matched_ctdna_vaf) if detection.matched_ctdna_vaf > 0 else "0"
-    ax.scatter(
-        [x_pat], [pat_vaf], color="#c0392b", s=160, marker="*", zorder=6, label=f"Patient ({obs} reads, {pat_vaf_str})"
-    )
+    pat_label = f"Patient ({obs} reads, {pat_vaf_str})"
+    ci_low, ci_high = detection.vaf_ci_low, detection.vaf_ci_high
+    if ci_low is not None and ci_high is not None:
+        ci_low_str = format_scientific(ci_low) if ci_low > 0 else "0"
+        pat_label += f"\n{detection.ci_level:.0%} CI: {ci_low_str} – {format_scientific(ci_high)}"
+        ax.errorbar(
+            [x_pat],
+            [pat_vaf],
+            yerr=[[max(pat_vaf - _safe_vaf(ci_low), 0.0)], [max(ci_high - pat_vaf, 0.0)]],
+            fmt="none",
+            ecolor="#c0392b",
+            elinewidth=1.6,
+            capsize=6,
+            zorder=5,
+        )
+    ax.scatter([x_pat], [pat_vaf], color="#c0392b", s=160, marker="*", zorder=6, label=pat_label)
 
     # ── Threshold / LOD lines in VAF ─────────────────────────────────────────
-    if det_vaf is not None and n_eff_plot > 0:
-        n_th_reads = int(round(det_vaf * corr_cov))
+    if det_vaf is not None and n_total > 0:
+        n_th_reads = int(round(det_vaf * reads_per_vaf))
         _det_label = (
             f"Detection threshold ({format_scientific(det_vaf)}, {n_th_reads} reads)" f" | α={_alpha_plot * 100:.0f}%"
         )
         ax.axhline(
             _safe_vaf(det_vaf), color="#e67e22", linewidth=1.8, linestyle="--", alpha=0.9, zorder=4, label=_det_label
         )
-    if detection.sample_specific_lod is not None and n_eff_plot > 0:
+    if detection.sample_specific_lod is not None and n_total > 0:
         # sample_specific_lod is already total VAF (p_err + incremental TF).
         lod_total_vaf = detection.sample_specific_lod
-        n_lod_reads = int(round(n_eff_plot * lod_total_vaf))
+        n_lod_reads = int(round(reads_per_vaf * lod_total_vaf))
         _lod_recall_plot = getattr(detection, "lod_recall", 0.95)
         _lod_label = (
             f"Sample-specific LOD = {format_scientific(lod_total_vaf)} ({n_lod_reads} reads)"
@@ -710,7 +815,9 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
 
     # ── Scale / labels ────────────────────────────────────────────────────────
     ax.set_yscale("log")
-    y_vals = [pat_vaf] + (list(null / corr_cov) if len(null) > 0 and corr_cov > 0 else [])
+    y_vals = [pat_vaf] + (list(null / reads_per_vaf) if len(null) > 0 and reads_per_vaf > 0 else [])
+    if detection.vaf_ci_high:
+        y_vals.append(detection.vaf_ci_high)
     if detection.sample_specific_lod:
         y_vals.append(detection.sample_specific_lod)
     ax.set_ylim(_vaf_floor * 0.5, max(y_vals) * 8)
@@ -730,11 +837,11 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
         spine.set_linewidth(0.8)
 
     # ── Right axis: supporting reads aligned to left VAF axis ─────────────────
-    if corr_cov > 0:
+    if reads_per_vaf > 0:
         ax2 = ax.twinx()
         y_min, y_max = ax.get_ylim()
         ax2.set_yscale("log")
-        ax2.set_ylim(y_min * corr_cov, y_max * corr_cov)
+        ax2.set_ylim(y_min * reads_per_vaf, y_max * reads_per_vaf)
         ax2.set_ylabel("Signature supporting reads", fontsize=10)
         ax2.yaxis.set_major_formatter(
             mticker.FuncFormatter(lambda y, _: f"{int(round(y))}" if y >= 0.5 else "")  # noqa: PLR2004
