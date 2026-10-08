@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import ugbio_mrd.generate_mrd_report as generate_mrd_report_module
 from ugbio_mrd.generate_mrd_report import (
     MrdReportInputs,
     _build_filter_funnel,
@@ -144,8 +145,6 @@ def test_generate_mrd_report_snvq_scoring_failure_forces_indeterminate(output_pa
     -> JSON / HDF5 / both HTML banners), not just the unit-level override in mrd_detection.py, so a
     column-name, fraction, persistence, or template regression would be caught here.
     """
-    import ugbio_mrd.generate_mrd_report as generate_mrd_report_module
-
     original_read_and_filter = generate_mrd_report_module.mrd.read_and_filter_features_parquet
 
     def _zero_out_matched_snvq(*args, **kwargs):
