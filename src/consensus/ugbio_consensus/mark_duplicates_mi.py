@@ -11,6 +11,12 @@ Singletons (unique pairs, unmapped, or unpaired reads) get MI = their own query 
 With --use-umi a second tag, CS, links the two strands of one original duplex molecule,
 which the UMI part of the key necessarily splits into two MI families. See assign_cs().
 
+Two opt-in refinements, both off by default so the default output is unchanged:
+--position-tolerance merges same-UMI clusters whose fragment boundaries differ by a few bp
+(read1/read2 use asymmetric adapters, so one molecule's copies can map 1-3 bp apart), and
+--cross-strand additionally merges F1R2/F2R1 partners into one MI family. See
+merge_duplex_partners().
+
 Two execution modes:
 
 * whole-file (default): one streaming pass to pair reads by name, holding one dict
@@ -42,6 +48,7 @@ import argparse
 import bisect
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -58,6 +65,9 @@ MIN_CLUSTER_SIZE = 2
 # A shorter key was built without --use-umi, so there is no cross-strand link to make.
 UMI_KEY_LEN = 5
 
+# Default is 0 (exact boundary match) so that --use-umi output is unchanged unless asked.
+DEFAULT_POSITION_TOLERANCE = 0
+
 # Default mate-search window for sharded mode. Measured on 606174-L15806-Z0229
 # (xGen pan-cancer, PE): 99.05% of pairs span <400 bp, 99.81% <500 bp, 99.90% <20 kb.
 # 2 kb is well past the real fragment distribution; the remaining 0.1% are chimeric
@@ -67,6 +77,12 @@ DEFAULT_SHARD_SIZE = 10_000_000
 # Safety valve only: with --regions the shards are the BED intervals themselves, and a
 # panel's targets are a few kb wide. This caps a pathologically wide merged interval.
 DEFAULT_MAX_SHARD_SPAN = 50_000
+
+
+def _sam_tag(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]", value):
+        raise argparse.ArgumentTypeError(f"{value!r} is not a two-character SAM tag")
+    return value
 
 
 def parse_args():
@@ -87,6 +103,31 @@ def parse_args():
         "--use-umi",
         action="store_true",
         help="Include u3 and u5 UMI tags in the deduplication key",
+    )
+    parser.add_argument(
+        "--pair-orientation-tag",
+        type=_sam_tag,
+        default=None,
+        metavar="TAG",
+        help="Write each primary read's pair orientation (F1R2, F2R1, FF or RR) to this "
+        "two-character tag, and drop any stale value. Reads whose mate is on another contig, "
+        "absent, or (in sharded mode) further than --pad away get no tag.",
+    )
+    parser.add_argument(
+        "--position-tolerance",
+        type=int,
+        default=DEFAULT_POSITION_TOLERANCE,
+        metavar="BP",
+        help="With --use-umi, merge same-UMI clusters whose fragment boundaries differ by at most "
+        f"this many bp (default {DEFAULT_POSITION_TOLERANCE}, i.e. exact match). "
+        "Independent of --cross-strand.",
+    )
+    parser.add_argument(
+        "--cross-strand",
+        action="store_true",
+        help="With --use-umi, merge F1R2 and F2R1 duplex partners of the same molecule into one "
+        "MI family instead of only linking them via CS. The partners' boundaries must match "
+        "within --position-tolerance.",
     )
     parser.add_argument(
         "--reference",
@@ -215,8 +256,29 @@ def _r1_is_reverse(r1: tuple, r2: tuple) -> bool:
     return r1[_IS_REVERSE]
 
 
+def _pair_orientation(r1: tuple, r2: tuple) -> str:
+    """F1R2, F2R1, FF or RR, from the strand of R1 and R2."""
+    if r1[_IS_REVERSE] == r2[_IS_REVERSE]:
+        return "RR" if r1[_IS_REVERSE] else "FF"
+    return "F2R1" if r1[_IS_REVERSE] else "F1R2"
+
+
+def _set_or_strip_po(read, orientation: str | None, tag: str) -> None:
+    """Stamp the pair orientation, or remove a stale one. Secondary and supplementary records are left alone."""
+    if read.is_secondary or read.is_supplementary:
+        return
+    if orientation is not None:
+        read.set_tag(tag, orientation, value_type="Z")
+    elif read.has_tag(tag):
+        read.tags = [(k, v) for k, v in read.tags if k != tag]
+
+
 def collect_pair_keys(
-    bam_path: str, use_umi: bool, open_kwargs: dict, limit: int | None = None
+    bam_path: str,
+    use_umi: bool,
+    open_kwargs: dict,
+    limit: int | None = None,
+    orientations: dict[str, str] | None = None,
 ) -> tuple[dict[str, tuple | None], dict[tuple, bool]]:
     """
     Stream the coordinate-sorted file once, matching mates via a sliding buffer.
@@ -228,6 +290,7 @@ def collect_pair_keys(
     Returns:
       read_name -> dedup_key (or None for singletons / trans-chrom pairs), and
       dedup_key -> R1-is-the-rightmost-mate, one entry per cluster, for assign_cs.
+      When `orientations` is given it is also filled, name -> pair orientation.
     """
     # pending: name -> first-seen rec (waiting for its mate)
     pending: dict[str, tuple] = {}
@@ -264,6 +327,8 @@ def collect_pair_keys(
                     key = _pair_key(r1, r2, use_umi)
                     pair_keys[name] = key
                     orient.setdefault(key, _r1_is_reverse(r1, r2))
+                    if orientations is not None and r1[_IS_READ1] != r2[_IS_READ1]:
+                        orientations[name] = _pair_orientation(r1, r2)
             else:
                 pending[name] = rec
 
@@ -389,10 +454,90 @@ def _set_or_strip_cs(read, name: str, cs_map: dict[str, str] | None, strip_run_i
         read.tags = [(k, v) for k, v in read.tags if k != "CS"]
 
 
-def build_mi_map(pair_keys: dict[str, tuple | None]) -> tuple[dict[str, str], dict[str, int], dict[tuple, list[str]]]:
+def merge_duplex_partners(
+    clusters: dict[tuple, list[str]],
+    orient: dict[tuple, bool],
+    tolerance: int,
+    cross_strand: bool,
+) -> int:
+    """
+    Merge clusters that are the same molecule but landed in separate exact-position clusters.
+
+    Read1/read2 use asymmetric adapters, so copies of one molecule can map a few bp apart
+    on one fragment boundary; `tolerance` is how much drift is allowed. With `cross_strand`
+    the F1R2 and F2R1 strands of a duplex molecule become eligible too, which reunites them
+    into one MI instead of only linking them via CS (see assign_cs).
+
+    Candidates are grouped by (chrom, UMI pair). Without `cross_strand` the UMI pair is the
+    literal recorded one, so only same-orientation variants merge. With it, the pair is
+    first put back into F1R2 order using `orient` -- the same normalisation as assign_cs,
+    and for the same reason: grouping on an unordered UMI pair would also merge two
+    same-strand clusters whose UMIs merely happen to be mutual reverses.
+
+    Drifts chain transitively (union-find). Mutates `clusters`, keeping each merged group
+    under its lowest key; `orient` is left as is, so a merged cluster keeps that key's value.
+    Returns the number of merged groups.
+    """
+    if tolerance <= 0 and not cross_strand:
+        return 0  # the exact cluster key already captures this
+
+    groups: dict[tuple, list[tuple]] = defaultdict(list)
+    for key in clusters:
+        if len(key) < UMI_KEY_LEN:
+            return 0  # no UMI part: nothing to group on
+        umi = key[3:5]
+        if cross_strand and orient.get(key):  # F2R1: undo the swap, as in assign_cs
+            umi = umi[::-1]
+        groups[(key[0], umi)].append(key)
+
+    parent: dict[tuple, tuple] = {}
+
+    def find(x: tuple) -> tuple:
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for group_keys in groups.values():
+        by_left = sorted(group_keys, key=lambda k: k[1])
+        for i, k1 in enumerate(by_left):
+            for k2 in by_left[i + 1 :]:
+                if k2[1] - k1[1] > tolerance:
+                    break  # sorted by left_start -- nothing further can qualify
+                if abs(k2[2] - k1[2]) <= tolerance:
+                    ra, rb = find(k1), find(k2)
+                    if ra != rb:
+                        parent[ra] = rb
+
+    merged: dict[tuple, list[tuple]] = defaultdict(list)
+    for key in list(clusters):
+        merged[find(key)].append(key)
+
+    n_merges = 0
+    for members in merged.values():
+        if len(members) < MIN_CLUSTER_SIZE:
+            continue
+        n_merges += 1
+        target = min(members)
+        for key in members:
+            if key != target:
+                clusters[target].extend(clusters.pop(key))
+    return n_merges
+
+
+def build_mi_map(
+    pair_keys: dict[str, tuple | None],
+    orient: dict[tuple, bool] | None = None,
+    position_tolerance: int = 0,
+    cross_strand: bool = False,
+) -> tuple[dict[str, str], dict[str, int], dict[tuple, list[str]]]:
     """
     Group read names by dedup key and assign MI values.
     Singletons (key is None) are left out of both maps and default to DS=1, no MI.
+
+    If `orient` is given (i.e. --use-umi), nearby clusters are merged first when
+    `position_tolerance` > 0 and/or `cross_strand` is True -- see `merge_duplex_partners`.
 
     Returns (mi_map, ds_map, clusters) where ds_map[name] = cluster size in pairs.
     """
@@ -400,6 +545,15 @@ def build_mi_map(pair_keys: dict[str, tuple | None]) -> tuple[dict[str, str], di
     for name, key in pair_keys.items():
         if key is not None:
             clusters[key].append(name)
+
+    if orient is not None:
+        n_merges = merge_duplex_partners(clusters, orient, position_tolerance, cross_strand)
+        logging.info(
+            "Merged %d cluster group(s) (tolerance=%d bp, cross_strand=%s)",
+            n_merges,
+            position_tolerance,
+            cross_strand,
+        )
 
     n_dup_clusters = sum(1 for v in clusters.values() if len(v) > 1)
     n_dup_reads = sum(len(v) for v in clusters.values() if len(v) > 1)
@@ -465,6 +619,8 @@ def write_with_mi(
     limit: int | None = None,
     strip_run_id: bool = False,
     cs_map: dict[str, str] | None = None,
+    po_tag: str | None = None,
+    orientations: dict[str, str] | None = None,
 ) -> None:
     write_mode = "wc" if output_path.endswith(".cram") else "wb"
     n_written = 0
@@ -491,6 +647,8 @@ def write_with_mi(
                 # DS = duplicate set size in pairs (1 for singletons)
                 read.set_tag("DS", ds_map.get(name, 1), value_type="i")
                 _set_or_strip_cs(read, name, cs_map, strip_run_id)
+                if po_tag:
+                    _set_or_strip_po(read, (orientations or {}).get(name), po_tag)
                 out.write(read)
 
 
@@ -517,10 +675,10 @@ def write_with_mi(
 # pairs spans 6.3-6.6 kb, i.e. far outside the fragment distribution -- chimeric pairs
 # that the consensus caller would not fuse anyway.
 #
-# A second, cosmetic difference when --regions is given: a read is assigned to a shard by
-# its start position, so a read that starts just before an interval and reaches into it is
-# not emitted, whereas `samtools view -L` (an overlap test) would keep it. On this library
-# that is 30 of 12.67 M records.
+# A second difference when --regions is given: shard k emits the reads that overlap it and
+# start at or after shard k-1's end, so a read reaching into an interval from upstream is
+# kept (as with `samtools view -L`), each read is emitted once, and the concatenated output
+# stays sorted. On a fixed grid this is the plain start-in-shard rule.
 
 
 def load_regions(bed_path: str, padding: int = 0) -> dict[str, tuple[list[int], list[int]]]:
@@ -597,9 +755,9 @@ def process_shard(job: tuple) -> dict:
     """
     Mark one shard and write its reads to their own BAM.
 
-    Reads are emitted by this shard iff their own reference_start falls in
-    [start, end) -- that partitions the file exactly once across shards and keeps the
-    concatenated output coordinate-sorted.
+    Reads are emitted by this shard iff they overlap [start, end) and start at or after
+    `prev_end` (the previous shard's end on this chromosome, 0 if none) -- that partitions
+    the output exactly once across shards and keeps the concatenation coordinate-sorted.
     """
     (
         bam_path,
@@ -608,16 +766,21 @@ def process_shard(job: tuple) -> dict:
         end,
         pad,
         use_umi,
+        position_tolerance,
+        cross_strand,
         open_kwargs,
         chrom_regions,
         out_path,
         strip_run_id,
+        prev_end,
+        po_tag,
     ) = job
 
     # Cluster straight off the stream: at panel depth an intermediate name -> key dict
     # would double the peak footprint of the pass for no benefit.
     clusters: dict[tuple, list[str]] = defaultdict(list)
     orient: dict[tuple, bool] = {}
+    orientations: dict[str, str] = {}
     pending: dict[str, tuple] = {}
     umis: dict[str, str] = {}
 
@@ -638,6 +801,8 @@ def process_shard(job: tuple) -> dict:
                 key = _pair_key(r1, r2, use_umi)
                 clusters[key].append(name)
                 orient.setdefault(key, _r1_is_reverse(r1, r2))
+                if po_tag and r1[_IS_READ1] != r2[_IS_READ1]:
+                    orientations[name] = _pair_orientation(r1, r2)
             else:
                 pending[name] = rec
 
@@ -647,6 +812,9 @@ def process_shard(job: tuple) -> dict:
         # would report the same orphan twice.
         n_orphans = sum(1 for rec in pending.values() if start <= rec[_START] < end)
         pending.clear()
+
+        if use_umi:
+            merge_duplex_partners(clusters, orient, position_tolerance, cross_strand)
 
         mi_map, ds_map = assign_mi(clusters)
         # Cross-strand partners share the positional part of the key, so both strands are
@@ -667,7 +835,7 @@ def process_shard(job: tuple) -> dict:
         n_written = 0
         with pysam.AlignmentFile(out_path, "wb", header=bam.header) as out:
             for read in bam.fetch(chrom, start, end):
-                if not (start <= read.reference_start < end):
+                if not (prev_end <= read.reference_start < end):
                     continue
                 if not _overlaps(chrom_regions, read.reference_start, read.reference_end or read.reference_start + 1):
                     continue
@@ -683,6 +851,8 @@ def process_shard(job: tuple) -> dict:
                     read.tags = [(k, v) for k, v in read.tags if k != "MI"]
                 read.set_tag("DS", ds_map.get(name, 1), value_type="i")
                 _set_or_strip_cs(read, name, cs_map, strip_run_id)
+                if po_tag:
+                    _set_or_strip_po(read, orientations.get(name), po_tag)
                 out.write(read)
                 n_written += 1
 
@@ -698,7 +868,7 @@ def process_shard(job: tuple) -> dict:
 
 def process_unplaced(job: tuple) -> dict:
     """Copy the unplaced unmapped reads (the '*' block) through with DS=1."""
-    bam_path, open_kwargs, out_path = job
+    bam_path, open_kwargs, out_path, po_tag = job
     n_written = 0
     with pysam.AlignmentFile(bam_path, "r", **open_kwargs) as bam:
         with pysam.AlignmentFile(out_path, "wb", header=bam.header) as out:
@@ -707,6 +877,8 @@ def process_unplaced(job: tuple) -> dict:
                     read.tags = [(k, v) for k, v in read.tags if k != "MI"]
                 # unplaced reads are never in a cluster, so any CS here is stale
                 _set_or_strip_cs(read, read.query_name, None, False)
+                if po_tag:
+                    _set_or_strip_po(read, None, po_tag)
                 read.set_tag("DS", 1, value_type="i")
                 out.write(read)
                 n_written += 1
@@ -759,10 +931,14 @@ def run_sharded(args, open_kwargs: dict) -> None:
             end,
             args.pad,
             args.use_umi,
+            args.position_tolerance,
+            args.cross_strand,
             open_kwargs,
             regions.get(chrom) if regions is not None else None,
             os.path.join(tmp_dir, f"{i:06d}.bam"),
             args.strip_run_id,
+            shards[i - 1][2] if i > 0 and shards[i - 1][0] == chrom else 0,
+            args.pair_orientation_tag,
         )
         for i, (chrom, start, end) in enumerate(shards)
     ]
@@ -789,14 +965,14 @@ def run_sharded(args, open_kwargs: dict) -> None:
     # when the run is restricted to regions.
     if regions is None:
         unplaced = os.path.join(tmp_dir, "unplaced.bam")
-        result = process_unplaced((args.input, open_kwargs, unplaced))
+        result = process_unplaced((args.input, open_kwargs, unplaced, args.pair_orientation_tag))
         logging.info("  unplaced reads: %d written", result["n_written"])
         if result["n_written"]:
             results.append(result)
         else:
             os.remove(unplaced)
 
-    concat_shards([r["out_path"] for r in results], args.output, open_kwargs, tmp_dir)
+    concat_shards([r["out_path"] for r in results], args.output, open_kwargs, tmp_dir, threads=args.jobs)
     shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # Threaded: at panel scale the concatenated output is several hundred GB, and a
@@ -821,7 +997,7 @@ def run_sharded(args, open_kwargs: dict) -> None:
     print_family_sizes(family_sizes)
 
 
-def concat_shards(shard_paths: list[str], output_path: str, open_kwargs: dict, tmp_dir: str) -> None:
+def concat_shards(shard_paths: list[str], output_path: str, open_kwargs: dict, tmp_dir: str, threads: int = 1) -> None:
     """Concatenate the per-shard BAMs (already in coordinate order) into the output."""
     fofn = os.path.join(tmp_dir, "shards.fofn")
     with open(fofn, "w") as fh:
@@ -840,8 +1016,9 @@ def concat_shards(shard_paths: list[str], output_path: str, open_kwargs: dict, t
             ["samtools", "cat", "-b", fofn, "-o", "-"],  # noqa: S607
             stdout=subprocess.PIPE,
         )
+        ref = open_kwargs["reference_filename"]
         view = subprocess.Popen(
-            ["samtools", "view", "-C", "-T", open_kwargs["reference_filename"], "-o", output_path, "-"],  # noqa: S607
+            ["samtools", "view", "-C", "-@", str(threads), "-T", ref, "-o", output_path, "-"],  # noqa: S607
             stdin=cat.stdout,
         )
         cat.stdout.close()  # let samtools cat see EOF/SIGPIPE if view dies
@@ -859,6 +1036,8 @@ def print_family_sizes(family_sizes: dict[int, int]) -> None:
     print("family_size\tfamilies\treads\tpct_reads")
     for size in sorted(family_sizes):
         n_fam = family_sizes[size]
+        if not n_fam:  # sharded runs seed size 2 with the orphan count, which may be 0
+            continue
         n_reads = size * n_fam
         print(f"{size}\t{n_fam}\t{n_reads}\t{100 * n_reads / total_reads:.1f}%")
 
@@ -890,10 +1069,13 @@ def main():
         return
 
     logging.info("Pass 1 — scanning %s", args.input)
-    pair_keys, orient = collect_pair_keys(args.input, args.use_umi, open_kwargs, args.limit)
+    orientations: dict[str, str] | None = {} if args.pair_orientation_tag else None
+    pair_keys, orient = collect_pair_keys(args.input, args.use_umi, open_kwargs, args.limit, orientations)
     logging.info("Collected info for %d primary paired read names", len(pair_keys))
 
-    mi_map, ds_map, clusters = build_mi_map(pair_keys)
+    mi_map, ds_map, clusters = build_mi_map(
+        pair_keys, orient if args.use_umi else None, args.position_tolerance, args.cross_strand
+    )
     logging.info("MI map built (%d entries)", len(mi_map))
 
     cs_map = assign_cs(clusters, orient)
@@ -910,7 +1092,18 @@ def main():
         )
 
     logging.info("Pass 2 — writing %s", args.output)
-    write_with_mi(args.input, args.output, mi_map, ds_map, open_kwargs, args.limit, args.strip_run_id, cs_map)
+    write_with_mi(
+        args.input,
+        args.output,
+        mi_map,
+        ds_map,
+        open_kwargs,
+        args.limit,
+        args.strip_run_id,
+        cs_map,
+        args.pair_orientation_tag,
+        orientations,
+    )
 
     logging.info("Indexing %s", args.output)
     pysam.index(args.output)

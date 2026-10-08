@@ -37,6 +37,16 @@ treats a missing tag as the empty value, and every `CS`-less read at a position
 would then collapse into one duplicate family. So `CS == MI` reads as "clustered,
 but no cross-strand partner was found", and `CS != MI` as "duplex partner found".
 
+Two opt-in options (both off by default, so the default output is unchanged) merge
+clusters that are the same molecule into one `MI` family:
+
+- `--position-tolerance BP` merges same-UMI clusters whose fragment boundaries differ
+  by at most `BP` (read1/read2 use asymmetric adapters, so one molecule's copies can map
+  1-3 bp apart). Drifts chain transitively.
+- `--cross-strand` also merges the F1R2/F2R1 strands of a duplex molecule into one `MI`,
+  using the same orientation-aware rule as `CS`. Boundaries must match within
+  `--position-tolerance`.
+
 ```bash
 # whole-file
 mark_duplicates_mi input.bam output.bam --use-umi
@@ -51,6 +61,14 @@ Family-size histogram goes to stdout; `--stats-only` skips writing the output fi
 Re-marking is idempotent, and re-marking **without** `--use-umi` strips any `CS`
 the input carried (a stale `CS` claims a duplex link the current key does not
 support, which is worse than no `CS`).
+
+`--pair-orientation-tag po` also writes each primary read's pair orientation
+(`F1R2`, `F2R1`, `FF` or `RR`) to that tag. The mates of this library carry no
+mate fields (no `RNEXT`, no `0x20`), so orientation only exists where the two
+are paired by name, which this tool does anyway for `MI`; doing it here costs
+no extra pass. A read whose mate is absent or on another contig, or in sharded
+mode further than `--pad` away, gets no tag, and a stale one is dropped. Like
+`CS`, it reaches the consensus reads only if listed in `read_fuser --umi-tags`.
 
 ### Downstream contract (BIOIN-3068)
 
@@ -72,7 +90,9 @@ support, which is worse than no `CS`).
 
 > ⚠️ This module is verified byte-for-byte against a 12,670,749-record baseline
 > (`MI`/`DS` identical to the pre-`CS` output, 55,884 `CS` links, 0 gained / 0
-> lost). Do not refactor it — including "just" reordering the `set_tag` calls,
+> lost). The one deliberate deviation is `--regions`: a read that starts upstream of an
+> interval and reaches into it is now emitted (as `samtools view -L` would), which adds
+> ~30 of 12.67 M records versus that baseline. Do not refactor it — including "just" reordering the `set_tag` calls,
 > which fixes the emitted aux order as `MI, DS, CS` — without re-running
 > `/data/Runs/BIOIN-3068/cmp_stream.py` and `cs_links.py`.
 

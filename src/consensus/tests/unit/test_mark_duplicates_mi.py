@@ -219,6 +219,62 @@ def test_assign_cs_orientation_defaults_to_forward():
     assert cs["n1"] == "n1" and cs["n2"] == "n2"
 
 
+KEY_AB_SHIFTED = ("chr1", 101, 302, "AAAAAAAA", "BBBBBBBB")
+KEY_BA_SHIFTED = ("chr1", 101, 302, "BBBBBBBB", "AAAAAAAA")
+
+
+def test_merge_is_a_noop_by_default():
+    clusters = {KEY_AB: ["n1"], KEY_AB_SHIFTED: ["n2"]}
+    assert mdmi.merge_duplex_partners(clusters, {}, 0, cross_strand=False) == 0
+    assert len(clusters) == 2
+
+
+def test_merge_joins_same_umi_clusters_within_tolerance():
+    clusters = {KEY_AB: ["n1"], KEY_AB_SHIFTED: ["n2"]}
+    assert mdmi.merge_duplex_partners(clusters, {}, 2, cross_strand=False) == 1
+    assert clusters == {KEY_AB: ["n1", "n2"]}
+
+
+def test_merge_respects_tolerance_on_both_boundaries():
+    clusters = {KEY_AB: ["n1"], KEY_AB_SHIFTED: ["n2"]}  # right end is 2 bp off
+    assert mdmi.merge_duplex_partners(clusters, {}, 1, cross_strand=False) == 0
+
+
+def test_merge_does_not_cross_strands_without_the_flag():
+    clusters = {KEY_AB: ["n_fwd"], KEY_BA: ["n_rev"]}
+    assert mdmi.merge_duplex_partners(clusters, {KEY_AB: FWD, KEY_BA: REV}, 2, cross_strand=False) == 0
+
+
+def test_merge_cross_strand_joins_opposite_strands():
+    clusters = {KEY_AB: ["n_fwd"], KEY_BA_SHIFTED: ["n_rev"]}
+    assert mdmi.merge_duplex_partners(clusters, {KEY_AB: FWD, KEY_BA_SHIFTED: REV}, 2, cross_strand=True) == 1
+    assert clusters == {KEY_AB: ["n_fwd", "n_rev"]}
+
+
+def test_merge_cross_strand_does_not_join_same_strand_umi_collisions():
+    clusters = {KEY_AB: ["n_one"], KEY_BA: ["n_two"]}
+    assert mdmi.merge_duplex_partners(clusters, {KEY_AB: FWD, KEY_BA: FWD}, 2, cross_strand=True) == 0
+
+
+def test_merge_chains_transitively():
+    keys = [("chr1", 100 + i, 300 + i, "AAAAAAAA", "BBBBBBBB") for i in (0, 1, 2)]
+    clusters = {k: [f"n{i}"] for i, k in enumerate(keys)}
+    assert mdmi.merge_duplex_partners(clusters, {}, 1, cross_strand=False) == 1
+    assert list(clusters) == [keys[0]]
+
+
+def test_merge_ignores_keys_without_umi_part():
+    clusters = {("chr1", 100, 300): ["n1"], ("chr1", 101, 301): ["n2"]}
+    assert mdmi.merge_duplex_partners(clusters, {}, 2, cross_strand=True) == 0
+
+
+def test_build_mi_map_merges_before_assigning_mi():
+    pair_keys = {"n1": KEY_AB, "n2": KEY_AB_SHIFTED}
+    mi_map, ds_map, _ = mdmi.build_mi_map(pair_keys, {}, position_tolerance=2)
+    assert mi_map == {"n1": "n1", "n2": "n1"}
+    assert ds_map == {"n1": 2, "n2": 2}
+
+
 def _rec(start, end, *, is_read1, is_reverse):
     return ("chr1", start, end, is_read1, is_reverse, "AAAAAAAA", "BBBBBBBB")
 
@@ -240,3 +296,94 @@ def _rec(start, end, *, is_read1, is_reverse):
 )
 def test_r1_is_reverse_reads_the_flag_not_the_positions(r1, r2, expected_is_reverse):
     assert mdmi._r1_is_reverse(r1, r2) is expected_is_reverse
+
+
+# --- --pair-orientation-tag -----------------------------------------------------------
+#
+# Orientation is the one thing a single record cannot tell you here: the mates carry no
+# mate fields, so it exists only where the two are paired by name, which is exactly what
+# this tool already does for MI. The fixture's two MI families are one F1R2 (45 pairs)
+# and one F2R1 (19 pairs) cluster.
+
+PO_BY_MI = {"606174-0567298634": "F1R2", "606174-0083386786": "F2R1"}
+
+
+def read_po(path, tag="po"):
+    """(qname, flag) -> (MI, tag value) for every record."""
+    with pysam.AlignmentFile(str(path), "rb", check_sq=False) as bam:
+        return {
+            (r.query_name, r.flag): (
+                r.get_tag("MI") if r.has_tag("MI") else None,
+                r.get_tag(tag) if r.has_tag(tag) else None,
+            )
+            for r in bam
+        }
+
+
+def test_pair_orientation_is_written_on_both_mates(tmp_path):
+    out = run(INPUT_BAM, tmp_path / "out.bam", "--use-umi", "--pair-orientation-tag", "po")
+    po = read_po(out)
+    assert len(po) == 128
+    assert {mi: {v for m, v in po.values() if m == mi} for mi in PO_BY_MI} == {mi: {o} for mi, o in PO_BY_MI.items()}
+
+
+def test_pair_orientation_leaves_the_other_tags_alone(tmp_path, expected):
+    out = run(INPUT_BAM, tmp_path / "out.bam", "--use-umi", "--pair-orientation-tag", "po")
+    assert read_tags(out) == expected
+
+
+@needs_samtools
+def test_pair_orientation_sharded_agrees_with_whole_file(tmp_path):
+    bed = tmp_path / "panel.bed"
+    bed.write_text("chr1\t6181000\t6182000\n")
+    whole = run(INPUT_BAM, tmp_path / "whole.bam", "--use-umi", "--pair-orientation-tag", "po")
+    sharded = run(
+        INPUT_BAM,
+        tmp_path / "sharded.bam",
+        "--use-umi",
+        "--pair-orientation-tag",
+        "po",
+        "--jobs",
+        "2",
+        "--regions",
+        str(bed),
+        "--max-shard-span",
+        "300",
+    )
+    assert read_po(sharded) == read_po(whole)
+
+
+def test_pair_orientation_is_off_by_default(tmp_path):
+    out = run(INPUT_BAM, tmp_path / "out.bam", "--use-umi")
+    assert {v for _, v in read_po(out).values()} == {None}
+
+
+def test_pair_orientation_stale_tag_is_dropped_when_the_mate_is_absent(tmp_path):
+    """A read with no mate has no orientation, and a leftover value would be a lie."""
+    lone = tmp_path / "lone.bam"
+    with (
+        pysam.AlignmentFile(str(INPUT_BAM), "rb", check_sq=False) as src,
+        pysam.AlignmentFile(str(lone), "wb", header=src.header) as dst,
+    ):
+        for read in src:
+            if read.is_read1:
+                read.set_tag("po", "STALE", value_type="Z")
+                dst.write(read)
+    pysam.index(str(lone))
+    out = run(lone, tmp_path / "out.bam", "--pair-orientation-tag", "po")
+    assert {v for _, v in read_po(out).values()} == {None}
+
+
+def test_pair_orientation_rejects_a_tag_that_is_not_two_characters(tmp_path):
+    with pytest.raises(subprocess.CalledProcessError):
+        run(INPUT_BAM, tmp_path / "out.bam", "--pair-orientation-tag", "p")
+
+
+@pytest.mark.parametrize(
+    ("r1_reverse", "r2_reverse", "expected_orientation"),
+    [(False, True, "F1R2"), (True, False, "F2R1"), (False, False, "FF"), (True, True, "RR")],
+)
+def test_pair_orientation_from_the_strand_of_each_mate(r1_reverse, r2_reverse, expected_orientation):
+    r1 = _rec(100, 200, is_read1=True, is_reverse=r1_reverse)
+    r2 = _rec(250, 300, is_read1=False, is_reverse=r2_reverse)
+    assert mdmi._pair_orientation(r1, r2) == expected_orientation
