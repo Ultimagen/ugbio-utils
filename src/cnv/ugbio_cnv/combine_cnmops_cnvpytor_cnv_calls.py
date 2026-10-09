@@ -8,7 +8,7 @@ from os.path import join as pjoin
 
 import pysam
 from pyfaidx import Fasta
-from ugbio_cnv.analyze_cnv_breakpoint_reads import analyze_cnv_breakpoints
+from ugbio_cnv.analyze_cnv_breakpoint_reads import PairedEndConfig, analyze_cnv_breakpoints
 from ugbio_cnv.analyze_cnv_breakpoint_reads import get_parser as get_breakpoint_parser
 from ugbio_cnv.cnv_vcf_consts import INFO_TAG_REGISTRY
 from ugbio_cnv.combine_cnv_vcf_utils import (
@@ -570,6 +570,7 @@ def run(argv: list[str]):
             output_file=args.output_file,
             reference_fasta=args.reference_fasta,
             output_bam=args.output_bam,
+            paired_end_config=PairedEndConfig.from_args(args),
         )
     elif args.tool == "merge_cnv_sv":
         merge_cnv_sv_vcfs(

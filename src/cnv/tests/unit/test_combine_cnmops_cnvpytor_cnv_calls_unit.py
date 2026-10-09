@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pysam
 import pytest
 from ugbio_cnv import combine_cnmops_cnvpytor_cnv_calls
+from ugbio_cnv.analyze_cnv_breakpoint_reads import PairedEndConfig
 
 
 @pytest.fixture
@@ -646,4 +647,32 @@ def test_main_analyze_breakpoints_calls_analyze_cnv_breakpoints():
                 output_file=test_output_file,
                 reference_fasta=test_reference_fasta,
                 output_bam=None,
+                paired_end_config=PairedEndConfig(),
             )
+
+
+def test_main_analyze_breakpoints_passes_paired_end_config():
+    """Test that the paired-end CLI flags reach analyze_cnv_breakpoints."""
+    test_argv = [
+        "analyze_breakpoint_reads",
+        "--bam-file",
+        "/path/to/reads.bam",
+        "--vcf-file",
+        "/path/to/cnvs.vcf.gz",
+        "--reference-fasta",
+        "/path/to/ref.fa",
+        "--paired-end",
+        "--min-pair-span",
+        "900",
+        "--min-pair-mapping-quality",
+        "30",
+    ]
+
+    with patch.object(sys, "argv", test_argv):
+        with patch("ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls.analyze_cnv_breakpoints") as mock_analyze:
+            combine_cnmops_cnvpytor_cnv_calls.main_analyze_breakpoints()
+
+            pe_config = mock_analyze.call_args.kwargs["paired_end_config"]
+            assert pe_config.enabled
+            assert pe_config.min_pair_span == 900
+            assert pe_config.min_pair_mapping_quality == 30
