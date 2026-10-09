@@ -108,24 +108,6 @@ def _determine_karyotype(x_ratio: float, y_ratio: float) -> str:
     return "UNDETERMINED"
 
 
-def _autosomal_baseline_coverage(
-    auto_chroms: dict[str, dict], *, median_baseline: bool = False
-) -> tuple[float, list[str]]:
-    """Calculate length-weighted autosomal coverage (or the median over autosomes if median_baseline)."""
-    warnings = []
-    lengths = [data.get("length") for data in auto_chroms.values()]
-    if not median_baseline and lengths and all(length is not None and length > 0 for length in lengths):
-        total_length = sum(lengths)
-        return (
-            sum(data["coverage"] * data["length"] for data in auto_chroms.values()) / total_length,
-            warnings,
-        )
-
-    if not median_baseline:
-        warnings.append("Missing contig lengths for autosomal coverage baseline; using unweighted median.")
-    return float(np.median([data["coverage"] for data in auto_chroms.values()])), warnings
-
-
 def _sex_label_from_karyotype(karyotype: str) -> str:
     if karyotype in ("XX", "XXX"):
         return "female"
@@ -207,7 +189,6 @@ def _compute_ploidy_from_chr_data(
     *,
     sex_chromosomes: list[str] | tuple[str, ...] = DEFAULT_SEX_CHROMOSOMES,
     has_chr: bool | None = None,  # noqa: ARG001
-    median_baseline: bool = False,
 ) -> dict:  # noqa: C901, PLR0912, PLR0915
     """Shared logic: given {chrom: {mean}} compute ploidy, karyotype."""
     sex_chromosome_names = _normalize_sex_chromosomes(sex_chromosomes)
@@ -219,7 +200,9 @@ def _compute_ploidy_from_chr_data(
     if not auto_chroms:
         return _undetermined_ploidy_result("No autosomal contigs found; cannot estimate ploidy")
 
-    auto_median, warnings = _autosomal_baseline_coverage(auto_chroms, median_baseline=median_baseline)
+    # Median (not length-weighted mean) of autosomal coverages: robust to several aneuploid chromosomes
+    auto_median = float(np.median([data["coverage"] for data in auto_chroms.values()]))
+    warnings: list[str] = []
 
     if auto_median == 0:
         return _undetermined_ploidy_result("Autosomal median coverage is 0; cannot compute ploidy")
@@ -389,7 +372,7 @@ def _ploidy_from_sites(  # noqa: C901, PLR0913
         if len(capped) >= 20:  # noqa: PLR2004
             chr_data[chrom] = {"coverage": statistics.median_grouped(capped.tolist())}
 
-    coverage_result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=sex_chromosomes, median_baseline=True)
+    coverage_result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=sex_chromosomes)
     coverage_result["source"] = "VCF SNP median DP"
 
     chrom_bins = defaultdict(list)

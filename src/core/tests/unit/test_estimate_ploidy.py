@@ -176,18 +176,19 @@ class TestComputePloidyFromChrData:
         assert result["karyotype"] == "XY"
         assert {entry["flag"] for entry in result["per_chrom"] if entry["chrom"].startswith("scaffold_")} == {""}
 
-    def test_autosomal_baseline_uses_length_weighted_coverage(self):
+    def test_autosomal_baseline_is_median_ignoring_lengths(self):
         chr_data = {
-            "chr1": {"coverage": 40.0, "length": 200},
-            "chr2": {"coverage": 80.0, "length": 100},
-            "chrX": {"coverage": 20.0, "length": 100},
-            "chrY": {"coverage": 20.0, "length": 50},
+            "chr1": {"coverage": 40.0, "length": 100},
+            "chr2": {"coverage": 50.0, "length": 100},
+            "chr3": {"coverage": 80.0, "length": 100},
+            "chrX": {"coverage": 25.0, "length": 100},
+            "chrY": {"coverage": 25.0, "length": 50},
         }
         result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=("chrX", "chrY"))
-        assert result["auto_mean"] == 53.33
+        assert result["auto_mean"] == 50.0  # median; the length-weighted mean would be 56.67
         assert result["warnings"] == []
 
-    def test_autosomal_baseline_falls_back_to_unweighted_median_without_lengths(self):
+    def test_autosomal_baseline_is_robust_to_outlier_chromosome(self):
         chr_data = {
             "chr1": {"coverage": 50.0},
             "chr2": {"coverage": 50.0},
@@ -198,7 +199,7 @@ class TestComputePloidyFromChrData:
         result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=("chrX", "chrY"))
         assert result["auto_mean"] == 50.0
         assert result["karyotype"] == "XY"
-        assert "using unweighted median" in result["warnings"][0]
+        assert result["warnings"] == []
 
     def test_no_autosomes_returns_undetermined(self):
         result = _compute_ploidy_from_chr_data({"chrX": {"coverage": 25.0}}, has_chr=True)
@@ -239,6 +240,22 @@ class TestEstimatePloidyFromCoverage:
             "chrY",
         }
         assert all(entry["mean_cov"] != 1.0 for entry in result["per_chrom"])
+
+    def test_mosdepth_baseline_is_median_of_autosomes(self, tmp_path):
+        # Trisomy of the longest chromosome would pull a length-weighted baseline up to ~52x; the median stays 50x
+        tsv = tmp_path / "summary.txt"
+        lines = ["chrom\tlength\tbases\tmean\tmin_cov\tmax_cov\n", "chr1_region\t250000000\t1\t75.0\t0\t200\n"]
+        lines += [f"chr{i}_region\t100000000\t1\t50.0\t0\t200\n" for i in range(2, 23)]
+        lines += ["chrX_region\t150000000\t1\t25.0\t0\t100\n", "chrY_region\t50000000\t1\t25.0\t0\t100\n"]
+        tsv.write_text("".join(lines))
+
+        result = estimate_ploidy_from_coverage(parse_mosdepth_summary(tsv))
+
+        ploidy = {entry["chrom"]: entry["ploidy"] for entry in result["per_chrom"]}
+        assert result["auto_mean"] == 50.0
+        assert ploidy["chr1"] == 3.0
+        assert all(ploidy[f"chr{i}"] == 2.0 for i in range(2, 23))
+        assert result["karyotype"] == "XY"
 
     def test_mosdepth_requires_region_rows(self):
         summary = pd.DataFrame(
