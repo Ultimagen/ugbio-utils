@@ -161,7 +161,21 @@ ARG OUT_DIR
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
 COPY --from=build ${OUT_DIR} ${OUT_DIR}
-RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
+
+# pyabpoa and pywfa (truvari dependencies) have no Linux wheels and compile with -march=native,
+# which ties the image to the build runner's CPU: an image built on an AVX-512 runner dies with
+# "Illegal instruction" on hosts without AVX-512. Pin both to AVX2, available on all current
+# x86 HealthOmics instances. pywfa's bundled WFA2 Makefile hardcodes the flag, so patch it.
+ARG PYWFA_VERSION=0.5.1
+RUN pip download --no-deps --no-binary :all: pywfa==${PYWFA_VERSION} -d /tmp/pywfa && \
+    tar xzf /tmp/pywfa/pywfa-${PYWFA_VERSION}.tar.gz -C /tmp/pywfa && \
+    sed -i 's/-march=native/-march=x86-64-v3/' /tmp/pywfa/pywfa-${PYWFA_VERSION}/pywfa/WFA2_lib/Makefile && \
+    ! grep -q -- '-march=native' /tmp/pywfa/pywfa-${PYWFA_VERSION}/pywfa/WFA2_lib/Makefile && \
+    pip install /tmp/pywfa/pywfa-${PYWFA_VERSION} && \
+    rm -rf /tmp/pywfa
+# AVX2=1 makes pyabpoa's setup.py use -mavx2 instead of -march=native
+RUN AVX2=1 pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR} && \
+    pip show pywfa | grep -qx "Version: ${PYWFA_VERSION}"
 
 # Bring parasail headers/libs from Bullseye into Bookworm image
 COPY --from=parasail-bullseye /usr/include/parasail /usr/include/parasail
