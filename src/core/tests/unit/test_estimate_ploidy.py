@@ -1,11 +1,14 @@
+import functools
 import random
 import subprocess
+from pathlib import Path
 
 import pandas as pd
 import pysam
 import pytest
 from ugbio_core.estimate_ploidy import (
     _autosome_number,
+    _call_aneuploidy,
     _classify_baf,
     _compute_ploidy_from_chr_data,
     _detect_chr_prefix,
@@ -13,6 +16,7 @@ from ugbio_core.estimate_ploidy import (
     _is_position_excluded,
     _is_standard_biallelic_snp,
     _load_exclude_bed,
+    _ploidy_from_sites,
     _sex_label_from_karyotype,
     _update_reservoir,
     estimate_ploidy_from_coverage,
@@ -20,6 +24,8 @@ from ugbio_core.estimate_ploidy import (
     main,
     parse_mosdepth_summary,
 )
+
+PLOIDY_RESOURCES = Path(__file__).parent.parent / "resources" / "ploidy"
 
 
 class TestDetectChrPrefix:
@@ -358,7 +364,7 @@ class TestEstimatePloidyFromVcf:
 
     @staticmethod
     def _make_vcf_with_chry_exclusion_case(tmp_path, sample_name="SAMPLE"):
-        """chrY has 20 high-DP SNPs (positions 1-20, meant to be excluded) and 20 low-DP SNPs
+        """chrY has 21 high-DP SNPs (positions 1-21, meant to be excluded) and 20 low-DP SNPs
         (positions 101-120, meant to be kept). chrX/autosomes are diploid-like (X ratio ~1.0),
         so the karyotype call is driven entirely by whether the high-DP chrY SNPs are excluded.
         """
@@ -385,14 +391,14 @@ class TestEstimatePloidyFromVcf:
             write_records("chr1", range(1, 21), 40)
             write_records("chr2", range(1, 21), 40)
             write_records("chrX", range(1, 21), 40)
-            write_records("chrY", range(1, 21), 32)  # high-DP: should be excluded
+            write_records("chrY", range(1, 22), 20)  # high-DP: should be excluded
             write_records("chrY", range(101, 121), 4)  # low-DP: should be kept
         return vcf_path
 
     def test_exclude_regions_bed_filters_high_coverage_chry_positions(self, tmp_path):
         vcf_path = self._make_vcf_with_chry_exclusion_case(tmp_path)
         exclude_bed = tmp_path / "exclude.bed"
-        exclude_bed.write_text("chrY\t0\t20\n")
+        exclude_bed.write_text("chrY\t0\t21\n")
 
         coverage_without_exclusion, _ = estimate_ploidy_from_vcf(vcf_path, "SAMPLE")
         coverage_with_exclusion, _ = estimate_ploidy_from_vcf(vcf_path, "SAMPLE", exclude_regions_bed=exclude_bed)
@@ -507,20 +513,26 @@ class TestEstimatePloidyCli:
         ]
         for i in range(1, 23):
             chrom = f"chr{i}"
-            expected_lines.append(f"  {chrom:<6s} ploidy=2.000  cov=50.00x   ")
+            expected_lines.append(f"  {chrom:<6s} ploidy=2.000  cov=50.00x  af_skew=NA   ")
         expected_lines.extend(
             [
                 "  chrX   ploidy=1.000  cov=25.00x  .",
                 "  chrY   ploidy=1.000  cov=25.00x  .",
                 "",
                 "  (. = sex chromosome)",
+                "  (af_skew = allele-fraction skew of het SNPs relative to the autosomal median;"
+                " ~1.0 balanced, >=1.2 supports a copy-number change)",
                 "",
-                "  No autosomal aneuploidy detected (all within +/-0.35 of 2.0).",
+                "  No autosomal aneuploidy detected.",
                 "",
                 "",
             ]
         )
         assert report_text == "\n".join(expected_lines)
+
+        per_chrom = pd.read_csv(tmp_path / "SAMPLE.ploidy_per_chrom.tsv", sep="\t")
+        assert list(per_chrom.columns) == ["chrom", "ploidy", "mean_cov", "flag", "af_skew", "het_af", "call"]
+        assert len(per_chrom) == 24  # noqa: PLR2004
 
         # Verify downstream WDL task karyotype extraction logic
         cmd = f"grep -m1 'Karyotype:' {report_path} | awk '{{print $NF}}'"
@@ -593,3 +605,52 @@ class TestEstimatePloidyCli:
                     "SAMPLE",
                 ]
             )
+
+
+class TestCallAneuploidy:
+    @pytest.mark.parametrize(
+        "ploidy, af_skew, expected",
+        [
+            (2.05, 1.0, ""),  # normal
+            (2.4, 1.0, "unconfirmed"),  # GC-like coverage shift, balanced alleles
+            (2.35, 1.6, "coverage+BAF"),  # mosaic gain
+            (1.0, None, "coverage"),  # monosomy: no hets
+            (4.0, 1.0, "coverage"),  # balanced tetrasomy
+        ],
+    )
+    def test_calling_rule(self, ploidy, af_skew, expected):
+        assert _call_aneuploidy(ploidy, af_skew, 0.15, 0.8, 1.2) == expected
+
+
+class TestRealDataSites:
+    """De-identified site tables of real VCFs (built with resources/ploidy/make_ploidy_sites.py)."""
+
+    @staticmethod
+    @functools.cache
+    def _run(name):
+        sites = pd.read_parquet(PLOIDY_RESOURCES / f"{name}.ploidy_sites.parquet")
+        coverage_result, baf_result = _ploidy_from_sites(sites.itertuples(index=False, name=None))
+        per_chrom = {entry["chrom"]: entry for entry in coverage_result["per_chrom"]}
+        flagged = {chrom for chrom, entry in per_chrom.items() if entry.get("call") in ("coverage", "coverage+BAF")}
+        return coverage_result, baf_result, per_chrom, flagged
+
+    @pytest.mark.parametrize(
+        "name, karyotype, expected_flagged",
+        [
+            ("MTB054", "XY", {"chr8"}),  # mosaic chr8 gain
+            ("CKT416", "XY", {"chr21"}),  # trisomy 21
+            ("PMR903", "XX", set()),  # GC-driven coverage artifacts, balanced alleles
+            ("HG002_DS5X", "XY", set()),  # 5x down-sample of a normal male
+        ],
+    )
+    def test_karyotype_and_flagged_chromosomes(self, name, karyotype, expected_flagged):
+        coverage_result, baf_result, _, flagged = self._run(name)
+        assert coverage_result["karyotype"] == karyotype
+        assert flagged == expected_flagged
+        assert baf_result["label"] != "TRIPLOID"
+
+    @pytest.mark.parametrize("name, chrom", [("MTB054", "chr8"), ("CKT416", "chr21")])
+    def test_het_af_agrees_with_coverage(self, name, chrom):
+        _, _, per_chrom, _ = self._run(name)
+        gain = per_chrom[chrom]["ploidy"] - 2  # fraction of cells carrying one extra copy
+        assert per_chrom[chrom]["het_af"] == pytest.approx((1 + gain) / (2 + gain), abs=0.03)
