@@ -10,7 +10,7 @@ import sys
 
 import numpy as np
 import pandas as pd
-from ugbio_core.estimate_ploidy import _iter_vcf_sites
+from ugbio_cnv.estimate_ploidy import _iter_vcf_sites
 
 COLUMNS = ["chrom", "pos", "dp", "ref_ad", "alt_ad", "is_het"]
 

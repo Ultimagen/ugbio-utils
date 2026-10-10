@@ -37,6 +37,7 @@ add_cipos_to_vcf = "ugbio_cnv.add_cipos:main"
 refine_cnv_breakpoints = "ugbio_cnv.breakpoint_refinement:main"
 reformat_parascopy_bed = "ugbio_cnv.reformat_parascopy_bed:main"
 lpa_caller = "ugbio_cnv.lpa_caller:main"
+estimate_ploidy = "ugbio_cnv.estimate_ploidy:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true

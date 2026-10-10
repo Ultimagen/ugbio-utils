@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pysam
 import pytest
-from ugbio_core.estimate_ploidy import (
+from ugbio_cnv.estimate_ploidy import (
     _call_aneuploidy,
     _call_whole_genome_ploidy_by_baf,
     _compute_ploidy_from_chr_data,
