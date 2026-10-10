@@ -14,25 +14,23 @@ from __future__ import annotations
 
 import argparse
 import math
-import random
 import re
 import statistics
 import sys
 from array import array
-from bisect import bisect_right
 from collections import defaultdict
+from itertools import filterfalse
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pysam
+from ugbio_core.vcfbed.bed_writer import parse_intervals_file
 from ugbio_core.vcfbed.vcftools import is_pass_record
 
 DEFAULT_SEX_CHROMOSOMES = ("chrX", "chrY", "X", "Y")
 _STANDARD_BASES = {"A", "C", "G", "T"}
 
-_AUTOSOME_CHR = re.compile(r"^chr(\d+)$")
-_AUTOSOME_NOCHR = re.compile(r"^(\d+)$")
 _MITO = re.compile(r"^(chrM|MT)$", re.IGNORECASE)
 _SKIP = re.compile(r"_random$|_decoy$|^chrUn|^HLA|^EBV|_alt$", re.IGNORECASE)
 _REGION_SUFFIX = re.compile(r"_region$", re.IGNORECASE)
@@ -47,16 +45,6 @@ _KARYOTYPE_TABLE = [
     (1.25, 1.75, 0.25, 0.75, "XXXY"),
     (1.25, 1.75, 0.00, 0.25, "XXX"),
 ]
-
-
-def _detect_chr_prefix(contigs: list[str]) -> bool:
-    return any(c.startswith("chr") for c in contigs if re.match(r"^chr\d+$", c))
-
-
-def _autosome_number(contig: str, *, has_chr: bool) -> int | None:
-    pattern = _AUTOSOME_CHR if has_chr else _AUTOSOME_NOCHR
-    m = pattern.match(contig)
-    return int(m.group(1)) if m else None
 
 
 def _normalize_chromosome_name(chromosome: str) -> str:
@@ -87,20 +75,6 @@ def _is_standard_biallelic_snp(ref: str, alts: tuple[str, ...] | None) -> bool:
     return ref in _STANDARD_BASES and alts is not None and len(alts) == 1 and alts[0] in _STANDARD_BASES
 
 
-def _update_reservoir(
-    reservoir: list[int | float], value: int | float, seen_count: int, sample_count: int, rng: random.Random
-) -> int:
-    """Add a value to a fixed-size uniform reservoir sample."""
-    seen_count += 1
-    if len(reservoir) < sample_count:
-        reservoir.append(value)
-    else:
-        index = rng.randint(0, seen_count - 1)  # noqa: S311
-        if index < sample_count:
-            reservoir[index] = value
-    return seen_count
-
-
 def _determine_karyotype(x_ratio: float, y_ratio: float) -> str:
     for x_min, x_max, y_min, y_max, label in _KARYOTYPE_TABLE:
         if x_min <= x_ratio <= x_max and y_min <= y_ratio <= y_max:
@@ -124,47 +98,12 @@ def parse_mosdepth_summary(summary_path: str | Path) -> pd.DataFrame:
     return summary_df
 
 
-def _load_exclude_bed(path: str | Path) -> dict[str, tuple[list[int], list[tuple[int, int]]]]:
-    """Load a BED file (0-based, half-open) into sorted, merged per-chromosome intervals for fast lookup."""
-    raw: dict[str, list[tuple[int, int]]] = {}
-    with Path(path).open() as handle:
-        for line in handle:
-            line = line.strip()  # noqa: PLW2901
-            if not line or line.startswith(("#", "track", "browser")):
-                continue
-            fields = line.split()
-            chrom, start, end = fields[0], int(fields[1]), int(fields[2])
-            raw.setdefault(chrom, []).append((start, end))
-
-    regions: dict[str, tuple[list[int], list[tuple[int, int]]]] = {}
-    for chrom, intervals in raw.items():
-        intervals.sort()
-        # Merge overlapping/nested/adjacent intervals so the bisect lookup below only ever
-        # needs to check a single (disjoint) interval per position.
-        merged: list[tuple[int, int]] = []
-        for start, end in intervals:
-            if merged and start <= merged[-1][1]:
-                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-            else:
-                merged.append((start, end))
-        regions[chrom] = ([iv[0] for iv in merged], merged)
-    return regions
-
-
-def _is_position_excluded(
-    exclude_regions: dict[str, tuple[list[int], list[tuple[int, int]]]], chrom: str, pos_1based: int
-) -> bool:
+def _is_position_excluded(exclude_regions: pd.DataFrame, chrom: str, pos_1based: int) -> bool:
     """Check whether a 1-based VCF position falls inside a 0-based half-open excluded interval."""
-    entry = exclude_regions.get(chrom)
-    if not entry:
+    if chrom not in exclude_regions.index:
         return False
-    starts, intervals = entry
-    pos0 = pos_1based - 1
-    idx = bisect_right(starts, pos0) - 1
-    if idx < 0:
-        return False
-    start, end = intervals[idx]
-    return start <= pos0 < end
+    intervals = exclude_regions.loc[[chrom]]
+    return bool(((intervals["start"] < pos_1based) & (intervals["end"] >= pos_1based)).any())
 
 
 def _undetermined_ploidy_result(reason: str) -> dict:
@@ -186,10 +125,8 @@ def _undetermined_ploidy_result(reason: str) -> dict:
 
 def _compute_ploidy_from_chr_data(
     chr_data: dict[str, dict],
-    *,
     sex_chromosomes: list[str] | tuple[str, ...] = DEFAULT_SEX_CHROMOSOMES,
-    has_chr: bool | None = None,  # noqa: ARG001
-) -> dict:  # noqa: C901, PLR0912, PLR0915
+) -> dict:
     """Shared logic: given {chrom: {mean}} compute ploidy, karyotype."""
     sex_chromosome_names = _normalize_sex_chromosomes(sex_chromosomes)
     auto_chroms = {
@@ -200,7 +137,6 @@ def _compute_ploidy_from_chr_data(
     if not auto_chroms:
         return _undetermined_ploidy_result("No autosomal contigs found; cannot estimate ploidy")
 
-    # Median (not length-weighted mean) of autosomal coverages: robust to several aneuploid chromosomes
     auto_median = float(np.median([data["coverage"] for data in auto_chroms.values()]))
     warnings: list[str] = []
 
@@ -223,8 +159,8 @@ def _compute_ploidy_from_chr_data(
         ),
         0,
     )
-    x_ratio = x_mean / auto_median if auto_median > 0 else 0
-    y_ratio = y_mean / auto_median if auto_median > 0 else 0
+    x_ratio = x_mean / auto_median
+    y_ratio = y_mean / auto_median
 
     karyotype = _determine_karyotype(x_ratio, y_ratio)
     sex_label = _sex_label_from_karyotype(karyotype)
@@ -282,33 +218,37 @@ def estimate_ploidy_from_coverage(
 
 
 def _iter_vcf_sites(vcf_path: str | Path, sample_id: str, exclude_regions_bed: str | Path | None = None):
-    """Yield (chrom, pos, dp, ref_ad, alt_ad) of PASS biallelic SNPs; AD is (-1, -1) unless the site is a het."""
-    exclude_regions = _load_exclude_bed(exclude_regions_bed) if exclude_regions_bed else None
-    with pysam.VariantFile(vcf_path) as reader:
+    """Yield (chrom, pos, dp, ref_ad, alt_ad, is_het) of PASS biallelic SNPs; AD is (0, 0) when missing."""
+    exclude_regions = (
+        parse_intervals_file(str(exclude_regions_bed)).set_index("chromosome") if exclude_regions_bed else None
+    )
+
+    with pysam.VariantFile(str(vcf_path)) as reader:
         if sample_id not in reader.header.samples:
             raise ValueError(
                 f"Sample {sample_id!r} is not present in VCF; available samples: {', '.join(reader.header.samples)}"
             )
-        for variant in reader:
-            if not _is_standard_biallelic_snp(variant.ref, variant.alts) or not is_pass_record(variant):
-                continue
-            chrom = variant.chrom
-            if _is_skipped_chromosome(chrom):
-                continue
-            if exclude_regions and _is_position_excluded(exclude_regions, chrom, variant.pos):
-                continue
+
+        def is_rejected(variant) -> bool:
+            return (
+                not _is_standard_biallelic_snp(variant.ref, variant.alts)
+                or not is_pass_record(variant)
+                or _is_skipped_chromosome(variant.chrom)
+                or (exclude_regions is not None and _is_position_excluded(exclude_regions, variant.chrom, variant.pos))
+            )
+
+        for variant in filterfalse(is_rejected, reader):
             sample = variant.samples[sample_id]
             ad = sample.get("AD")
-            ref_ad, alt_ad = -1, -1
-            if sample.get("GT") in ((0, 1), (1, 0)) and ad and len(ad) >= 2 and None not in ad[:2]:  # noqa: PLR2004
-                ref_ad, alt_ad = ad[:2]
-            yield chrom, variant.pos, sample.get("DP") or 0, ref_ad, alt_ad
+            has_ad = ad is not None and len(ad) >= 2 and None not in ad[:2]
+            ref_ad, alt_ad = ad[:2] if has_ad else (0, 0)
+            is_het = has_ad and sample.get("GT") in ((0, 1), (1, 0))
+            yield variant.chrom, variant.pos, sample.get("DP") or 0, ref_ad, alt_ad, is_het
 
 
-def estimate_ploidy_from_vcf(  # noqa: PLR0913
+def estimate_ploidy_from_vcf(
     vcf_path: str | Path,
     sample_id: str,
-    het_sample_count: int = 5000,
     sex_chromosomes: list[str] | tuple[str, ...] = DEFAULT_SEX_CHROMOSOMES,
     exclude_regions_bed: str | Path | None = None,
     min_effect: float = 0.15,
@@ -321,18 +261,17 @@ def estimate_ploidy_from_vcf(  # noqa: PLR0913
     (e.g. PAR-adjacent chrY) whose SNPs are dropped before computing per-chr coverage.
     """
     sites = _iter_vcf_sites(vcf_path, sample_id, exclude_regions_bed)
-    return _ploidy_from_sites(sites, sex_chromosomes, het_sample_count, min_effect, coverage_only_effect, min_af_skew)
+    return _ploidy_from_sites(sites, sex_chromosomes, min_effect, coverage_only_effect, min_af_skew)
 
 
-def _ploidy_from_sites(  # noqa: C901, PLR0913
+def _ploidy_from_sites(
     sites,
     sex_chromosomes: list[str] | tuple[str, ...] = DEFAULT_SEX_CHROMOSOMES,
-    het_sample_count: int = 5000,
     min_effect: float = 0.15,
     coverage_only_effect: float = 0.8,
     min_af_skew: float = 1.2,
 ) -> tuple[dict, dict]:
-    """Estimate ploidy from (chrom, pos, dp, ref_ad, alt_ad) sites (see _iter_vcf_sites).
+    """Estimate ploidy from (chrom, pos, dp, ref_ad, alt_ad, is_het) sites (see _iter_vcf_sites).
 
     Coverage: interpolated (grouped) median DP per chromosome after dropping DP > 3x the autosomal median;
     ploidy = 2 * cov / median of the autosomal coverages.
@@ -341,27 +280,51 @@ def _ploidy_from_sites(  # noqa: C901, PLR0913
     af_skew = median bin mean of the chromosome / median bin mean of all autosomes (~1 when balanced).
     het_af: d = (u - 1) / (4 (tot - 1)) is unbiased for (AF - 0.5)^2; het_af = 0.5 + sqrt(median bin mean of d
     of the chromosome - that of all autosomes), the typical major-allele fraction of the chromosome's hets.
+
+    Parameters
+    ----------
+    sites : Iterable[tuple[str, int, int, int, int, bool]]
+        (chrom, pos, dp, ref_ad, alt_ad, is_het) per site, as yielded by _iter_vcf_sites.
+    sex_chromosomes : list[str] | tuple[str, ...], optional
+        Chromosome names excluded from the autosomal baseline and from the allelic statistics.
+    min_effect : float, optional
+        Minimal |ploidy - 2| for an autosome to be considered at all (default 0.15, about a 15% mosaic
+        single-copy change). Smaller deviations are treated as noise and never reported.
+    coverage_only_effect : float, optional
+        |ploidy - 2| at or above which an autosome is called on coverage alone (default 0.8, i.e. close to a
+        full copy gained or lost). Needed because such events can leave af_skew uninformative: a monosomy has
+        no hets and a balanced 2:2 tetrasomy keeps the alleles at 0.5.
+    min_af_skew : float, optional
+        Minimal af_skew that confirms a deviation between min_effect and coverage_only_effect (default 1.2;
+        normal chromosomes stay below ~1.13, real events in the research data were >= 1.57). Without this
+        confirmation the chromosome is reported as "Not confirmed by BAF" rather than called.
+
+    Returns
+    -------
+    tuple[dict, dict]
+        (coverage_result, baf_result): per-chromosome ploidy, af_skew, het_af and call plus karyotype, and the
+        genome-wide BAF label from _call_whole_genome_ploidy_by_baf.
     """
-    rng = random.Random(42)  # noqa: S311
     sex_chromosome_names = _normalize_sex_chromosomes(sex_chromosomes)
     chr_dps: dict[str, array] = {}
     bins: dict[tuple[str, int], list[float]] = {}  # (chrom, Mb) -> [sum u, sum d, n]
-    baf_reservoir: list[float] = []
-    baf_seen = 0
+    baf_values = array("d")  # BAF of every autosomal het for the genome-wide label
+    BIN_SIZE = 1_000_000
 
-    for chrom, pos, dp, ref_ad, alt_ad in sites:
+    # Go over heterozygous calls, aggregate their depths and VAF
+    for chrom, pos, dp, ref_ad, alt_ad, is_het in sites:
         if dp > 0:
             chr_dps.setdefault(chrom, array("H")).append(min(dp, 65535))
         total = ref_ad + alt_ad
-        if ref_ad < 0 or total < 8 or _is_sex_chromosome(chrom, sex_chromosome_names):  # noqa: PLR2004
+        if not is_het or total < 8 or _is_sex_chromosome(chrom, sex_chromosome_names):
             continue
         u = min((alt_ad - total / 2) ** 2 / (total / 4), 30.0)
-        acc = bins.setdefault((chrom, pos // 1_000_000), [0.0, 0.0, 0])
-        acc[0] += u
-        acc[1] += (u - 1) / (4 * (total - 1))
-        acc[2] += 1
-        if total >= 10 and 0.1 <= alt_ad / total <= 0.9:  # noqa: PLR2004
-            baf_seen = _update_reservoir(baf_reservoir, alt_ad / total, baf_seen, het_sample_count, rng)
+        bin_sums = bins.setdefault((chrom, pos // BIN_SIZE), [0.0, 0.0, 0])
+        bin_sums[0] += u
+        bin_sums[1] += (u - 1) / (4 * (total - 1))
+        bin_sums[2] += 1
+        if total >= 10 and 0.1 <= alt_ad / total <= 0.9:
+            baf_values.append(alt_ad / total)
 
     dps = {chrom: np.frombuffer(values, dtype=np.uint16) for chrom, values in chr_dps.items()}
     autosomal = [d for chrom, d in dps.items() if not _is_sex_chromosome(chrom, sex_chromosome_names)]
@@ -369,7 +332,7 @@ def _ploidy_from_sites(  # noqa: C901, PLR0913
     chr_data = {}
     for chrom, values in dps.items():
         capped = values[values <= cap]
-        if len(capped) >= 20:  # noqa: PLR2004
+        if len(capped) >= 20:
             chr_data[chrom] = {"coverage": statistics.median_grouped(capped.tolist())}
 
     coverage_result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=sex_chromosomes)
@@ -377,7 +340,7 @@ def _ploidy_from_sites(  # noqa: C901, PLR0913
 
     chrom_bins = defaultdict(list)
     for (chrom, _), (sum_u, sum_d, n) in bins.items():
-        if n >= 50:  # noqa: PLR2004
+        if n >= 50:
             chrom_bins[chrom].append((sum_u / n, sum_d / n))
     all_bins = np.array([b for values in chrom_bins.values() for b in values]).reshape(-1, 2)
     u_genome, d_genome = np.median(all_bins, axis=0) if len(all_bins) else (np.nan, np.nan)
@@ -391,7 +354,7 @@ def _ploidy_from_sites(  # noqa: C901, PLR0913
             entry["ploidy"], entry["af_skew"], min_effect, coverage_only_effect, min_af_skew
         )
 
-    return coverage_result, _classify_baf(baf_reservoir)
+    return coverage_result, _call_whole_genome_ploidy_by_baf(baf_values)
 
 
 def _call_aneuploidy(
@@ -406,21 +369,21 @@ def _call_aneuploidy(
     return "coverage+BAF" if af_skew is not None and af_skew >= min_af_skew else "unconfirmed"
 
 
-def _classify_baf(baf_values: list[float]) -> dict:
+def _call_whole_genome_ploidy_by_baf(baf_values: array[float]) -> dict:
     n_het = len(baf_values)
-    if n_het < 50:  # noqa: PLR2004
+    if n_het < 50:
         return {"label": "INSUFFICIENT_DATA", "confidence": f"(<50 het SNPs, found {n_het})", "n_het": n_het}
 
-    di_count = sum(1 for b in baf_values if 0.40 < b < 0.60)  # noqa: PLR2004
-    tri_count = sum(1 for b in baf_values if (0.25 <= b <= 0.4) or (0.60 <= b <= 0.75))  # noqa: PLR2004
+    di_count = sum(1 for b in baf_values if 0.40 < b < 0.60)
+    tri_count = sum(1 for b in baf_values if (0.25 <= b <= 0.4) or (0.60 <= b <= 0.75))
     di_frac = round(di_count / n_het * 100, 1)
     tri_frac = round(tri_count / n_het * 100, 1)
 
-    if di_count > tri_count * 2.5:  # noqa: PLR2004
+    if di_count > tri_count * 2.5:
         label, confidence = "DIPLOID", f"({di_frac}% hets in 0.4-0.6 BAF band, n={n_het})"
-    elif tri_count > di_count * 2.5:  # noqa: PLR2004 symmetric to the DIPLOID dominance check above
+    elif tri_count > di_count * 2.5:  # symmetric to the DIPLOID dominance check above
         label, confidence = "TRIPLOID", f"(diplo={di_frac}%, tri={tri_frac}%, n={n_het})"
-    elif di_count > tri_count * 1.5:  # noqa: PLR2004
+    elif di_count > tri_count * 1.5:
         label, confidence = "LIKELY_DIPLOID", f"({di_frac}% in 0.4-0.6 band, {tri_frac}% in triploid bands, n={n_het})"
     else:
         label, confidence = "INCONCLUSIVE", f"(diplo={di_frac}%, tri={tri_frac}%, n={n_het})"
@@ -435,14 +398,11 @@ def _fmt(value: float | None) -> str:
 def _aneuploidy_call_lines(per_chrom: list[dict]) -> list[str]:
     """Report lines for VCF-mode calls: one warning per flagged chromosome, then nominees BAF did not confirm."""
     flagged = [e for e in per_chrom if e.get("call") in ("coverage", "coverage+BAF")]
-    lines = (
-        [
-            f"  [WARNING] {e['chrom']} {'gain' if e['ploidy'] > 2 else 'loss'} ploidy={e['ploidy']:.3f} "  # noqa: PLR2004
-            f"af_skew={_fmt(e['af_skew'])} het_af={_fmt(e['het_af'])} ({e['call']})"
-            for e in flagged
-        ]
-        or ["  No autosomal aneuploidy detected."]
-    )
+    lines = [
+        f"  [WARNING] {e['chrom']} {'gain' if e['ploidy'] > 2 else 'loss'} ploidy={e['ploidy']:.3f} "
+        f"af_skew={_fmt(e['af_skew'])} het_af={_fmt(e['het_af'])} ({e['call']})"
+        for e in flagged
+    ] or ["  No autosomal aneuploidy detected."]
     unconfirmed = [
         f"{e['chrom']} (ploidy={e['ploidy']:.3f}, het_af={_fmt(e['het_af'])})"
         for e in per_chrom
@@ -511,7 +471,7 @@ def write_report(
         for entry in cr["per_chrom"]:
             if entry["flag"] not in ("acro", "sex"):
                 dev = abs(entry["ploidy"] - 2.0)
-                if dev >= 0.35:  # noqa: PLR2004
+                if dev >= 0.35:
                     lines.append(
                         f"  [WARNING] {entry['chrom']} ploidy={entry['ploidy']:.3f} "
                         f"(deviation={dev:.2f}, cov={entry['mean_cov']:.2f}x)"
@@ -533,7 +493,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--vcf", default=None, help="Mode 1: VCF input for coverage from SNP DP + BAF analysis")
     parser.add_argument("--mosdepth-summary", default=None, help="Mode 2: mosdepth summary for coverage-only ploidy")
     parser.add_argument("--sample-id", required=True, help="Sample identifier for output files")
-    parser.add_argument("--het-sample-count", type=int, default=5000, help="Max het SNPs to sample for BAF (mode 1)")
     parser.add_argument(
         "--exclude-regions-bed",
         default=None,
@@ -564,7 +523,6 @@ def main(argv: list[str] | None = None) -> None:
         coverage_result, baf_result = estimate_ploidy_from_vcf(
             args.vcf,
             args.sample_id,
-            args.het_sample_count,
             args.sex_chromosomes,
             args.exclude_regions_bed,
             args.min_effect,
