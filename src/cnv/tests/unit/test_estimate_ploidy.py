@@ -1,51 +1,28 @@
-import random
+import functools
 import subprocess
+from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pysam
 import pytest
-from ugbio_core.estimate_ploidy import (
-    _autosome_number,
-    _classify_baf,
+from ugbio_cnv.estimate_ploidy import (
+    _call_aneuploidy,
+    _call_whole_genome_ploidy_by_baf,
     _compute_ploidy_from_chr_data,
-    _detect_chr_prefix,
     _determine_karyotype,
     _is_position_excluded,
     _is_standard_biallelic_snp,
-    _load_exclude_bed,
+    _ploidy_from_sites,
     _sex_label_from_karyotype,
-    _update_reservoir,
     estimate_ploidy_from_coverage,
     estimate_ploidy_from_vcf,
     main,
     parse_mosdepth_summary,
 )
+from ugbio_core.vcfbed.bed_writer import parse_intervals_file
 
-
-class TestDetectChrPrefix:
-    def test_hg38_contigs(self):
-        assert _detect_chr_prefix(["chr1", "chr2", "chrX"]) is True
-
-    def test_b37_contigs(self):
-        assert _detect_chr_prefix(["1", "2", "X"]) is False
-
-    def test_mixed_contigs(self):
-        assert _detect_chr_prefix(["chr1", "chrUn_gl000220"]) is True
-
-
-class TestAutosomeNumber:
-    def test_hg38(self):
-        assert _autosome_number("chr1", has_chr=True) == 1
-        assert _autosome_number("chr22", has_chr=True) == 22
-        assert _autosome_number("chrX", has_chr=True) is None
-
-    def test_b37(self):
-        assert _autosome_number("1", has_chr=False) == 1
-        assert _autosome_number("X", has_chr=False) is None
-
-    def test_non_contig(self):
-        assert _autosome_number("chrM", has_chr=True) is None
-        assert _autosome_number("GL000220.1", has_chr=False) is None
+PLOIDY_RESOURCES = Path(__file__).parent.parent / "resources" / "ploidy"
 
 
 class TestDetermineKaryotype:
@@ -83,31 +60,17 @@ class TestSexLabelFromKaryotype:
         assert _sex_label_from_karyotype("UNDETERMINED") == "unknown"
 
 
-class TestClassifyBaf:
-    def test_insufficient_data(self):
-        result = _classify_baf([0.5] * 10)
-        assert result["label"] == "INSUFFICIENT_DATA"
+class TestCallWholeGenomePloidyByBaf:
+    def test_no_bins_is_insufficient_data(self):
+        assert _call_whole_genome_ploidy_by_baf(None, 0)["label"] == "INSUFFICIENT_DATA"
 
-    def test_diploid(self):
-        result = _classify_baf([0.5] * 100)
+    def test_diploid_background_is_diploid(self):
+        result = _call_whole_genome_ploidy_by_baf(0.097, 1000)  # highest offset among 50 real diploids
         assert result["label"] == "DIPLOID"
 
-    def test_triploid_signal(self):
-        baf = [0.33] * 60 + [0.67] * 40
-        result = _classify_baf(baf)
-        assert result["label"] in ("TRIPLOID", "LIKELY_DIPLOID", "INCONCLUSIVE")
-
-
-class TestUpdateReservoir:
-    def test_bounds_sample_size(self):
-        reservoir = []
-        seen_count = 0
-
-        for value in range(100):
-            seen_count = _update_reservoir(reservoir, value, seen_count, sample_count=10, rng=random.Random(42))
-
-        assert seen_count == 100
-        assert len(reservoir) == 10
+    def test_triploid_is_triploid(self):
+        result = _call_whole_genome_ploidy_by_baf(1 / 6, 1000)  # hets at 1/3, 2/3
+        assert result["label"] == "TRIPLOID"
 
 
 class TestStandardBiallelicSnp:
@@ -124,7 +87,7 @@ class TestComputePloidyFromChrData:
         chr_data = {f"chr{i}": {"coverage": 50.0, "length": 1e8} for i in range(1, 23)}
         chr_data["chrX"] = {"coverage": 25.0, "length": 1e8}
         chr_data["chrY"] = {"coverage": 25.0, "length": 5e7}
-        result = _compute_ploidy_from_chr_data(chr_data, has_chr=True)
+        result = _compute_ploidy_from_chr_data(chr_data)
         assert result["karyotype"] == "XY"
         assert result["sex_label"] == "male"
         assert 0.4 < result["x_ratio"] < 0.6
@@ -134,7 +97,7 @@ class TestComputePloidyFromChrData:
         chr_data = {f"chr{i}": {"coverage": 50.0, "length": 1e8} for i in range(1, 23)}
         chr_data["chrX"] = {"coverage": 50.0, "length": 1e8}
         chr_data["chrY"] = {"coverage": 0.1, "length": 5e7}
-        result = _compute_ploidy_from_chr_data(chr_data, has_chr=True)
+        result = _compute_ploidy_from_chr_data(chr_data)
         assert result["karyotype"] == "XX"
         assert result["sex_label"] == "female"
 
@@ -142,7 +105,7 @@ class TestComputePloidyFromChrData:
         chr_data = {str(i): {"coverage": 40.0, "length": 1e8} for i in range(1, 23)}
         chr_data["X"] = {"coverage": 20.0, "length": 1e8}
         chr_data["Y"] = {"coverage": 20.0, "length": 5e7}
-        result = _compute_ploidy_from_chr_data(chr_data, has_chr=False)
+        result = _compute_ploidy_from_chr_data(chr_data)
         assert result["karyotype"] == "XY"
 
     def test_non_numeric_autosomes_from_header(self):
@@ -156,18 +119,19 @@ class TestComputePloidyFromChrData:
         assert result["karyotype"] == "XY"
         assert {entry["flag"] for entry in result["per_chrom"] if entry["chrom"].startswith("scaffold_")} == {""}
 
-    def test_autosomal_baseline_uses_length_weighted_coverage(self):
+    def test_autosomal_baseline_is_median_ignoring_lengths(self):
         chr_data = {
-            "chr1": {"coverage": 40.0, "length": 200},
-            "chr2": {"coverage": 80.0, "length": 100},
-            "chrX": {"coverage": 20.0, "length": 100},
-            "chrY": {"coverage": 20.0, "length": 50},
+            "chr1": {"coverage": 40.0, "length": 100},
+            "chr2": {"coverage": 50.0, "length": 100},
+            "chr3": {"coverage": 80.0, "length": 100},
+            "chrX": {"coverage": 25.0, "length": 100},
+            "chrY": {"coverage": 25.0, "length": 50},
         }
         result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=("chrX", "chrY"))
-        assert result["auto_mean"] == 53.33
+        assert result["auto_mean"] == 50.0  # median; the length-weighted mean would be 56.67
         assert result["warnings"] == []
 
-    def test_autosomal_baseline_falls_back_to_unweighted_median_without_lengths(self):
+    def test_autosomal_baseline_is_robust_to_outlier_chromosome(self):
         chr_data = {
             "chr1": {"coverage": 50.0},
             "chr2": {"coverage": 50.0},
@@ -178,17 +142,17 @@ class TestComputePloidyFromChrData:
         result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=("chrX", "chrY"))
         assert result["auto_mean"] == 50.0
         assert result["karyotype"] == "XY"
-        assert "using unweighted median" in result["warnings"][0]
+        assert result["warnings"] == []
 
     def test_no_autosomes_returns_undetermined(self):
-        result = _compute_ploidy_from_chr_data({"chrX": {"coverage": 25.0}}, has_chr=True)
+        result = _compute_ploidy_from_chr_data({"chrX": {"coverage": 25.0}})
         assert result["karyotype"] == "UNDETERMINED"
         assert result["per_chrom"] == []
         assert "No autosomal contigs" in result["warnings"][0]
 
     def test_zero_coverage_returns_undetermined(self):
         chr_data = {f"chr{i}": {"coverage": 0.0, "length": 1e8} for i in range(1, 23)}
-        result = _compute_ploidy_from_chr_data(chr_data, has_chr=True)
+        result = _compute_ploidy_from_chr_data(chr_data)
         assert result["karyotype"] == "UNDETERMINED"
         assert result["per_chrom"] == []
         assert "Autosomal median coverage is 0" in result["warnings"][0]
@@ -219,6 +183,22 @@ class TestEstimatePloidyFromCoverage:
             "chrY",
         }
         assert all(entry["mean_cov"] != 1.0 for entry in result["per_chrom"])
+
+    def test_mosdepth_baseline_is_median_of_autosomes(self, tmp_path):
+        # Trisomy of the longest chromosome would pull a length-weighted baseline up to ~52x; the median stays 50x
+        tsv = tmp_path / "summary.txt"
+        lines = ["chrom\tlength\tbases\tmean\tmin_cov\tmax_cov\n", "chr1_region\t250000000\t1\t75.0\t0\t200\n"]
+        lines += [f"chr{i}_region\t100000000\t1\t50.0\t0\t200\n" for i in range(2, 23)]
+        lines += ["chrX_region\t150000000\t1\t25.0\t0\t100\n", "chrY_region\t50000000\t1\t25.0\t0\t100\n"]
+        tsv.write_text("".join(lines))
+
+        result = estimate_ploidy_from_coverage(parse_mosdepth_summary(tsv))
+
+        ploidy = {entry["chrom"]: entry["ploidy"] for entry in result["per_chrom"]}
+        assert result["auto_mean"] == 50.0
+        assert ploidy["chr1"] == 3.0
+        assert all(ploidy[f"chr{i}"] == 2.0 for i in range(2, 23))
+        assert result["karyotype"] == "XY"
 
     def test_mosdepth_requires_region_rows(self):
         summary = pd.DataFrame(
@@ -293,16 +273,6 @@ class TestEstimatePloidyFromVcf:
         assert coverage_result["source"] == "VCF SNP median DP"
         assert baf_result["label"] == "INSUFFICIENT_DATA"
 
-    def test_estimate_ploidy_from_vcf_does_not_mutate_global_random_state(self, tmp_path):
-        vcf_path = self._make_ploidy_vcf(tmp_path)
-
-        random.seed(123)
-        expected = random.random()
-        random.seed(123)
-        estimate_ploidy_from_vcf(vcf_path, "SAMPLE")
-
-        assert random.random() == expected
-
     def test_selects_requested_sample_from_multi_sample_vcf(self, tmp_path):
         vcf_path = tmp_path / "multi_sample.vcf.gz"
         header = pysam.VariantHeader()
@@ -344,7 +314,7 @@ class TestEstimatePloidyFromVcf:
 
     @staticmethod
     def _make_vcf_with_chry_exclusion_case(tmp_path, sample_name="SAMPLE"):
-        """chrY has 20 high-DP SNPs (positions 1-20, meant to be excluded) and 20 low-DP SNPs
+        """chrY has 21 high-DP SNPs (positions 1-21, meant to be excluded) and 20 low-DP SNPs
         (positions 101-120, meant to be kept). chrX/autosomes are diploid-like (X ratio ~1.0),
         so the karyotype call is driven entirely by whether the high-DP chrY SNPs are excluded.
         """
@@ -371,14 +341,14 @@ class TestEstimatePloidyFromVcf:
             write_records("chr1", range(1, 21), 40)
             write_records("chr2", range(1, 21), 40)
             write_records("chrX", range(1, 21), 40)
-            write_records("chrY", range(1, 21), 32)  # high-DP: should be excluded
+            write_records("chrY", range(1, 22), 20)  # high-DP: should be excluded
             write_records("chrY", range(101, 121), 4)  # low-DP: should be kept
         return vcf_path
 
     def test_exclude_regions_bed_filters_high_coverage_chry_positions(self, tmp_path):
         vcf_path = self._make_vcf_with_chry_exclusion_case(tmp_path)
         exclude_bed = tmp_path / "exclude.bed"
-        exclude_bed.write_text("chrY\t0\t20\n")
+        exclude_bed.write_text("chrY\t0\t21\n")
 
         coverage_without_exclusion, _ = estimate_ploidy_from_vcf(vcf_path, "SAMPLE")
         coverage_with_exclusion, _ = estimate_ploidy_from_vcf(vcf_path, "SAMPLE", exclude_regions_bed=exclude_bed)
@@ -387,50 +357,19 @@ class TestEstimatePloidyFromVcf:
         assert coverage_with_exclusion["karyotype"] == "XX"
 
 
-class TestLoadExcludeBed:
-    def test_parses_and_sorts_intervals(self, tmp_path):
-        bed_path = tmp_path / "regions.bed"
-        bed_path.write_text("chrY\t100\t200\nchrY\t0\t50\nchrX\t10\t20\n")
-
-        regions = _load_exclude_bed(bed_path)
-
-        starts, intervals = regions["chrY"]
-        assert starts == [0, 100]
-        assert intervals == [(0, 50), (100, 200)]
-        assert regions["chrX"] == ([10], [(10, 20)])
-
-    def test_skips_comments_and_blank_lines(self, tmp_path):
-        bed_path = tmp_path / "regions.bed"
-        bed_path.write_text("# header\n\nchrY\t0\t10\n")
-
-        regions = _load_exclude_bed(bed_path)
-
-        assert regions == {"chrY": ([0], [(0, 10)])}
-
-    def test_merges_nested_and_overlapping_intervals(self, tmp_path):
-        bed_path = tmp_path / "regions.bed"
-        # (20, 30) and (40, 60) are both nested/overlapping inside the earlier, longer (10, 100)
-        bed_path.write_text("chrY\t10\t100\nchrY\t20\t30\nchrY\t40\t60\n")
-
-        regions = _load_exclude_bed(bed_path)
-
-        assert regions["chrY"] == ([10], [(10, 100)])
-
-    def test_merges_adjacent_intervals(self, tmp_path):
-        bed_path = tmp_path / "regions.bed"
-        bed_path.write_text("chrY\t0\t50\nchrY\t50\t100\n")
-
-        regions = _load_exclude_bed(bed_path)
-
-        assert regions["chrY"] == ([0], [(0, 100)])
-
-
 class TestIsPositionExcluded:
     @staticmethod
     def _regions(tmp_path, *lines):
         bed_path = tmp_path / "regions.bed"
         bed_path.write_text("\n".join(lines) + "\n")
-        return _load_exclude_bed(bed_path)
+        return parse_intervals_file(str(bed_path)).set_index("chromosome")  # as in _iter_vcf_sites
+
+    def test_unsorted_nested_and_adjacent_intervals(self, tmp_path):
+        regions = self._regions(
+            tmp_path, "chrY\t100\t200", "chrY\t0\t50", "chrY\t50\t60", "chrY\t110\t120", "chrX\t10\t20"
+        )
+        excluded = [pos for pos in range(1, 202) if _is_position_excluded(regions, "chrY", pos)]
+        assert excluded == [*range(1, 61), *range(101, 201)]  # 1-based positions covered by [0, 60) and [100, 200)
 
     def test_position_inside_interval(self, tmp_path):
         regions = self._regions(tmp_path, "chrY\t100\t200")
@@ -447,7 +386,8 @@ class TestIsPositionExcluded:
         assert _is_position_excluded(regions, "chrX", 5) is False
 
     def test_no_regions_returns_false(self):
-        assert _is_position_excluded({}, "chrY", 5) is False
+        empty = pd.DataFrame({"start": [], "end": []}, index=pd.Index([], name="chromosome"))
+        assert _is_position_excluded(empty, "chrY", 5) is False
 
     def test_position_inside_longer_interval_masked_by_nested_interval(self, tmp_path):
         # Regression: a shorter interval starting later (20, 30) must not hide positions covered
@@ -483,7 +423,7 @@ class TestEstimatePloidyCli:
             "",
             "  Karyotype:          XY",
             "  X/Y coverage ratios: X=0.500, Y=0.500",
-            "  Whole-genome ploidy: DIPLOID (100.0% hets in 0.4-0.6 BAF band, n=660)",
+            "  Whole-genome ploidy: INSUFFICIENT_DATA (no 1 Mb bin with >= 50 het SNPs)",
             "  Autosomal median cov: 50.0x",
             "  Coverage source:    VCF SNP median DP",
             f"  Input:              {vcf_path}",
@@ -493,7 +433,7 @@ class TestEstimatePloidyCli:
         ]
         for i in range(1, 23):
             chrom = f"chr{i}"
-            expected_lines.append(f"  {chrom:<6s} ploidy=2.000  cov=50.00x   ")
+            expected_lines.append(f"  {chrom:<6s} ploidy=2.000  cov=50.00x  af_skew=NA   ")
         expected_lines.extend(
             [
                 "  chrX   ploidy=1.000  cov=25.00x  .",
@@ -501,7 +441,7 @@ class TestEstimatePloidyCli:
                 "",
                 "  (. = sex chromosome)",
                 "",
-                "  No autosomal aneuploidy detected (all within +/-0.35 of 2.0).",
+                "  No autosomal aneuploidy detected.",
                 "",
                 "",
             ]
@@ -579,3 +519,102 @@ class TestEstimatePloidyCli:
                     "SAMPLE",
                 ]
             )
+
+
+class TestCallAneuploidy:
+    @pytest.mark.parametrize(
+        "ploidy, af_skew, expected",
+        [
+            (2.05, 1.0, False),  # normal
+            (2.4, 1.0, False),  # GC-like coverage shift, balanced alleles
+            (2.35, 1.6, True),  # mosaic gain confirmed by allelic skew
+            (1.0, None, True),  # monosomy: no hets, called on coverage alone
+            (4.0, 1.0, True),  # balanced tetrasomy, called on coverage alone
+        ],
+    )
+    def test_calling_rule(self, ploidy, af_skew, expected):
+        assert _call_aneuploidy(ploidy, af_skew, 0.15, 0.8, 1.2) is expected
+
+
+class TestPloidyFromSitesCoverage:
+    AUTOSOMES = [f"chr{i}" for i in range(1, 23)]
+
+    @staticmethod
+    def _sites(depths_by_chrom: dict[str, list[int]]):
+        return [
+            (chrom, pos, dp, 0, 0, False)
+            for chrom, depths in depths_by_chrom.items()
+            for pos, dp in enumerate(depths, start=1)
+        ]
+
+    def _ploidy(self, depths_by_chrom):
+        coverage_result, _ = _ploidy_from_sites(self._sites(depths_by_chrom))
+        return {entry["chrom"]: entry["ploidy"] for entry in coverage_result["per_chrom"]}
+
+    def test_dp_above_three_times_autosomal_median_is_dropped(self):
+        depths = {chrom: [40] * 30 for chrom in self.AUTOSOMES}
+        depths["chr1"] = [40] * 20 + [500] * 30  # majority of outliers: uncapped median would be 500
+        assert self._ploidy(depths)["chr1"] == 2.0
+
+    def test_chromosome_with_too_few_sites_is_skipped(self):
+        depths = {chrom: [40] * 30 for chrom in self.AUTOSOMES}
+        depths["chr2"] = [40] * 19
+        depths["chr3"] = [40] * 20
+        ploidy = self._ploidy(depths)
+        assert "chr2" not in ploidy
+        assert ploidy["chr3"] == 2.0
+
+    def test_baseline_is_robust_to_three_trisomies(self):
+        depths = {chrom: [38, 40, 42] * 10 for chrom in self.AUTOSOMES}
+        for chrom in ("chr1", "chr2", "chr3"):
+            depths[chrom] = [57, 60, 63] * 10
+        ploidy = self._ploidy(depths)
+        assert all(ploidy[chrom] == pytest.approx(3.0, abs=0.05) for chrom in ("chr1", "chr2", "chr3"))
+        assert all(ploidy[chrom] == pytest.approx(2.0, abs=0.05) for chrom in self.AUTOSOMES[3:])
+
+
+class TestRealDataSites:
+    """De-identified site tables of real VCFs (built with resources/ploidy/make_ploidy_sites.py)."""
+
+    @staticmethod
+    @functools.cache
+    def _run(name):
+        sites = pd.read_parquet(PLOIDY_RESOURCES / f"{name}.ploidy_sites.parquet")
+        coverage_result, baf_result = _ploidy_from_sites(sites.itertuples(index=False, name=None))
+        per_chrom = {entry["chrom"]: entry for entry in coverage_result["per_chrom"]}
+        flagged = {chrom for chrom, entry in per_chrom.items() if entry.get("aneuploid")}
+        return coverage_result, baf_result, per_chrom, flagged
+
+    @pytest.mark.parametrize(
+        "name, karyotype, expected_flagged",
+        [
+            ("MTB054", "XY", {"chr8"}),  # mosaic chr8 gain
+            ("CKT416", "XY", {"chr21"}),  # trisomy 21
+            ("PMR903", "XX", set()),  # GC-driven coverage artifacts, balanced alleles
+            ("HG002_DS5X", "XY", set()),  # 5x down-sample of a normal male
+        ],
+    )
+    def test_karyotype_and_flagged_chromosomes(self, name, karyotype, expected_flagged):
+        coverage_result, baf_result, _, flagged = self._run(name)
+        assert coverage_result["karyotype"] == karyotype
+        assert flagged == expected_flagged
+        assert baf_result["label"] == "DIPLOID"
+
+    @pytest.mark.parametrize("name, chrom", [("MTB054", "chr8"), ("CKT416", "chr21")])
+    def test_het_af_agrees_with_coverage(self, name, chrom):
+        _, _, per_chrom, _ = self._run(name)
+        gain = per_chrom[chrom]["ploidy"] - 2  # fraction of cells carrying one extra copy
+        assert per_chrom[chrom]["het_af"] == pytest.approx((1 + gain) / (2 + gain), abs=0.03)
+
+    def test_simulated_triploid_is_triploid(self):
+        # Re-draw the het allele counts of a real diploid at AF 1/3 or 2/3, keeping its depths and positions
+        sites = pd.read_parquet(PLOIDY_RESOURCES / "MTB054.ploidy_sites.parquet")
+        rng = np.random.default_rng(0)
+        het = sites["is_het"].to_numpy()
+        total = (sites["ref_ad"] + sites["alt_ad"]).to_numpy()[het]
+        alt = rng.binomial(total, rng.choice([1 / 3, 2 / 3], len(total)))
+        sites.loc[het, "alt_ad"] = alt.astype(np.int16)
+        sites.loc[het, "ref_ad"] = (total - alt).astype(np.int16)
+        _, baf_result = _ploidy_from_sites(sites.itertuples(index=False, name=None))
+        assert baf_result["label"] == "TRIPLOID"
+        assert baf_result["genome_het_offset"] == pytest.approx(1 / 6, abs=0.02)

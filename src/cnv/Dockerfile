@@ -30,8 +30,9 @@ FROM $BASE_IMAGE
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
 
-# Install basic dependencies
-RUN apt-get update && \
+# Install basic dependencies; upgrade first to pick up security fixes missing from the base image
+# (e.g. ugbio_base:1.8.6 ships perl 5.36.0-7+deb12u3, CRITICAL CVE-2026-13221/-42496/-8376, fixed in deb12u4)
+RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     g++ \
     gfortran \
