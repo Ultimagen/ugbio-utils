@@ -2,6 +2,7 @@ import functools
 import subprocess
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pysam
 import pytest
@@ -60,31 +61,15 @@ class TestSexLabelFromKaryotype:
 
 
 class TestCallWholeGenomePloidyByBaf:
-    def test_insufficient_data(self):
-        result = _call_whole_genome_ploidy_by_baf([0.5] * 10)
-        assert result["label"] == "INSUFFICIENT_DATA"
+    def test_no_bins_is_insufficient_data(self):
+        assert _call_whole_genome_ploidy_by_baf(None, 0)["label"] == "INSUFFICIENT_DATA"
 
-    def test_diploid(self):
-        result = _call_whole_genome_ploidy_by_baf([0.5] * 100)
+    def test_diploid_background_is_diploid(self):
+        result = _call_whole_genome_ploidy_by_baf(0.097, 1000)  # highest offset among 50 real diploids
         assert result["label"] == "DIPLOID"
 
-    def test_triploid_signal(self):
-        baf = [0.33] * 60 + [0.67] * 40
-        result = _call_whole_genome_ploidy_by_baf(baf)
-        assert result["label"] in ("TRIPLOID", "LIKELY_DIPLOID", "INCONCLUSIVE")
-
-    def test_diploid_majority_with_noise_is_not_triploid(self):
-        # regression for a reciprocal-threshold bug: a clear diploid majority
-        # (~69% di / ~29% tri, e.g. from low-coverage BAF noise) was previously
-        # mislabeled TRIPLOID because the TRIPLOID check was the negation of
-        # the DIPLOID check instead of its symmetric counterpart.
-        baf = [0.5] * 345 + [0.33] * 146 + [0.67] * 9
-        result = _call_whole_genome_ploidy_by_baf(baf)
-        assert result["label"] == "LIKELY_DIPLOID"
-
-    def test_dominant_triploid_signal(self):
-        baf = [0.33] * 70 + [0.67] * 20 + [0.5] * 10
-        result = _call_whole_genome_ploidy_by_baf(baf)
+    def test_triploid_is_triploid(self):
+        result = _call_whole_genome_ploidy_by_baf(1 / 6, 1000)  # hets at 1/3, 2/3
         assert result["label"] == "TRIPLOID"
 
 
@@ -438,7 +423,7 @@ class TestEstimatePloidyCli:
             "",
             "  Karyotype:          XY",
             "  X/Y coverage ratios: X=0.500, Y=0.500",
-            "  Whole-genome ploidy: DIPLOID (100.0% hets in 0.4-0.6 BAF band, n=660)",
+            "  Whole-genome ploidy: INSUFFICIENT_DATA (no 1 Mb bin with >= 50 het SNPs)",
             "  Autosomal median cov: 50.0x",
             "  Coverage source:    VCF SNP median DP",
             f"  Input:              {vcf_path}",
@@ -455,8 +440,6 @@ class TestEstimatePloidyCli:
                 "  chrY   ploidy=1.000  cov=25.00x  .",
                 "",
                 "  (. = sex chromosome)",
-                "  (af_skew = allele-fraction skew of het SNPs relative to the autosomal median;"
-                " ~1.0 balanced, >=1.2 supports a copy-number change)",
                 "",
                 "  No autosomal aneuploidy detected.",
                 "",
@@ -464,10 +447,6 @@ class TestEstimatePloidyCli:
             ]
         )
         assert report_text == "\n".join(expected_lines)
-
-        per_chrom = pd.read_csv(tmp_path / "SAMPLE.ploidy_per_chrom.tsv", sep="\t")
-        assert list(per_chrom.columns) == ["chrom", "ploidy", "mean_cov", "flag", "af_skew", "het_af", "call"]
-        assert len(per_chrom) == 24  # noqa: PLR2004
 
         # Verify downstream WDL task karyotype extraction logic
         cmd = f"grep -m1 'Karyotype:' {report_path} | awk '{{print $NF}}'"
@@ -546,15 +525,52 @@ class TestCallAneuploidy:
     @pytest.mark.parametrize(
         "ploidy, af_skew, expected",
         [
-            (2.05, 1.0, ""),  # normal
-            (2.4, 1.0, "unconfirmed"),  # GC-like coverage shift, balanced alleles
-            (2.35, 1.6, "coverage+BAF"),  # mosaic gain
-            (1.0, None, "coverage"),  # monosomy: no hets
-            (4.0, 1.0, "coverage"),  # balanced tetrasomy
+            (2.05, 1.0, False),  # normal
+            (2.4, 1.0, False),  # GC-like coverage shift, balanced alleles
+            (2.35, 1.6, True),  # mosaic gain confirmed by allelic skew
+            (1.0, None, True),  # monosomy: no hets, called on coverage alone
+            (4.0, 1.0, True),  # balanced tetrasomy, called on coverage alone
         ],
     )
     def test_calling_rule(self, ploidy, af_skew, expected):
-        assert _call_aneuploidy(ploidy, af_skew, 0.15, 0.8, 1.2) == expected
+        assert _call_aneuploidy(ploidy, af_skew, 0.15, 0.8, 1.2) is expected
+
+
+class TestPloidyFromSitesCoverage:
+    AUTOSOMES = [f"chr{i}" for i in range(1, 23)]
+
+    @staticmethod
+    def _sites(depths_by_chrom: dict[str, list[int]]):
+        return [
+            (chrom, pos, dp, 0, 0, False)
+            for chrom, depths in depths_by_chrom.items()
+            for pos, dp in enumerate(depths, start=1)
+        ]
+
+    def _ploidy(self, depths_by_chrom):
+        coverage_result, _ = _ploidy_from_sites(self._sites(depths_by_chrom))
+        return {entry["chrom"]: entry["ploidy"] for entry in coverage_result["per_chrom"]}
+
+    def test_dp_above_three_times_autosomal_median_is_dropped(self):
+        depths = {chrom: [40] * 30 for chrom in self.AUTOSOMES}
+        depths["chr1"] = [40] * 20 + [500] * 30  # majority of outliers: uncapped median would be 500
+        assert self._ploidy(depths)["chr1"] == 2.0
+
+    def test_chromosome_with_too_few_sites_is_skipped(self):
+        depths = {chrom: [40] * 30 for chrom in self.AUTOSOMES}
+        depths["chr2"] = [40] * 19
+        depths["chr3"] = [40] * 20
+        ploidy = self._ploidy(depths)
+        assert "chr2" not in ploidy
+        assert ploidy["chr3"] == 2.0
+
+    def test_baseline_is_robust_to_three_trisomies(self):
+        depths = {chrom: [38, 40, 42] * 10 for chrom in self.AUTOSOMES}
+        for chrom in ("chr1", "chr2", "chr3"):
+            depths[chrom] = [57, 60, 63] * 10
+        ploidy = self._ploidy(depths)
+        assert all(ploidy[chrom] == pytest.approx(3.0, abs=0.05) for chrom in ("chr1", "chr2", "chr3"))
+        assert all(ploidy[chrom] == pytest.approx(2.0, abs=0.05) for chrom in self.AUTOSOMES[3:])
 
 
 class TestRealDataSites:
@@ -566,7 +582,7 @@ class TestRealDataSites:
         sites = pd.read_parquet(PLOIDY_RESOURCES / f"{name}.ploidy_sites.parquet")
         coverage_result, baf_result = _ploidy_from_sites(sites.itertuples(index=False, name=None))
         per_chrom = {entry["chrom"]: entry for entry in coverage_result["per_chrom"]}
-        flagged = {chrom for chrom, entry in per_chrom.items() if entry.get("call") in ("coverage", "coverage+BAF")}
+        flagged = {chrom for chrom, entry in per_chrom.items() if entry.get("aneuploid")}
         return coverage_result, baf_result, per_chrom, flagged
 
     @pytest.mark.parametrize(
@@ -582,10 +598,23 @@ class TestRealDataSites:
         coverage_result, baf_result, _, flagged = self._run(name)
         assert coverage_result["karyotype"] == karyotype
         assert flagged == expected_flagged
-        assert baf_result["label"] != "TRIPLOID"
+        assert baf_result["label"] == "DIPLOID"
 
     @pytest.mark.parametrize("name, chrom", [("MTB054", "chr8"), ("CKT416", "chr21")])
     def test_het_af_agrees_with_coverage(self, name, chrom):
         _, _, per_chrom, _ = self._run(name)
         gain = per_chrom[chrom]["ploidy"] - 2  # fraction of cells carrying one extra copy
         assert per_chrom[chrom]["het_af"] == pytest.approx((1 + gain) / (2 + gain), abs=0.03)
+
+    def test_simulated_triploid_is_triploid(self):
+        # Re-draw the het allele counts of a real diploid at AF 1/3 or 2/3, keeping its depths and positions
+        sites = pd.read_parquet(PLOIDY_RESOURCES / "MTB054.ploidy_sites.parquet")
+        rng = np.random.default_rng(0)
+        het = sites["is_het"].to_numpy()
+        total = (sites["ref_ad"] + sites["alt_ad"]).to_numpy()[het]
+        alt = rng.binomial(total, rng.choice([1 / 3, 2 / 3], len(total)))
+        sites.loc[het, "alt_ad"] = alt.astype(np.int16)
+        sites.loc[het, "ref_ad"] = (total - alt).astype(np.int16)
+        _, baf_result = _ploidy_from_sites(sites.itertuples(index=False, name=None))
+        assert baf_result["label"] == "TRIPLOID"
+        assert baf_result["genome_het_offset"] == pytest.approx(1 / 6, abs=0.02)
