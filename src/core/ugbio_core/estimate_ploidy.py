@@ -33,6 +33,11 @@ _STANDARD_BASES = {"A", "C", "G", "T"}
 # Genome-wide het AF offset |AF - 0.5| above which the sample is called TRIPLOID: diploids measured 0.04-0.10
 # (overdispersion), a pure triploid is 1/6 = 0.167 (het AF 1/3, 2/3)
 _TRIPLOID_MIN_HET_OFFSET = 0.13
+_BIN_SIZE = 1_000_000  # bin size for the allelic statistics
+_MIN_HET_DEPTH = 8  # min ref + alt reads for a het to enter the allelic statistics
+_MIN_HETS_PER_BIN = 50  # min hets for a bin to be used
+_MIN_SITES_PER_CHROM = 20  # min sites for a chromosome's coverage estimate
+_MOSDEPTH_FLAG_DEVIATION = 0.35  # mosdepth mode: flag autosomes with |ploidy - 2| at or above this
 
 _MITO = re.compile(r"^(chrM|MT)$", re.IGNORECASE)
 _SKIP = re.compile(r"_random$|_decoy$|^chrUn|^HLA|^EBV|_alt$", re.IGNORECASE)
@@ -243,7 +248,7 @@ def _iter_vcf_sites(vcf_path: str | Path, sample_id: str, exclude_regions_bed: s
         for variant in filterfalse(is_rejected, reader):
             sample = variant.samples[sample_id]
             ad = sample.get("AD")
-            has_ad = ad is not None and len(ad) >= 2 and None not in ad[:2]
+            has_ad = ad is not None and len(ad) >= 2 and None not in ad[:2]  # noqa: PLR2004
             ref_ad, alt_ad = ad[:2] if has_ad else (0, 0)
             is_het = has_ad and sample.get("GT") in ((0, 1), (1, 0))
             yield variant.chrom, variant.pos, sample.get("DP") or 0, ref_ad, alt_ad, is_het
@@ -311,21 +316,20 @@ def _ploidy_from_sites(
     sex_chromosome_names = _normalize_sex_chromosomes(sex_chromosomes)
     chr_dps: dict[str, array] = {}
     bins: dict[tuple[str, int], list[float]] = {}  # (chrom, Mb) -> [sum u, sum d, n]
-    BIN_SIZE = 1_000_000
 
     # Go over heterozygous calls, aggregate their depths and VAF
     for chrom, pos, dp, ref_ad, alt_ad, is_het in sites:
         if dp > 0:
             chr_dps.setdefault(chrom, array("H")).append(min(dp, 65535))
         total = ref_ad + alt_ad
-        if not is_het or total < 8 or _is_sex_chromosome(chrom, sex_chromosome_names):
+        if not is_het or total < _MIN_HET_DEPTH or _is_sex_chromosome(chrom, sex_chromosome_names):
             continue
         u = min((alt_ad - total / 2) ** 2 / (total / 4), 30.0)
-        bin_sums = bins.setdefault((chrom, pos // BIN_SIZE), [0.0, 0.0, 0])
+        bin_sums = bins.setdefault((chrom, pos // _BIN_SIZE), [0.0, 0.0, 0])
         bin_sums[0] += u
         bin_sums[1] += (u - 1) / (4 * (total - 1))
         bin_sums[2] += 1
-        bins[(chrom, pos // BIN_SIZE)] = bin_sums
+        bins[(chrom, pos // _BIN_SIZE)] = bin_sums
 
     dps = {chrom: np.frombuffer(values, dtype=np.uint16) for chrom, values in chr_dps.items()}
     autosomal = [d for chrom, d in dps.items() if not _is_sex_chromosome(chrom, sex_chromosome_names)]
@@ -333,7 +337,7 @@ def _ploidy_from_sites(
     chr_data = {}
     for chrom, values in dps.items():
         capped = values[values <= cap]
-        if len(capped) >= 20:
+        if len(capped) >= _MIN_SITES_PER_CHROM:
             chr_data[chrom] = {"coverage": statistics.median_grouped(capped.tolist())}
 
     coverage_result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=sex_chromosomes)
@@ -341,7 +345,7 @@ def _ploidy_from_sites(
 
     chrom_bins = defaultdict(list)
     for (chrom, _), (sum_u, sum_d, n) in bins.items():
-        if n >= 50:
+        if n >= _MIN_HETS_PER_BIN:
             chrom_bins[chrom].append((sum_u / n, sum_d / n))
     all_bins = np.array([b for values in chrom_bins.values() for b in values]).reshape(-1, 2)
     u_genome, d_genome = np.median(all_bins, axis=0) if len(all_bins) else (np.nan, np.nan)
@@ -355,9 +359,9 @@ def _ploidy_from_sites(
             entry["ploidy"], entry["af_skew"], min_effect, coverage_only_effect, min_af_skew
         )
 
-    n_het = sum(n for (_, _, n) in bins.values() if n >= 50)
+    n_het = sum(n for (_, _, n) in bins.values() if n >= _MIN_HETS_PER_BIN)
     genome_het_offset = math.sqrt(max(0.0, d_genome)) if len(all_bins) else None
-    return coverage_result, _call_whole_genome_ploidy_by_baf(genome_het_offset, n_het)
+    return coverage_result, _call_whole_genome_ploidy_by_baf(genome_het_offset, int(n_het))
 
 
 def _call_aneuploidy(
@@ -393,12 +397,15 @@ def _fmt(value: float | None) -> str:
 
 def _aneuploidy_lines(per_chrom: list[dict]) -> list[str]:
     """VCF-mode report lines: one warning per aneuploid chromosome."""
-    return [
-        f"  [WARNING] {e['chrom']} {'gain' if e['ploidy'] > 2 else 'loss'} ploidy={e['ploidy']:.3f} "
-        f"af_skew={_fmt(e['af_skew'])} het_af={_fmt(e['het_af'])}"
-        for e in per_chrom
-        if e.get("aneuploid")
-    ] or ["  No autosomal aneuploidy detected."]
+    return (
+        [
+            f"  [WARNING] {e['chrom']} {'gain' if e['ploidy'] > 2 else 'loss'} ploidy={e['ploidy']:.3f} "  # noqa: PLR2004
+            f"af_skew={_fmt(e['af_skew'])} het_af={_fmt(e['het_af'])}"
+            for e in per_chrom
+            if e.get("aneuploid")
+        ]
+        or ["  No autosomal aneuploidy detected."]
+    )
 
 
 def write_report(
@@ -452,7 +459,7 @@ def write_report(
         for entry in cr["per_chrom"]:
             if entry["flag"] not in ("acro", "sex"):
                 dev = abs(entry["ploidy"] - 2.0)
-                if dev >= 0.35:
+                if dev >= _MOSDEPTH_FLAG_DEVIATION:
                     lines.append(
                         f"  [WARNING] {entry['chrom']} ploidy={entry['ploidy']:.3f} "
                         f"(deviation={dev:.2f}, cov={entry['mean_cov']:.2f}x)"
