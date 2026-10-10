@@ -1,7 +1,7 @@
 """Build a de-identified ploidy test fixture from a VCF.
 
-Stores only what estimate_ploidy uses: chrom, position (randomly shifted by 3-5 bp), DP and the het AD counts
-(-1 for non-het sites). No alleles, genotypes or INFO are kept.
+Stores only what estimate_ploidy uses: chrom, position (randomly shifted by 3-5 bp), DP, AD counts and the het
+flag. No alleles, genotypes or INFO are kept.
 
 Usage: python make_ploidy_sites.py <vcf> <sample_id> <exclude_regions_bed> <out.parquet>
 """
@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from ugbio_core.estimate_ploidy import _iter_vcf_sites
 
-COLUMNS = ["chrom", "pos", "dp", "ref_ad", "alt_ad"]
+COLUMNS = ["chrom", "pos", "dp", "ref_ad", "alt_ad", "is_het"]
 
 
 def main(vcf: str, sample_id: str, exclude_regions_bed: str, out: str) -> None:
@@ -28,6 +28,7 @@ def main(vcf: str, sample_id: str, exclude_regions_bed: str, out: str) -> None:
             "dp": "int16",
             "ref_ad": "int16",
             "alt_ad": "int16",
+            "is_het": "bool",
         }
     )
     sites.sort_values(["chrom", "pos"]).to_parquet(out, index=False, compression="zstd")

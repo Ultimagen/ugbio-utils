@@ -1,5 +1,4 @@
 import functools
-import random
 import subprocess
 from pathlib import Path
 
@@ -7,51 +6,22 @@ import pandas as pd
 import pysam
 import pytest
 from ugbio_core.estimate_ploidy import (
-    _autosome_number,
     _call_aneuploidy,
-    _classify_baf,
+    _call_whole_genome_ploidy_by_baf,
     _compute_ploidy_from_chr_data,
-    _detect_chr_prefix,
     _determine_karyotype,
     _is_position_excluded,
     _is_standard_biallelic_snp,
-    _load_exclude_bed,
     _ploidy_from_sites,
     _sex_label_from_karyotype,
-    _update_reservoir,
     estimate_ploidy_from_coverage,
     estimate_ploidy_from_vcf,
     main,
     parse_mosdepth_summary,
 )
+from ugbio_core.vcfbed.bed_writer import parse_intervals_file
 
 PLOIDY_RESOURCES = Path(__file__).parent.parent / "resources" / "ploidy"
-
-
-class TestDetectChrPrefix:
-    def test_hg38_contigs(self):
-        assert _detect_chr_prefix(["chr1", "chr2", "chrX"]) is True
-
-    def test_b37_contigs(self):
-        assert _detect_chr_prefix(["1", "2", "X"]) is False
-
-    def test_mixed_contigs(self):
-        assert _detect_chr_prefix(["chr1", "chrUn_gl000220"]) is True
-
-
-class TestAutosomeNumber:
-    def test_hg38(self):
-        assert _autosome_number("chr1", has_chr=True) == 1
-        assert _autosome_number("chr22", has_chr=True) == 22
-        assert _autosome_number("chrX", has_chr=True) is None
-
-    def test_b37(self):
-        assert _autosome_number("1", has_chr=False) == 1
-        assert _autosome_number("X", has_chr=False) is None
-
-    def test_non_contig(self):
-        assert _autosome_number("chrM", has_chr=True) is None
-        assert _autosome_number("GL000220.1", has_chr=False) is None
 
 
 class TestDetermineKaryotype:
@@ -89,18 +59,18 @@ class TestSexLabelFromKaryotype:
         assert _sex_label_from_karyotype("UNDETERMINED") == "unknown"
 
 
-class TestClassifyBaf:
+class TestCallWholeGenomePloidyByBaf:
     def test_insufficient_data(self):
-        result = _classify_baf([0.5] * 10)
+        result = _call_whole_genome_ploidy_by_baf([0.5] * 10)
         assert result["label"] == "INSUFFICIENT_DATA"
 
     def test_diploid(self):
-        result = _classify_baf([0.5] * 100)
+        result = _call_whole_genome_ploidy_by_baf([0.5] * 100)
         assert result["label"] == "DIPLOID"
 
     def test_triploid_signal(self):
         baf = [0.33] * 60 + [0.67] * 40
-        result = _classify_baf(baf)
+        result = _call_whole_genome_ploidy_by_baf(baf)
         assert result["label"] in ("TRIPLOID", "LIKELY_DIPLOID", "INCONCLUSIVE")
 
     def test_diploid_majority_with_noise_is_not_triploid(self):
@@ -109,25 +79,13 @@ class TestClassifyBaf:
         # mislabeled TRIPLOID because the TRIPLOID check was the negation of
         # the DIPLOID check instead of its symmetric counterpart.
         baf = [0.5] * 345 + [0.33] * 146 + [0.67] * 9
-        result = _classify_baf(baf)
+        result = _call_whole_genome_ploidy_by_baf(baf)
         assert result["label"] == "LIKELY_DIPLOID"
 
     def test_dominant_triploid_signal(self):
         baf = [0.33] * 70 + [0.67] * 20 + [0.5] * 10
-        result = _classify_baf(baf)
+        result = _call_whole_genome_ploidy_by_baf(baf)
         assert result["label"] == "TRIPLOID"
-
-
-class TestUpdateReservoir:
-    def test_bounds_sample_size(self):
-        reservoir = []
-        seen_count = 0
-
-        for value in range(100):
-            seen_count = _update_reservoir(reservoir, value, seen_count, sample_count=10, rng=random.Random(42))
-
-        assert seen_count == 100
-        assert len(reservoir) == 10
 
 
 class TestStandardBiallelicSnp:
@@ -144,7 +102,7 @@ class TestComputePloidyFromChrData:
         chr_data = {f"chr{i}": {"coverage": 50.0, "length": 1e8} for i in range(1, 23)}
         chr_data["chrX"] = {"coverage": 25.0, "length": 1e8}
         chr_data["chrY"] = {"coverage": 25.0, "length": 5e7}
-        result = _compute_ploidy_from_chr_data(chr_data, has_chr=True)
+        result = _compute_ploidy_from_chr_data(chr_data)
         assert result["karyotype"] == "XY"
         assert result["sex_label"] == "male"
         assert 0.4 < result["x_ratio"] < 0.6
@@ -154,7 +112,7 @@ class TestComputePloidyFromChrData:
         chr_data = {f"chr{i}": {"coverage": 50.0, "length": 1e8} for i in range(1, 23)}
         chr_data["chrX"] = {"coverage": 50.0, "length": 1e8}
         chr_data["chrY"] = {"coverage": 0.1, "length": 5e7}
-        result = _compute_ploidy_from_chr_data(chr_data, has_chr=True)
+        result = _compute_ploidy_from_chr_data(chr_data)
         assert result["karyotype"] == "XX"
         assert result["sex_label"] == "female"
 
@@ -162,7 +120,7 @@ class TestComputePloidyFromChrData:
         chr_data = {str(i): {"coverage": 40.0, "length": 1e8} for i in range(1, 23)}
         chr_data["X"] = {"coverage": 20.0, "length": 1e8}
         chr_data["Y"] = {"coverage": 20.0, "length": 5e7}
-        result = _compute_ploidy_from_chr_data(chr_data, has_chr=False)
+        result = _compute_ploidy_from_chr_data(chr_data)
         assert result["karyotype"] == "XY"
 
     def test_non_numeric_autosomes_from_header(self):
@@ -202,14 +160,14 @@ class TestComputePloidyFromChrData:
         assert result["warnings"] == []
 
     def test_no_autosomes_returns_undetermined(self):
-        result = _compute_ploidy_from_chr_data({"chrX": {"coverage": 25.0}}, has_chr=True)
+        result = _compute_ploidy_from_chr_data({"chrX": {"coverage": 25.0}})
         assert result["karyotype"] == "UNDETERMINED"
         assert result["per_chrom"] == []
         assert "No autosomal contigs" in result["warnings"][0]
 
     def test_zero_coverage_returns_undetermined(self):
         chr_data = {f"chr{i}": {"coverage": 0.0, "length": 1e8} for i in range(1, 23)}
-        result = _compute_ploidy_from_chr_data(chr_data, has_chr=True)
+        result = _compute_ploidy_from_chr_data(chr_data)
         assert result["karyotype"] == "UNDETERMINED"
         assert result["per_chrom"] == []
         assert "Autosomal median coverage is 0" in result["warnings"][0]
@@ -330,16 +288,6 @@ class TestEstimatePloidyFromVcf:
         assert coverage_result["source"] == "VCF SNP median DP"
         assert baf_result["label"] == "INSUFFICIENT_DATA"
 
-    def test_estimate_ploidy_from_vcf_does_not_mutate_global_random_state(self, tmp_path):
-        vcf_path = self._make_ploidy_vcf(tmp_path)
-
-        random.seed(123)
-        expected = random.random()
-        random.seed(123)
-        estimate_ploidy_from_vcf(vcf_path, "SAMPLE")
-
-        assert random.random() == expected
-
     def test_selects_requested_sample_from_multi_sample_vcf(self, tmp_path):
         vcf_path = tmp_path / "multi_sample.vcf.gz"
         header = pysam.VariantHeader()
@@ -424,50 +372,19 @@ class TestEstimatePloidyFromVcf:
         assert coverage_with_exclusion["karyotype"] == "XX"
 
 
-class TestLoadExcludeBed:
-    def test_parses_and_sorts_intervals(self, tmp_path):
-        bed_path = tmp_path / "regions.bed"
-        bed_path.write_text("chrY\t100\t200\nchrY\t0\t50\nchrX\t10\t20\n")
-
-        regions = _load_exclude_bed(bed_path)
-
-        starts, intervals = regions["chrY"]
-        assert starts == [0, 100]
-        assert intervals == [(0, 50), (100, 200)]
-        assert regions["chrX"] == ([10], [(10, 20)])
-
-    def test_skips_comments_and_blank_lines(self, tmp_path):
-        bed_path = tmp_path / "regions.bed"
-        bed_path.write_text("# header\n\nchrY\t0\t10\n")
-
-        regions = _load_exclude_bed(bed_path)
-
-        assert regions == {"chrY": ([0], [(0, 10)])}
-
-    def test_merges_nested_and_overlapping_intervals(self, tmp_path):
-        bed_path = tmp_path / "regions.bed"
-        # (20, 30) and (40, 60) are both nested/overlapping inside the earlier, longer (10, 100)
-        bed_path.write_text("chrY\t10\t100\nchrY\t20\t30\nchrY\t40\t60\n")
-
-        regions = _load_exclude_bed(bed_path)
-
-        assert regions["chrY"] == ([10], [(10, 100)])
-
-    def test_merges_adjacent_intervals(self, tmp_path):
-        bed_path = tmp_path / "regions.bed"
-        bed_path.write_text("chrY\t0\t50\nchrY\t50\t100\n")
-
-        regions = _load_exclude_bed(bed_path)
-
-        assert regions["chrY"] == ([0], [(0, 100)])
-
-
 class TestIsPositionExcluded:
     @staticmethod
     def _regions(tmp_path, *lines):
         bed_path = tmp_path / "regions.bed"
         bed_path.write_text("\n".join(lines) + "\n")
-        return _load_exclude_bed(bed_path)
+        return parse_intervals_file(str(bed_path)).set_index("chromosome")  # as in _iter_vcf_sites
+
+    def test_unsorted_nested_and_adjacent_intervals(self, tmp_path):
+        regions = self._regions(
+            tmp_path, "chrY\t100\t200", "chrY\t0\t50", "chrY\t50\t60", "chrY\t110\t120", "chrX\t10\t20"
+        )
+        excluded = [pos for pos in range(1, 202) if _is_position_excluded(regions, "chrY", pos)]
+        assert excluded == [*range(1, 61), *range(101, 201)]  # 1-based positions covered by [0, 60) and [100, 200)
 
     def test_position_inside_interval(self, tmp_path):
         regions = self._regions(tmp_path, "chrY\t100\t200")
@@ -484,7 +401,8 @@ class TestIsPositionExcluded:
         assert _is_position_excluded(regions, "chrX", 5) is False
 
     def test_no_regions_returns_false(self):
-        assert _is_position_excluded({}, "chrY", 5) is False
+        empty = pd.DataFrame({"start": [], "end": []}, index=pd.Index([], name="chromosome"))
+        assert _is_position_excluded(empty, "chrY", 5) is False
 
     def test_position_inside_longer_interval_masked_by_nested_interval(self, tmp_path):
         # Regression: a shorter interval starting later (20, 30) must not hide positions covered
