@@ -30,6 +30,9 @@ from ugbio_core.vcfbed.vcftools import is_pass_record
 
 DEFAULT_SEX_CHROMOSOMES = ("chrX", "chrY", "X", "Y")
 _STANDARD_BASES = {"A", "C", "G", "T"}
+# Genome-wide het AF offset |AF - 0.5| above which the sample is called TRIPLOID: diploids measured 0.04-0.10
+# (overdispersion), a pure triploid is 1/6 = 0.167 (het AF 1/3, 2/3)
+_TRIPLOID_MIN_HET_OFFSET = 0.13
 
 _MITO = re.compile(r"^(chrM|MT)$", re.IGNORECASE)
 _SKIP = re.compile(r"_random$|_decoy$|^chrUn|^HLA|^EBV|_alt$", re.IGNORECASE)
@@ -297,18 +300,17 @@ def _ploidy_from_sites(
     min_af_skew : float, optional
         Minimal af_skew that confirms a deviation between min_effect and coverage_only_effect (default 1.2;
         normal chromosomes stay below ~1.13, real events in the research data were >= 1.57). Without this
-        confirmation the chromosome is reported as "Not confirmed by BAF" rather than called.
+        confirmation the chromosome is not called and not reported.
 
     Returns
     -------
     tuple[dict, dict]
-        (coverage_result, baf_result): per-chromosome ploidy, af_skew, het_af and call plus karyotype, and the
-        genome-wide BAF label from _call_whole_genome_ploidy_by_baf.
+        (coverage_result, baf_result): per-chromosome ploidy, af_skew, het_af and aneuploid flag plus karyotype, and the
+        genome-wide label from _call_whole_genome_ploidy_by_baf.
     """
     sex_chromosome_names = _normalize_sex_chromosomes(sex_chromosomes)
     chr_dps: dict[str, array] = {}
     bins: dict[tuple[str, int], list[float]] = {}  # (chrom, Mb) -> [sum u, sum d, n]
-    baf_values = array("d")  # BAF of every autosomal het for the genome-wide label
     BIN_SIZE = 1_000_000
 
     # Go over heterozygous calls, aggregate their depths and VAF
@@ -323,8 +325,7 @@ def _ploidy_from_sites(
         bin_sums[0] += u
         bin_sums[1] += (u - 1) / (4 * (total - 1))
         bin_sums[2] += 1
-        if total >= 10 and 0.1 <= alt_ad / total <= 0.9:
-            baf_values.append(alt_ad / total)
+        bins[(chrom, pos // BIN_SIZE)] = bin_sums
 
     dps = {chrom: np.frombuffer(values, dtype=np.uint16) for chrom, values in chr_dps.items()}
     autosomal = [d for chrom, d in dps.items() if not _is_sex_chromosome(chrom, sex_chromosome_names)]
@@ -350,67 +351,54 @@ def _ploidy_from_sites(
         chrom_u, chrom_d = np.median(chrom_bins[entry["chrom"]], axis=0) if chrom_bins[entry["chrom"]] else (None, None)
         entry["af_skew"] = None if chrom_u is None else round(float(chrom_u / u_genome), 3)
         entry["het_af"] = None if chrom_d is None else round(0.5 + math.sqrt(max(0.0, chrom_d - d_genome)), 3)
-        entry["call"] = _call_aneuploidy(
+        entry["aneuploid"] = _call_aneuploidy(
             entry["ploidy"], entry["af_skew"], min_effect, coverage_only_effect, min_af_skew
         )
 
-    return coverage_result, _call_whole_genome_ploidy_by_baf(baf_values)
+    n_het = sum(n for (_, _, n) in bins.values() if n >= 50)
+    genome_het_offset = math.sqrt(max(0.0, d_genome)) if len(all_bins) else None
+    return coverage_result, _call_whole_genome_ploidy_by_baf(genome_het_offset, n_het)
 
 
 def _call_aneuploidy(
     ploidy: float, af_skew: float | None, min_effect: float, coverage_only_effect: float, min_af_skew: float
-) -> str:
+) -> bool:
     """Large coverage deviations are called on coverage alone; smaller ones need allelic skew to confirm them."""
     deviation = abs(ploidy - 2)
     if deviation >= coverage_only_effect:
-        return "coverage"
-    if deviation < min_effect:
-        return ""
-    return "coverage+BAF" if af_skew is not None and af_skew >= min_af_skew else "unconfirmed"
+        return True
+    return deviation >= min_effect and af_skew is not None and af_skew >= min_af_skew
 
 
-def _call_whole_genome_ploidy_by_baf(baf_values: array[float]) -> dict:
-    n_het = len(baf_values)
-    if n_het < 50:
-        return {"label": "INSUFFICIENT_DATA", "confidence": f"(<50 het SNPs, found {n_het})", "n_het": n_het}
+def _call_whole_genome_ploidy_by_baf(genome_het_offset: float | None, n_het: int) -> dict:
+    """Label the whole genome from the typical het AF offset |AF - 0.5| (sqrt of the median autosomal d).
 
-    di_count = sum(1 for b in baf_values if 0.40 < b < 0.60)
-    tri_count = sum(1 for b in baf_values if (0.25 <= b <= 0.4) or (0.60 <= b <= 0.75))
-    di_frac = round(di_count / n_het * 100, 1)
-    tri_frac = round(tri_count / n_het * 100, 1)
-
-    if di_count > tri_count * 2.5:
-        label, confidence = "DIPLOID", f"({di_frac}% hets in 0.4-0.6 BAF band, n={n_het})"
-    elif tri_count > di_count * 2.5:  # symmetric to the DIPLOID dominance check above
-        label, confidence = "TRIPLOID", f"(diplo={di_frac}%, tri={tri_frac}%, n={n_het})"
-    elif di_count > tri_count * 1.5:
-        label, confidence = "LIKELY_DIPLOID", f"({di_frac}% in 0.4-0.6 band, {tri_frac}% in triploid bands, n={n_het})"
-    else:
-        label, confidence = "INCONCLUSIVE", f"(diplo={di_frac}%, tri={tri_frac}%, n={n_het})"
-
-    return {"label": label, "confidence": confidence, "n_het": n_het, "di_frac": di_frac, "tri_frac": tri_frac}
+    Diploid hets sit at AF 0.5 (offset ~ 0); triploid at 1/3 or 2/3 (offset 1/6); a 3:1 tetraploid at 3/4
+    (offset 1/4). A balanced 2:2 tetraploid is indistinguishable from diploid.
+    """
+    if genome_het_offset is None:
+        return {"label": "INSUFFICIENT_DATA", "confidence": "(no 1 Mb bin with >= 50 het SNPs)", "n_het": n_het}
+    label = "TRIPLOID" if genome_het_offset >= _TRIPLOID_MIN_HET_OFFSET else "DIPLOID"
+    return {
+        "label": label,
+        "confidence": f"(het AF offset={genome_het_offset:.3f}, n={n_het})",
+        "n_het": n_het,
+        "genome_het_offset": round(genome_het_offset, 4),
+    }
 
 
 def _fmt(value: float | None) -> str:
     return "NA" if value is None else f"{value:.2f}"
 
 
-def _aneuploidy_call_lines(per_chrom: list[dict]) -> list[str]:
-    """Report lines for VCF-mode calls: one warning per flagged chromosome, then nominees BAF did not confirm."""
-    flagged = [e for e in per_chrom if e.get("call") in ("coverage", "coverage+BAF")]
-    lines = [
+def _aneuploidy_lines(per_chrom: list[dict]) -> list[str]:
+    """VCF-mode report lines: one warning per aneuploid chromosome."""
+    return [
         f"  [WARNING] {e['chrom']} {'gain' if e['ploidy'] > 2 else 'loss'} ploidy={e['ploidy']:.3f} "
-        f"af_skew={_fmt(e['af_skew'])} het_af={_fmt(e['het_af'])} ({e['call']})"
-        for e in flagged
-    ] or ["  No autosomal aneuploidy detected."]
-    unconfirmed = [
-        f"{e['chrom']} (ploidy={e['ploidy']:.3f}, het_af={_fmt(e['het_af'])})"
+        f"af_skew={_fmt(e['af_skew'])} het_af={_fmt(e['het_af'])}"
         for e in per_chrom
-        if e.get("call") == "unconfirmed"
-    ]
-    if unconfirmed:
-        lines.append(f"  Not confirmed by BAF: {', '.join(unconfirmed)}")
-    return lines
+        if e.get("aneuploid")
+    ] or ["  No autosomal aneuploidy detected."]
 
 
 def write_report(
@@ -449,23 +437,16 @@ def write_report(
     for warning in cr.get("warnings", []):
         lines.extend(["", f"  [WARNING] {warning}"])
 
-    vcf_mode = any("call" in entry for entry in cr["per_chrom"])
+    vcf_mode = any("aneuploid" in entry for entry in cr["per_chrom"])
     for entry in cr["per_chrom"]:
         icon = {"sex": "."}.get(entry["flag"], " ")
         skew = f"  af_skew={_fmt(entry['af_skew'])}" if "af_skew" in entry else ""
         lines.append(f"  {entry['chrom']:<6s} ploidy={entry['ploidy']:.3f}  cov={entry['mean_cov']:.2f}x{skew}  {icon}")
 
-    lines.extend(["", "  (. = sex chromosome)"])
-    if vcf_mode:
-        lines.append(
-            "  (af_skew = allele-fraction skew of het SNPs relative to the autosomal median;"
-            " ~1.0 balanced, >=1.2 supports a copy-number change)"
-        )
-    lines.append("")
-    pd.DataFrame(cr["per_chrom"]).to_csv(output_dir / f"{sample_id}.ploidy_per_chrom.tsv", sep="\t", index=False)
+    lines.extend(["", "  (. = sex chromosome)", ""])
 
     if vcf_mode:
-        lines.extend(_aneuploidy_call_lines(cr["per_chrom"]))
+        lines.extend(_aneuploidy_lines(cr["per_chrom"]))
     else:
         any_warn = False
         for entry in cr["per_chrom"]:
