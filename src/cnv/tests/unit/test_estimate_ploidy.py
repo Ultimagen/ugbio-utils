@@ -108,6 +108,14 @@ class TestComputePloidyFromChrData:
         result = _compute_ploidy_from_chr_data(chr_data)
         assert result["karyotype"] == "XY"
 
+    def test_missing_chry_is_undetermined_not_x0(self):
+        # b37 pipeline: chrY is outside the calling regions, so the VCF has no chrY records at all
+        chr_data = {str(i): {"coverage": 40.0} for i in range(1, 23)}
+        chr_data["X"] = {"coverage": 20.0}
+        result = _compute_ploidy_from_chr_data(chr_data)
+        assert result["karyotype"] == "UNDETERMINED"
+        assert any("No usable chrY data" in warning for warning in result["warnings"])
+
     def test_non_numeric_autosomes_from_header(self):
         chr_data = {
             "scaffold_a": {"coverage": 50.0, "length": 1e8},
@@ -618,3 +626,10 @@ class TestRealDataSites:
         _, baf_result = _ploidy_from_sites(sites.itertuples(index=False, name=None))
         assert baf_result["label"] == "TRIPLOID"
         assert baf_result["genome_het_offset"] == pytest.approx(1 / 6, abs=0.02)
+
+    def test_male_without_chry_calls_is_undetermined(self):
+        sites = pd.read_parquet(PLOIDY_RESOURCES / "MTB054.ploidy_sites.parquet")
+        no_chry = sites[sites["chrom"] != "chrY"]
+        coverage_result, _ = _ploidy_from_sites(no_chry.itertuples(index=False, name=None))
+        assert coverage_result["karyotype"] == "UNDETERMINED"
+        assert any("No usable chrY data" in warning for warning in coverage_result["warnings"])

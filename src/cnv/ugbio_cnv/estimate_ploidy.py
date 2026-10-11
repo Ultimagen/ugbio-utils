@@ -157,7 +157,7 @@ def _compute_ploidy_from_chr_data(
             for chrom, data in chr_data.items()
             if _is_sex_chromosome(chrom, sex_chromosome_names) and _is_x_chromosome(chrom)
         ),
-        0,
+        None,
     )
     y_mean = next(
         (
@@ -165,12 +165,22 @@ def _compute_ploidy_from_chr_data(
             for chrom, data in chr_data.items()
             if _is_sex_chromosome(chrom, sex_chromosome_names) and _is_y_chromosome(chrom)
         ),
-        0,
+        None,
     )
-    x_ratio = x_mean / auto_median
-    y_ratio = y_mean / auto_median
+    x_ratio = (x_mean or 0) / auto_median
+    y_ratio = (y_mean or 0) / auto_median
 
-    karyotype = _determine_karyotype(x_ratio, y_ratio)
+    # A missing sex chromosome means no usable data (e.g. chrY outside the calling regions, as in the b37
+    # pipeline), not zero copies: real samples of any karyotype have chrY sites from X-homologous regions.
+    missing = [name for name, mean in (("chrX", x_mean), ("chrY", y_mean)) if mean is None]
+    if missing:
+        karyotype = "UNDETERMINED"
+        warnings.append(
+            f"No usable {'/'.join(missing)} data (no or too few sites; outside the calling regions?); "
+            "karyotype not determined."
+        )
+    else:
+        karyotype = _determine_karyotype(x_ratio, y_ratio)
     sex_label = _sex_label_from_karyotype(karyotype)
 
     per_chrom = []
