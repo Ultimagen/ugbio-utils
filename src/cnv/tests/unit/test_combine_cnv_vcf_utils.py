@@ -1978,3 +1978,149 @@ class TestWeightedMajorityVoting:
 
         # GT should be unchanged
         assert record.samples["test_sample"]["GT"] == (0, 1)
+
+
+class TestCopyNumberAggregation:
+    """Tests for SVLEN-weighted majority voting of INFO/CopyNumber and FORMAT/CN (BIOIN-2748)."""
+
+    @staticmethod
+    def _make_record(header, svtype="DEL", svlen=1000):
+        record = header.new_record()
+        record.contig = "chr1"
+        record.pos = 1000
+        record.stop = 1000 + svlen
+        record.alleles = ("N", f"<{svtype}>")
+        record.info["SVLEN"] = (svlen,)
+        record.info["SVTYPE"] = svtype
+        return record
+
+    def test_copy_number_is_a_real_state_not_an_average(self, cnv_vcf_header):
+        """Longest-supported state wins (incl. cn.mops half-states); old weighted average would give 1.25."""
+        record = self._make_record(cnv_vcf_header)
+        update_df = pd.DataFrame({"svlen": [(3000,), (1000,)], "svtype": ["DEL", "DEL"]})
+
+        combine_cnv_vcf_utils._aggregate_weighted_majority(record, update_df, "CopyNumber", [1.5, 0.5])
+
+        assert record.info["CopyNumber"] == 1.5
+
+    def test_copy_number_votes_only_within_merged_svtype(self, cnv_vcf_header):
+        """A long DUP piece must not give its copy number to a merged DEL."""
+        record = self._make_record(cnv_vcf_header, svtype="DEL")
+        update_df = pd.DataFrame({"svlen": [(600,), (500,), (1000,)], "svtype": ["DEL", "DEL", "DUP"]})
+
+        combine_cnv_vcf_utils._aggregate_weighted_majority(record, update_df, "CopyNumber", [1.0, 0.0, 3.0])
+
+        assert record.info["CopyNumber"] == 1.0
+
+    def test_copy_number_removed_when_no_svtype_match(self, cnv_vcf_header):
+        """If no record of the merged SVTYPE has a copy number, drop it rather than take a DUP's value for a DEL."""
+        record = self._make_record(cnv_vcf_header, svtype="DEL")
+        record.info["CopyNumber"] = 3.0  # template was the DUP piece
+        update_df = pd.DataFrame({"svlen": [(600,), (1000,)], "svtype": ["DEL", "DUP"]})
+
+        combine_cnv_vcf_utils._aggregate_weighted_majority(record, update_df, "CopyNumber", [float("nan"), 3.0])
+
+        assert "CopyNumber" not in record.info
+
+    def test_format_cn_removed_when_no_svtype_match(self, cnv_vcf_header):
+        """FORMAT/CN of a merged DEL is not taken from a DUP piece."""
+        record = self._make_record(cnv_vcf_header, svtype="DEL")
+        record.samples["test_sample"]["CN"] = 5.0
+        update_df = pd.DataFrame({"svlen": [(600,), (1000,)], "svtype": ["DEL", "DUP"], "cn": [float("nan"), 5.0]})
+
+        combine_cnv_vcf_utils._aggregate_format_fields(record, update_df, cnv_vcf_header)
+
+        assert record.samples["test_sample"]["CN"] is None
+
+    def test_copy_number_missing_values_ignored(self, cnv_vcf_header):
+        """Records without CopyNumber (e.g. CNVpytor calls) do not vote; all-missing leaves no CopyNumber."""
+        record = self._make_record(cnv_vcf_header)
+        record.info["CopyNumber"] = 1.0
+        update_df = pd.DataFrame({"svlen": [(5000,), (1000,)], "svtype": ["DEL", "DEL"]})
+
+        combine_cnv_vcf_utils._aggregate_weighted_majority(record, update_df, "CopyNumber", [None, 0.0])
+        assert record.info["CopyNumber"] == 0.0
+
+        combine_cnv_vcf_utils._aggregate_weighted_majority(record, update_df, "CopyNumber", [None, float("nan")])
+        assert "CopyNumber" not in record.info
+
+    def test_format_cn_aggregated(self, cnv_vcf_header):
+        """FORMAT/CN is voted like INFO/CopyNumber instead of keeping the template record's value."""
+        record = self._make_record(cnv_vcf_header)
+        record.samples["test_sample"]["CN"] = 0.0
+        update_df = pd.DataFrame(
+            {"svlen": [(500,), (2000,), (800,)], "svtype": ["DEL", "DEL", "DUP"], "cn": [0.0, 1.0, 3.0]}
+        )
+
+        combine_cnv_vcf_utils._aggregate_format_fields(record, update_df, cnv_vcf_header)
+
+        assert record.samples["test_sample"]["CN"] == 1.0
+
+    def test_merge_cnv_group_aggregates_copy_number_fields(self, cnv_vcf_header):
+        """End-to-end group merge of two cn.mops DELs and one CNVpytor DEL."""
+        # cn.mops: 10kb CN1 + 2kb CN0 -> CopyNumber 1 (old weighted average: 0.833)
+        # CNVpytor: 3kb CN0 -> FORMAT/CN 0 (previously left as the template record's value)
+        specs = [(1001, 10000, 1.0, None), (11001, 2000, 0.0, None), (13001, 3000, None, 0.0)]
+        records = []
+        for i, (pos, svlen, copy_number, cn) in enumerate(specs):
+            record = cnv_vcf_header.new_record()
+            record.contig = "chr1"
+            record.pos = pos
+            record.stop = pos + svlen - 1
+            record.id = f"CNV_{i}"
+            record.alleles = ("N", "<DEL>")
+            record.info["SVLEN"] = (svlen,)
+            record.info["SVTYPE"] = "DEL"
+            record.info["CIPOS"] = (-250, 251)
+            if copy_number is not None:
+                record.info["CopyNumber"] = copy_number
+            record.samples["test_sample"]["GT"] = (0, 1)
+            if cn is not None:
+                record.samples["test_sample"]["CN"] = cn
+            records.append(record)
+
+        merged = combine_cnv_vcf_utils._merge_cnv_group(
+            records, cnv_vcf_header, combine_cnv_vcf_utils.CNV_AGGREGATION_ACTIONS
+        )
+
+        assert merged.info["SVTYPE"] == "DEL"
+        assert merged.info["CopyNumber"] == 1.0
+        assert merged.samples["test_sample"]["CN"] == 0.0
+
+    def test_prepare_update_dataframe_restores_format_overwritten_by_truvari(self, tmp_path, cnv_vcf_header):
+        """truvari collapse copies a removed DEL's FORMAT (CN) into a kept DUP; the kept call's own CN must be used."""
+        cnv_vcf_header.add_line('##INFO=<ID=MatchId,Number=.,Type=String,Description="Truvari match ID">')
+
+        def write_vcf(path, specs):
+            with pysam.VariantFile(str(path), "w", header=cnv_vcf_header) as vcf:
+                for record_id, pos, svtype, cn, match_id in specs:
+                    record = vcf.new_record()
+                    record.contig = "chr1"
+                    record.pos = pos
+                    record.stop = pos + 999
+                    record.id = record_id
+                    record.alleles = ("N", f"<{svtype}>")
+                    record.info["SVLEN"] = (1000,)
+                    record.info["SVTYPE"] = svtype
+                    if match_id is not None:
+                        record.info["MatchId"] = (match_id,)
+                    record.samples["test_sample"]["GT"] = (0, 1) if svtype == "DEL" else (None, 1)
+                    if cn is not None:
+                        record.samples["test_sample"]["CN"] = cn
+                    vcf.write(record)
+
+        original_vcf, collapsed_vcf, removed_vcf = (tmp_path / f"{n}.vcf.gz" for n in ("orig", "collapsed", "removed"))
+        write_vcf(original_vcf, [("dup1", 1000, "DUP", None, None), ("del1", 1500, "DEL", 1.0, None)])
+        write_vcf(collapsed_vcf, [("dup1", 1000, "DUP", 1.0, "0.0")])  # CN=1 copied from del1 by truvari
+        write_vcf(removed_vcf, [("del1", 1500, "DEL", 1.0, "0.0")])
+
+        fields = ["SVTYPE", "CN"]
+        _, collapsed_df = combine_cnv_vcf_utils._prepare_update_dataframe(
+            str(removed_vcf), str(collapsed_vcf), fields, ignore_filter=True
+        )
+        assert collapsed_df["cn"].iloc[0] == 1.0  # without the original VCF, truvari's copied value is seen
+
+        _, collapsed_df = combine_cnv_vcf_utils._prepare_update_dataframe(
+            str(removed_vcf), str(collapsed_vcf), fields, ignore_filter=True, original_vcf=str(original_vcf)
+        )
+        assert pd.isna(collapsed_df["cn"].iloc[0])
