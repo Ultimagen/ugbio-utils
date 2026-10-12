@@ -10,6 +10,8 @@ from sklearn.pipeline import make_pipeline
 
 from ugbio_filtering.tprep_constants import VcfType
 
+PAIR_EVIDENCE_STEP = "pair_evidence"
+
 
 # transformers for VCF columns
 def tuple_break(x):
@@ -351,7 +353,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
         features = sum(features, []) + pair_fields
         transform_list.append(
             (
-                "pair_evidence",
+                PAIR_EVIDENCE_STEP,
                 preprocessing.FunctionTransformer(optional_numeric_df, kw_args={"columns": pair_fields}),
                 # svtype is always present; the pair fields only when the data has them. Selecting every
                 # column would make the fitted model require training-only columns such as label.
@@ -414,6 +416,20 @@ def get_transformer(vtype: VcfType, annots: list | None = None) -> compose.Colum
     transformer.set_output(transform="pandas")
 
     return transformer
+
+
+def add_absent_pair_fields(df: pd.DataFrame, transformer: compose.ColumnTransformer) -> pd.DataFrame:
+    """Add the pair evidence columns that a fitted transformer selects but df lacks, as missing values.
+
+    A model trained on paired-end data selects the pair fields, which single-end VCFs do not have;
+    the pair evidence step then fills them with 0.
+    """
+    for name, _, columns in transformer.transformers_:
+        if name == PAIR_EVIDENCE_STEP:
+            absent = [c for c in columns if c not in df.columns]
+            if absent:
+                df = df.assign(**dict.fromkeys(absent, np.nan))
+    return df
 
 
 def encode_labels(ll: Iterable[tuple[int, int]]) -> list[int]:

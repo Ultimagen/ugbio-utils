@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 from ugbio_filtering.tprep_constants import VcfType
 from ugbio_filtering.transformers import (
+    add_absent_pair_fields,
     allele_encode,
     encode_labels,
     get_transformer,
@@ -283,3 +284,22 @@ class TestTransformers:
         transformer = get_transformer(VcfType.CNV).fit(self._cnv_df().assign(label=[1]))
         result = transformer.transform(self._cnv_df())
         assert len(result) == 1
+
+    def test_cnv_transformer_trained_on_pairs_accepts_single_end_data(self):
+        # A model trained on paired-end data is applied to single-end VCFs, which have no pair columns
+        pairs = dict.fromkeys(
+            [
+                "cnv_dup_pairs",
+                "cnv_del_pairs",
+                "cnv_dup_pairs_frac",
+                "cnv_del_pairs_frac",
+                "dup_pairs_median_span",
+                "del_pairs_median_span",
+            ],
+            [3],
+        )
+        transformer = get_transformer(VcfType.CNV).fit(self._cnv_df().assign(**pairs))
+        result = transformer.transform(add_absent_pair_fields(self._cnv_df(), transformer))
+        pair_columns = [c for c in result.columns if c.startswith("pair_evidence__")]
+        assert len(pair_columns) == 6
+        assert (result[pair_columns] == 0).all().all()
