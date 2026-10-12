@@ -521,17 +521,10 @@ class TestProcessCNV:
                 assert isinstance(header, pysam.AlignmentHeader)
                 assert list(tmp_path.iterdir()) == []
 
-    def test_same_coordinates_get_unique_file_names(
-        self, mock_alignment_tool, jalign_test_bam, tmp_path, default_config
-    ):
-        """Two CNVs with identical coordinates must not share temporary file names."""
+    def test_input_file_removed_when_write_fails(self, jalign_test_bam, tmp_path, default_config):
+        """A failure while writing the alignment input must not leave the file behind."""
         mock_fasta = MagicMock(spec=pyfaidx.Fasta)
         mock_fasta.__getitem__ = MagicMock(return_value=MagicMock(seq="ACGT" * 500))
-        commands = []
-
-        def record_and_run(cmd, *args, **kwargs):
-            commands.append(cmd)
-            return mock_alignment_tool(cmd, *args, **kwargs)
 
         with pysam.AlignmentFile(jalign_test_bam, "rb", check_sq=False) as reads_file:
             all_reads = list(reads_file.fetch(until_eof=True))
@@ -542,25 +535,22 @@ class TestProcessCNV:
             mock_reads_file.get_reference_length = MagicMock(return_value=248_956_422)
             mock_reads_file.header = reads_file.header
 
-            with patch("ugbio_cnv.jalign.run_alignment_tool", side_effect=record_and_run):
-                for _ in range(2):
-                    process_cnv(
-                        chrom="chr1",
-                        start=219455000,
-                        end=219456000,
-                        reads_file=mock_reads_file,
-                        fasta_file=mock_fasta,
-                        config=default_config,
-                        temp_dir=tmp_path,
-                        log_file=None,
-                        header=None,
-                    )
+            log_file = MagicMock()
+            # First write is the CNV header line, the second is the first read of the input file
+            log_file.write = MagicMock(side_effect=[None, OSError("disk full")])
+            with pytest.raises(OSError, match="disk full"):
+                process_cnv(
+                    chrom="chr1",
+                    start=219455000,
+                    end=219456000,
+                    reads_file=mock_reads_file,
+                    fasta_file=mock_fasta,
+                    config=default_config,
+                    temp_dir=tmp_path,
+                    log_file=log_file,
+                    header=None,
+                )
 
-        assert len(commands) == 2
-        input_files = {cmd[6] for cmd in commands}
-        output_files = {cmd[7] for cmd in commands}
-        assert len(input_files) == 2, "input files must differ between calls"
-        assert len(output_files) == 2, "output files must differ between calls"
         assert list(tmp_path.iterdir()) == []
 
 

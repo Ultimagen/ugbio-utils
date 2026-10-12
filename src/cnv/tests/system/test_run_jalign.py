@@ -172,7 +172,7 @@ class TestRunJalign:
             assert expected_rgs.issubset(rg_ids)
 
     def test_run_jalign_keeps_failed_records(self, tmp_path, resources_dir, mock_para_jalign):
-        """A CNV whose alignment fails is written with JALIGN_* = 0, not dropped."""
+        """A CNV whose alignment fails is written with JALIGN_* missing, not dropped."""
         input_cram = pjoin(resources_dir, "test.jalign.cram")
         cnv_vcf = pjoin(resources_dir, "test.jalign.vcf.gz")
         ref_fasta = pjoin(resources_dir, "chr1.3M.fasta.gz")
@@ -222,7 +222,7 @@ class TestRunJalign:
             "JALIGN_DUP_SUPPORT_STRONG",
             "JALIGN_DEL_SUPPORT_STRONG",
         ):
-            assert failed[0].info[field] == 0, field
+            assert field not in failed[0].info, field
         assert all("JALIGN_DUP_SUPPORT" in r.info for r in records if r is not failed[0])
 
     def test_run_jalign_compare_golden_outputs(self, tmp_path, resources_dir, mock_para_jalign):
