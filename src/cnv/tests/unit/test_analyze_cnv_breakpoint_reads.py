@@ -11,7 +11,7 @@ from ugbio_cnv.analyze_cnv_breakpoint_reads import (
     MIN_PAIR_SPAN,
     PAIR_READ_GROUP,
     PairedEndConfig,
-    _collect_reads_from_region,
+    _collect_fragments_from_region,
     _FragmentEvidence,
     _mate_aware_key,
     _pair_mates_flank_deleted_segment,
@@ -308,7 +308,7 @@ def test_analyze_interval_breakpoints_scans_both_breakpoint_windows():
         Path(bam_path + ".bai").unlink(missing_ok=True)
 
 
-def test_collect_reads_from_region_uses_independent_fetch_iterators(monkeypatch):
+def test_collect_fragments_from_region_uses_independent_fetch_iterators(monkeypatch):
     """Regression test for fetch iterator invalidation between breakpoint windows."""
 
     class FakeAlignmentFile:
@@ -348,47 +348,23 @@ def test_collect_reads_from_region_uses_independent_fetch_iterators(monkeypatch)
 
     fake_alignment_file = FakeAlignmentFile([start_read], [end_read])
 
-    def _fake_process_primary_read_for_evidence(  # noqa: PLR0913
-        read,
-        alignment_file,
-        start,
-        end,
-        cushion,
-        duplication_reads,
-        deletion_reads,
-        dup_insert_sizes,
-        del_insert_sizes,
-        supporting_reads,
-    ):
-        return duplication_reads, deletion_reads
-
     monkeypatch.setattr(
-        "ugbio_cnv.analyze_cnv_breakpoint_reads._process_primary_read_for_evidence",
-        _fake_process_primary_read_for_evidence,
+        "ugbio_cnv.analyze_cnv_breakpoint_reads._get_fragment_votes",
+        lambda read, alignment_file, interval, pe_config: [],  # noqa: ARG005
     )
 
-    (
-        _,
-        _,
-        _,
-        _,
-        processed_reads,
-        _,
-        _,
-    ) = _collect_reads_from_region(
+    evidence = _collect_fragments_from_region(
         fake_alignment_file,
         "chr1",
         1000,
         2000,
         100,
-        900,
-        1100,
-        1900,
-        2100,
+        (900, 1100, 1900, 2100),
+        PairedEndConfig(),
     )
 
-    # processed_reads now contains (read_name, RG) tuples for deduplication
-    assert processed_reads == {("start_read", "UNKNOWN"), ("end_read", "UNKNOWN")}
+    # Both breakpoint windows were read: each read is one (non-voting) fragment
+    assert evidence.total_reads == 2
 
 
 def test_analyze_cnv_breakpoints(temp_bam_file, temp_vcf_file, dummy_fasta_file):
@@ -746,9 +722,8 @@ PE_OUTSIDE_RIGHT_START = 5950  # just past the end breakpoint
 
 
 def pe_config(**overrides):
-    """Build an enabled PairedEndConfig with an explicit span floor."""
+    """Build a PairedEndConfig with an explicit span floor."""
     defaults = {
-        "enabled": True,
         "min_pair_span": MIN_PAIR_SPAN,
         "min_pair_mapping_quality": 20,
     }
@@ -1338,10 +1313,6 @@ def test_mate2_split_evidence_is_detected(pe_bam_factory):
     assert pe_evidence.duplication_reads == 1
     assert pe_evidence.total_reads == 1
 
-    # The single-end path still drops it, which is the bug this test pins
-    se_evidence = _analyze(bam_file, None)
-    assert se_evidence.duplication_reads == 0
-
 
 def test_supplementary_lookup_is_mate_aware(pe_bam_factory):
     """Each mate's supplementary alignments stay in their own bucket, with no cross-mate leakage."""
@@ -1393,28 +1364,6 @@ def test_supplementary_lookup_is_mate_aware(pe_bam_factory):
 
     mate1_key = next(key for key in keys if key[1] == 0x40)
     assert evidence.supplementary_reads[mate1_key][0].reference_start == 2050
-
-
-def test_single_end_path_ignores_discordant_pairs(pe_bam_factory):
-    """With paired-end support off, a discordant pair contributes nothing but the denominator."""
-    bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
-
-    evidence = _analyze(bam_file, None)
-
-    assert evidence.duplication_reads == 0
-    assert evidence.deletion_reads == 0
-    assert evidence.total_reads == 1
-    assert evidence.del_median_insert_size is None
-
-
-def test_disabled_paired_end_config_ignores_discordant_pairs(pe_bam_factory):
-    """An explicitly disabled config behaves exactly like passing None."""
-    bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
-
-    evidence = _analyze(bam_file, PairedEndConfig(enabled=False))
-
-    assert evidence.deletion_reads == 0
-    assert evidence.total_reads == 1
 
 
 # --- median insert size ---------------------------------------------------
@@ -1477,7 +1426,7 @@ def _write_evidence_bam(bam_file, fasta_file, config):
     return rg_ids, reads, info
 
 
-def test_pair_fields_are_written_in_paired_end_mode(pe_bam_factory, dummy_fasta_file):
+def test_pair_fields_are_written_for_paired_input(pe_bam_factory, dummy_fasta_file):
     """The VCF record carries pair counts, fractions and spans next to the unchanged split-read fields."""
     bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
 
@@ -1505,65 +1454,49 @@ def test_pair_only_support_is_written_under_the_pair_read_group(pe_bam_factory, 
     assert {read.get_tag("RG") for read in reads} == {PAIR_READ_GROUP}
 
 
-def test_single_end_evidence_bam_header_has_no_pair_read_group(pe_bam_factory, dummy_fasta_file):
-    """Without paired-end evidence the evidence BAM header is unchanged: no PAIR read group."""
-    bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
-
-    rg_ids, reads, _ = _write_evidence_bam(bam_file, dummy_fasta_file, pe_config(enabled=False))
-
-    assert rg_ids == {"REF1", "REF2", "DUP", "DEL"}
-    assert reads == []
-
-
 # --- single-end input -----------------------------------------------------
 
 
-def test_paired_end_flag_is_harmless_on_single_end_input(dummy_fasta_file, temp_bam_file, temp_vcf_file):
-    """Passing --paired-end on unpaired input leaves the split-read fields unchanged; the pair fields are 0."""
+def test_single_end_input_gets_zero_pair_fields(dummy_fasta_file, temp_bam_file, temp_vcf_file):
+    """Unpaired reads never count as pair evidence: the pair fields are declared and written as 0."""
     with tempfile.NamedTemporaryFile(suffix=".vcf", delete=False) as f:
-        pe_output = f.name
-    with tempfile.NamedTemporaryFile(suffix=".vcf", delete=False) as f:
-        se_output = f.name
+        output_path = f.name
 
     try:
-        for output_path, config in ((se_output, None), (pe_output, pe_config())):
-            analyze_cnv_breakpoints(
-                bam_file=temp_bam_file,
-                vcf_file=temp_vcf_file,
-                reference_fasta=dummy_fasta_file,
-                cushion=PE_CUSHION,
-                output_file=output_path,
-                paired_end_config=config,
-            )
+        analyze_cnv_breakpoints(
+            bam_file=temp_bam_file,
+            vcf_file=temp_vcf_file,
+            reference_fasta=dummy_fasta_file,
+            cushion=PE_CUSHION,
+            output_file=output_path,
+        )
 
         pair_fields = ("CNV_DUP_PAIRS", "CNV_DEL_PAIRS", "CNV_DUP_PAIRS_FRAC", "CNV_DEL_PAIRS_FRAC")
         span_fields = ("DUP_PAIRS_MEDIAN_SPAN", "DEL_PAIRS_MEDIAN_SPAN")
-        with pysam.VariantFile(se_output) as se_vcf, pysam.VariantFile(pe_output) as pe_vcf:
-            assert not set(pair_fields + span_fields) & set(se_vcf.header.info)
-            for se_record, pe_record in zip(se_vcf, pe_vcf, strict=True):
-                pe_info = dict(pe_record.info)
-                assert all(pe_info.pop(name) == 0 for name in pair_fields + span_fields)
-                assert pe_info == dict(se_record.info)
+        with pysam.VariantFile(output_path) as vcf:
+            assert set(pair_fields + span_fields) <= set(vcf.header.info)
+            records = list(vcf)
+            assert records
+            for record in records:
+                assert all(record.info[name] == 0 for name in pair_fields + span_fields)
     finally:
-        Path(se_output).unlink(missing_ok=True)
-        Path(pe_output).unlink(missing_ok=True)
+        Path(output_path).unlink(missing_ok=True)
 
 
 # --- CLI ------------------------------------------------------------------
 
 
-def test_parser_paired_end_defaults():
-    """Paired-end support is off by default, so the CLI keeps single-end behavior."""
+def test_parser_pair_option_defaults():
+    """The pair thresholds default to the module constants."""
     args = get_parser().parse_args(["--bam-file", "in.bam", "--vcf-file", "in.vcf", "--reference-fasta", "ref.fasta"])
 
-    assert args.paired_end is False
     assert args.min_pair_span == MIN_PAIR_SPAN
     assert args.min_pair_mapping_quality == 20
     assert PairedEndConfig.from_args(args) == PairedEndConfig()
 
 
-def test_parser_paired_end_options():
-    """The paired-end flags map onto PairedEndConfig fields."""
+def test_parser_pair_options():
+    """The pair threshold flags map onto PairedEndConfig fields."""
     args = get_parser().parse_args(
         [
             "--bam-file",
@@ -1572,7 +1505,6 @@ def test_parser_paired_end_options():
             "in.vcf",
             "--reference-fasta",
             "ref.fasta",
-            "--paired-end",
             "--min-pair-span",
             "900",
             "--min-pair-mapping-quality",
@@ -1582,6 +1514,5 @@ def test_parser_paired_end_options():
 
     config = PairedEndConfig.from_args(args)
 
-    assert config.enabled is True
     assert config.min_pair_span == 900
     assert config.min_pair_mapping_quality == 30

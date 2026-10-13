@@ -651,8 +651,8 @@ def test_main_analyze_breakpoints_calls_analyze_cnv_breakpoints():
             )
 
 
-def test_main_analyze_breakpoints_passes_paired_end_config():
-    """Test that the paired-end CLI flags reach analyze_cnv_breakpoints."""
+def test_main_analyze_breakpoints_passes_pair_options():
+    """Test that the pair threshold CLI flags reach analyze_cnv_breakpoints."""
     test_argv = [
         "analyze_breakpoint_reads",
         "--bam-file",
@@ -661,7 +661,6 @@ def test_main_analyze_breakpoints_passes_paired_end_config():
         "/path/to/cnvs.vcf.gz",
         "--reference-fasta",
         "/path/to/ref.fa",
-        "--paired-end",
         "--min-pair-span",
         "900",
         "--min-pair-mapping-quality",
@@ -673,6 +672,5 @@ def test_main_analyze_breakpoints_passes_paired_end_config():
             combine_cnmops_cnvpytor_cnv_calls.main_analyze_breakpoints()
 
             pe_config = mock_analyze.call_args.kwargs["paired_end_config"]
-            assert pe_config.enabled
             assert pe_config.min_pair_span == 900
             assert pe_config.min_pair_mapping_quality == 30

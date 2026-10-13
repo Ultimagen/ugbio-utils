@@ -117,11 +117,11 @@ analyze_cnv_breakpoint_reads \
   --reference-fasta Homo_sapiens_assembly38.fasta
 ```
 
-By default only split reads count. With `--paired-end`, discordant pairs count too, in their own fields:
-`CNV_DUP_PAIRS` / `CNV_DEL_PAIRS`, `CNV_*_PAIRS_FRAC` (over `CNV_TOTAL_READS`) and `*_PAIRS_MEDIAN_SPAN`.
-`CNV_*_READS`, `CNV_*_FRAC` and `*_READS_MEDIAN_INSERT_SIZE` stay split-read only. Each fragment votes at
-most once per kind of evidence, so a fragment with both a split read and a discordant pair counts in both.
-Single-end output is unchanged.
+Discordant pairs count too, in their own fields: `CNV_DUP_PAIRS` / `CNV_DEL_PAIRS`, `CNV_*_PAIRS_FRAC`
+(over `CNV_TOTAL_READS`) and `*_PAIRS_MEDIAN_SPAN`. `CNV_*_READS`, `CNV_*_FRAC` and
+`*_READS_MEDIAN_INSERT_SIZE` stay split-read only. Each fragment votes at most once per kind of evidence, so
+a fragment with both a split read and a discordant pair counts in both. The pair fields are always written;
+on single-end input they are 0.
 
 ```bash
 analyze_cnv_breakpoint_reads \
@@ -130,7 +130,6 @@ analyze_cnv_breakpoint_reads \
   --output-file annotated.vcf.gz \
   --cushion 1500 \
   --reference-fasta Homo_sapiens_assembly38.fasta \
-  --paired-end \
   --min-pair-span 800
 ```
 

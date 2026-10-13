@@ -5,9 +5,10 @@ This script analyzes reads at CNV breakpoints to identify supporting evidence fo
 duplications and deletions based on read orientation and position patterns. It takes
 a VCF file as input and outputs an annotated VCF with breakpoint evidence in INFO fields.
 
-With --paired-end, discordant read pairs are counted too, in their own INFO fields (CNV_*_PAIRS,
-CNV_*_PAIRS_FRAC, *_PAIRS_MEDIAN_SPAN): each fragment votes at most once per kind of evidence, and the
-CNV_*_READS fields stay split-read only. Pair mates go to the evidence BAM under read group PAIR.
+Discordant read pairs are counted too, in their own INFO fields (CNV_*_PAIRS, CNV_*_PAIRS_FRAC,
+*_PAIRS_MEDIAN_SPAN): each fragment votes at most once per kind of evidence, and the CNV_*_READS fields
+stay split-read only. Unpaired reads never count as pair evidence, so single-end input gets 0 in the pair
+fields. Pair mates go to the evidence BAM under read group PAIR.
 """
 
 import argparse
@@ -47,7 +48,7 @@ class BreakpointEvidence:
     del_insert_sizes: list[int] = field(default_factory=list)
     supporting_reads: list[tuple[pysam.AlignedSegment, str]] = field(default_factory=list)
     supplementary_reads: dict[tuple[str, int], list[pysam.AlignedSegment]] = field(default_factory=dict)
-    # Discordant read pair evidence, populated only in paired-end mode
+    # Discordant read pair evidence
     duplication_pairs: int = 0
     deletion_pairs: int = 0
     dup_pair_spans: list[int] = field(default_factory=list)
@@ -82,7 +83,6 @@ class BreakpointEvidence:
 class PairedEndConfig:
     """Configuration for paired-end (discordant read pair) breakpoint evidence."""
 
-    enabled: bool = False
     min_pair_span: int = MIN_PAIR_SPAN
     min_pair_mapping_quality: int = MIN_PAIR_MAPPING_QUALITY
 
@@ -90,7 +90,6 @@ class PairedEndConfig:
     def from_args(cls, args: argparse.Namespace) -> "PairedEndConfig":
         """Build a config from parsed CLI arguments."""
         return cls(
-            enabled=args.paired_end,
             min_pair_span=args.min_pair_span,
             min_pair_mapping_quality=args.min_pair_mapping_quality,
         )
@@ -615,8 +614,6 @@ def check_pair_cnv_consistency(
 def _annotate_vcf_record_with_evidence(
     record: pysam.VariantRecord,
     evidence: BreakpointEvidence,
-    *,
-    paired_end: bool = False,
 ) -> None:
     """
     Annotate a VCF record with CNV breakpoint evidence.
@@ -627,8 +624,6 @@ def _annotate_vcf_record_with_evidence(
         VCF record to annotate
     evidence : BreakpointEvidence
         Breakpoint evidence data to add to record
-    paired_end : bool, optional
-        Also write the discordant read pair fields (default: False)
     """
     # Add new INFO fields directly to the record
     record.info["CNV_DUP_READS"] = evidence.duplication_reads
@@ -650,8 +645,6 @@ def _annotate_vcf_record_with_evidence(
         evidence.del_median_insert_size if evidence.del_median_insert_size is not None else 0.0
     )
 
-    if not paired_end:
-        return
     record.info["CNV_DUP_PAIRS"] = evidence.duplication_pairs
     record.info["CNV_DEL_PAIRS"] = evidence.deletion_pairs
     total = evidence.total_reads
@@ -663,130 +656,13 @@ def _annotate_vcf_record_with_evidence(
 
 
 def _add_pair_info_fields(hdr: pysam.VariantHeader) -> None:
-    """Add the discordant read pair INFO fields written in paired-end mode to a VCF header."""
+    """Add the discordant read pair INFO fields to a VCF header."""
     hdr.info.add("CNV_DUP_PAIRS", "1", "Integer", "Number of discordant read pairs supporting duplication")
     hdr.info.add("CNV_DEL_PAIRS", "1", "Integer", "Number of discordant read pairs supporting deletion")
     hdr.info.add("CNV_DUP_PAIRS_FRAC", "1", "Float", "Fraction of fragments with read pairs supporting duplication")
     hdr.info.add("CNV_DEL_PAIRS_FRAC", "1", "Float", "Fraction of fragments with read pairs supporting deletion")
     hdr.info.add("DUP_PAIRS_MEDIAN_SPAN", "1", "Float", "Median span of duplication-supporting read pairs")
     hdr.info.add("DEL_PAIRS_MEDIAN_SPAN", "1", "Float", "Median span of deletion-supporting read pairs")
-
-
-def _process_primary_read_for_evidence(
-    read: pysam.AlignedSegment,
-    alignment_file: pysam.AlignmentFile,
-    start: int,
-    end: int,
-    cushion: int,
-    duplication_reads: int,
-    deletion_reads: int,
-    dup_insert_sizes: list[int],
-    del_insert_sizes: list[int],
-    supporting_reads: list[tuple[pysam.AlignedSegment, str]],
-) -> tuple[int, int]:
-    """
-    Process a primary read for CNV evidence and update counters.
-
-    Returns
-    -------
-    tuple[int, int]
-        Updated (duplication_reads, deletion_reads) counts
-    """
-    is_dup, is_del, insert_size = _process_read_for_cnv_evidence(read, alignment_file, start, end, cushion)
-
-    if is_dup:
-        duplication_reads += 1
-        if insert_size is not None and insert_size > 0:
-            dup_insert_sizes.append(insert_size)
-        supporting_reads.append((read, "DUP"))
-    elif is_del:
-        deletion_reads += 1
-        if insert_size is not None and insert_size > 0:
-            del_insert_sizes.append(insert_size)
-        supporting_reads.append((read, "DEL"))
-
-    return duplication_reads, deletion_reads
-
-
-def _collect_reads_from_region(
-    alignment_file: pysam.AlignmentFile,
-    chrom: str,
-    start: int,
-    end: int,
-    cushion: int,
-    start_region_start: int,
-    start_region_end: int,
-    end_region_start: int,
-    end_region_end: int,
-) -> tuple[
-    int,
-    int,
-    list[int],
-    list[int],
-    set[tuple[str, str]],
-    list[tuple[pysam.AlignedSegment, str]],
-    dict[str, list[pysam.AlignedSegment]],
-]:
-    """
-    Collect reads from breakpoint region and classify them as supporting duplication or deletion.
-
-    Returns
-    -------
-    tuple
-        (duplication_reads, deletion_reads, dup_insert_sizes, del_insert_sizes,
-         processed_reads, supporting_reads, supplementary_reads)
-    """
-    duplication_reads = 0
-    deletion_reads = 0
-    dup_insert_sizes: list[int] = []
-    del_insert_sizes: list[int] = []
-    processed_reads: set[tuple[str, str]] = set()  # Track (read_name, RG) pairs
-    supporting_reads: list[tuple[pysam.AlignedSegment, str]] = []
-    supplementary_reads: dict[str, list[pysam.AlignedSegment]] = {}
-
-    try:
-        for read in itertools.chain(
-            alignment_file.fetch(chrom, start_region_start, start_region_end, multiple_iterators=True),
-            alignment_file.fetch(chrom, end_region_start, end_region_end, multiple_iterators=True),
-        ):
-            # Supplementary reads are skipped in this phase - they're collected later
-            if _should_skip_read(read):
-                continue
-
-            # Get RG tag BEFORE deduplication check
-            rg = _get_read_group(read)
-
-            # Track (read_name, RG) pair for proper deduplication
-            read_rg_key = (read.query_name, rg)
-            if read_rg_key in processed_reads:
-                continue
-            processed_reads.add(read_rg_key)
-
-            duplication_reads, deletion_reads = _process_primary_read_for_evidence(
-                read,
-                alignment_file,
-                start,
-                end,
-                cushion,
-                duplication_reads,
-                deletion_reads,
-                dup_insert_sizes,
-                del_insert_sizes,
-                supporting_reads,
-            )
-
-    except Exception as e:
-        logger.warning(f"Error fetching reads for {chrom}:{start}-{end}: {e}")
-
-    return (
-        duplication_reads,
-        deletion_reads,
-        dup_insert_sizes,
-        del_insert_sizes,
-        processed_reads,
-        supporting_reads,
-        supplementary_reads,
-    )
 
 
 def _get_fragment_votes(
@@ -892,7 +768,7 @@ def _collect_fragments_from_region(
     """
     Collect fragment-level CNV evidence from the two breakpoint regions given by `regions`.
 
-    Unlike _collect_reads_from_region, both mates are evaluated (deduplication is per alignment);
+    Both mates are evaluated (deduplication is per alignment);
     _summarize_fragments then reduces the votes to one per fragment.
     """
     start_region_start, start_region_end, end_region_start, end_region_end = regions
@@ -1016,7 +892,7 @@ def analyze_interval_breakpoints(
     pe_config: PairedEndConfig | None = None,
 ) -> BreakpointEvidence:
     """
-    Analyze reads at interval breakpoints for CNV evidence.
+    Analyze reads at interval breakpoints for CNV evidence: split reads and discordant read pairs.
 
     Parameters
     ----------
@@ -1031,8 +907,7 @@ def analyze_interval_breakpoints(
     cushion : int
         Number of bases to extend search around breakpoints
     pe_config : PairedEndConfig, optional
-        Paired-end configuration. When None or disabled, only split-read evidence is used
-        and the single-end code path runs unchanged.
+        Discordant read pair thresholds (default: None, the PairedEndConfig defaults)
 
     Returns
     -------
@@ -1043,40 +918,9 @@ def analyze_interval_breakpoints(
     regions = _calculate_breakpoint_regions(start, end, cushion)
     start_region_start, start_region_end, end_region_start, end_region_end = regions
 
-    # PHASE 1: Collect primary reads from the two breakpoint regions
-    if pe_config is not None and pe_config.enabled:
-        evidence = _collect_fragments_from_region(alignment_file, chrom, start, end, cushion, regions, pe_config)
-    else:
-        (
-            duplication_reads,
-            deletion_reads,
-            dup_insert_sizes,
-            del_insert_sizes,
-            processed_reads,
-            supporting_reads,
-            _,  # supplementary_reads not populated in phase 1
-        ) = _collect_reads_from_region(
-            alignment_file,
-            chrom,
-            start,
-            end,
-            cushion,
-            start_region_start,
-            start_region_end,
-            end_region_start,
-            end_region_end,
-        )
-        evidence = BreakpointEvidence(
-            chrom=chrom,
-            start=start,
-            end=end,
-            duplication_reads=duplication_reads,
-            deletion_reads=deletion_reads,
-            total_reads=len(processed_reads),
-            dup_insert_sizes=dup_insert_sizes,
-            del_insert_sizes=del_insert_sizes,
-            supporting_reads=supporting_reads,
-        )
+    # PHASE 1: Collect per-fragment evidence from the two breakpoint regions
+    pe_config = pe_config if pe_config is not None else PairedEndConfig()
+    evidence = _collect_fragments_from_region(alignment_file, chrom, start, end, cushion, regions, pe_config)
 
     # PHASE 2: Collect supplementary alignments ONLY for supporting reads
     # This is dramatically more efficient than collecting all supplementary reads
@@ -1142,7 +986,7 @@ def _process_variants(
     bam_out : pysam.AlignmentFile | None
         Optional output BAM file for supporting reads
     pe_config : PairedEndConfig, optional
-        Paired-end configuration (default: None, single-end behavior)
+        Discordant read pair thresholds (default: None, the PairedEndConfig defaults)
 
     Returns
     -------
@@ -1161,7 +1005,7 @@ def _process_variants(
         )
 
         # Annotate VCF record with evidence
-        _annotate_vcf_record_with_evidence(record, evidence, paired_end=pe_config is not None and pe_config.enabled)
+        _annotate_vcf_record_with_evidence(record, evidence)
 
         # Write annotated record
         vcf_out.write(record)
@@ -1209,15 +1053,12 @@ def analyze_cnv_breakpoints(
         Path to reference FASTA file (required for CRAM files)
     output_bam : str, optional
         Path to output BAM file with reads supporting CNV calls: split reads under read group DUP/DEL
-        and, with paired-end evidence enabled, discordant pair mates under PAIR (default: None, no BAM output)
+        and discordant pair mates under PAIR (default: None, no BAM output)
     paired_end_config : PairedEndConfig, optional
-        Paired-end configuration. When None or disabled, only split-read evidence is used
-        (default: None)
+        Discordant read pair thresholds (default: None, the PairedEndConfig defaults)
     """
-    # --paired-end is trusted as given; unpaired reads never qualify as pair evidence anyway
     pe_config = paired_end_config if paired_end_config is not None else PairedEndConfig()
-    if pe_config.enabled:
-        logger.info(f"Paired-end mode: minimum pair span {pe_config.min_pair_span}")
+    logger.info(f"Minimum discordant pair span {pe_config.min_pair_span}")
     alignment_file = pysam.AlignmentFile(bam_file, "r", reference_filename=reference_fasta)
 
     # Open input VCF and add new INFO fields to header
@@ -1230,8 +1071,7 @@ def analyze_cnv_breakpoints(
         hdr.info.add("CNV_DEL_FRAC", "1", "Float", "Fraction of reads supporting deletion")
         hdr.info.add("DUP_READS_MEDIAN_INSERT_SIZE", "1", "Float", "Median insert size of duplication-supporting reads")
         hdr.info.add("DEL_READS_MEDIAN_INSERT_SIZE", "1", "Float", "Median insert size of deletion-supporting reads")
-        if pe_config.enabled:
-            _add_pair_info_fields(hdr)
+        _add_pair_info_fields(hdr)
 
         # Open output VCF with modified header
         if output_file:
@@ -1243,8 +1083,7 @@ def analyze_cnv_breakpoints(
         bam_out = None
         if output_bam:
             bam_header = create_bam_header(alignment_file.header)
-            if pe_config.enabled:
-                bam_header = _add_pair_read_group(bam_header)
+            bam_header = _add_pair_read_group(bam_header)
             bam_out = pysam.AlignmentFile(output_bam, "wb", header=bam_header)
 
         # Process all variants
@@ -1313,31 +1152,23 @@ def get_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argume
         "--output-bam",
         default=None,
         help="Path to output BAM file with reads supporting CNV calls: split reads under read group DUP/DEL "
-        "and, with --paired-end, discordant pair mates under read group PAIR (default: None, no BAM output)",
+        "and discordant pair mates under read group PAIR (default: None, no BAM output)",
     )
 
-    pe_group = parser.add_argument_group("paired-end options")
-    pe_group.add_argument(
-        "--paired-end",
-        action="store_true",
-        default=False,
-        help="Input contains paired-end reads: additionally count discordant read pairs as "
-        "breakpoint evidence, in the CNV_*_PAIRS/CNV_*_PAIRS_FRAC/*_PAIRS_MEDIAN_SPAN INFO fields "
-        "(default: False, single-end behavior)",
-    )
+    pe_group = parser.add_argument_group("discordant read pair options")
     pe_group.add_argument(
         "--min-pair-span",
         type=int,
         default=MIN_PAIR_SPAN,
         help="Minimum span (template length), in bases, of a discordant read pair for it to count as "
-        f"duplication or deletion evidence. Only used with --paired-end (default: {MIN_PAIR_SPAN})",
+        f"duplication or deletion evidence (default: {MIN_PAIR_SPAN})",
     )
     pe_group.add_argument(
         "--min-pair-mapping-quality",
         type=int,
         default=MIN_PAIR_MAPPING_QUALITY,
-        help="Minimum mapping quality for a read pair to contribute discordant pair evidence. "
-        f"Only used with --paired-end (default: {MIN_PAIR_MAPPING_QUALITY})",
+        help="Minimum mapping quality for a read pair to contribute discordant pair evidence "
+        f"(default: {MIN_PAIR_MAPPING_QUALITY})",
     )
     return parser
 
