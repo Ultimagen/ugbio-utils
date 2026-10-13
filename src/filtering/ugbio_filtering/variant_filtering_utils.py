@@ -112,7 +112,6 @@ def apply_model(
         Predictions and probabilities
     """
 
-    input_df = transformers.add_absent_pair_fields(input_df, transformer)
     # We apply models on batches of the dataframe to avoid memory issues
     chunks = np.arange(0, input_df.shape[0], MAX_CHUNK_SIZE, dtype=int)
     chunks = np.concatenate((chunks, [input_df.shape[0]]))
