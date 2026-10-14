@@ -399,7 +399,7 @@ def accept_read(read: pysam.AlignedSegment, min_mismatches: int) -> bool:
     return nm >= min_mismatches
 
 
-def run_alignment_tool(command: list[str], log_file: TextIO | None = None) -> int:
+def run_alignment_tool(command: list[str], log_file: TextIO | None = None, env: dict[str, str] | None = None) -> int:
     """Execute external alignment tool and capture output.
 
     Parameters
@@ -408,6 +408,8 @@ def run_alignment_tool(command: list[str], log_file: TextIO | None = None) -> in
         Command and arguments to execute
     log_file : file-like object, optional
         Log file for recording command execution
+    env : dict[str, str], optional
+        Environment variables to use for command execution
 
     Returns
     -------
@@ -424,7 +426,7 @@ def run_alignment_tool(command: list[str], log_file: TextIO | None = None) -> in
         log_file.write(f"<<< {command}\n")
 
     try:
-        process = subprocess.run(command, capture_output=True, text=True, check=True)
+        process = subprocess.run(command, capture_output=True, text=True, check=True, env=env)
         return process.returncode
     except subprocess.CalledProcessError as e:
         error_msg = f"Alignment tool failed with return code {e.returncode}"
