@@ -33,11 +33,11 @@ from ugbio_core.logger import logger
 from ugbio_core.vcfbed.variant_annotation import get_cycle_skip_dataframe
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
+from ugbio_srsnv.split_scheme import resolve_scheme_and_add_columns
 from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport, create_srsnv_report_html
 from ugbio_srsnv.srsnv_utils import (
     ET,
     ST,
-    add_is_mixed_to_featuremap_df,
 )
 
 FOLD_COL = "fold_id"
@@ -276,12 +276,14 @@ def prepare_report(
     # Build params dictionary from metadata
     params = _build_params(metadata, user_meta, len(models))
 
-    # Add columns to featuremap_df
-    data_df = add_is_mixed_to_featuremap_df(
+    # Resolve the active split scheme (recipe) from the columns present and add the split columns +
+    # ordered read_group it needs. The mode is stored in params so SRSNVReport uses it directly.
+    data_df, scheme = resolve_scheme_and_add_columns(
         data_df,
         params["adapter_version"],
         params["categorical_features_names"],
     )
+    params["report_mode"] = scheme.mode.value
     data_df[IS_CYCLE_SKIP] = compute_is_cycle_skip_column(data_df)
 
     # Handle random seed
@@ -322,6 +324,8 @@ def prepare_report(
         out_basename=basename,
         srsnv_metadata_file=srsnv_metadata,
         simple_pipeline=None,
+        split_mode=scheme.mode.value,
+        display_suffix=scheme.display_suffix,
     )
 
 

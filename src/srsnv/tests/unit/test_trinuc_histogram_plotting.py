@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from ugbio_srsnv.trinuc_histogram_plotting import (
+    _resolve_qual_group_specs,
     calc_and_plot_trinuc_hist,
     calc_trinuc_stats,
     plot_trinuc_hist,
@@ -333,3 +334,72 @@ class TestTrinucHistogramPlotting:
 
         # Clean up
         fig.clear()
+
+
+class TestTrinucNGroupSplit:
+    """Test the N-group (consensus) split of the trinuc quality panel."""
+
+    @pytest.fixture
+    def consensus_sample(self):
+        rng = np.random.default_rng(1)
+        contexts = ["AAAC", "AAAG", "AAAT", "AACG", "ACAC", "ACAG", "AGAT", "ATAC"] * 100
+        n = len(contexts)
+        return pd.DataFrame(
+            {
+                "tcwa_fwd": contexts,
+                "label": rng.choice([False, True], n, p=[0.5, 0.5]),
+                "is_forward": rng.choice([True, False], n),
+                "SNVQ": rng.normal(40, 10, n).clip(5, 70),
+                "is_cycle_skip": rng.choice([True, False], n),
+                "read_group": pd.Categorical(
+                    rng.choice(["single read", "consensus, one strand", "consensus, duplex"], n),
+                    categories=["single read", "consensus, one strand", "consensus, duplex"],
+                    ordered=True,
+                ),
+            }
+        )
+
+    def test_calc_trinuc_stats_read_group_columns(self, consensus_sample):
+        """calc_trinuc_stats splits quality by read_group when is_mixed_col=read_group."""
+        stats_df = calc_trinuc_stats(
+            consensus_sample,
+            labels=[True],
+            is_mixed_col="read_group",
+            include_quality=True,
+            collapsed=True,
+            motif_orientation="ref_dir",
+        )
+        for grp in ("single read", "consensus, one strand", "consensus, duplex"):
+            assert f"mixed={grp} median_qual" in stats_df.columns
+
+    def test_resolve_qual_group_specs_ngroup_order(self, consensus_sample):
+        """_resolve_qual_group_specs returns the given ordered specs (3 groups)."""
+        stats_df = calc_trinuc_stats(
+            consensus_sample,
+            labels=[True],
+            is_mixed_col="read_group",
+            include_quality=True,
+            collapsed=True,
+            motif_orientation="ref_dir",
+        )
+        groups = ["single read", "consensus, one strand", "consensus, duplex"]
+        specs = [(f"mixed={g}", g, "r") for g in groups]
+        resolved = _resolve_qual_group_specs(stats_df, specs)
+        assert [label for _, label, _ in resolved] == groups
+
+    def test_mixed_auto_detection_unchanged(self, consensus_sample):
+        """Without group_specs, ppmSeq auto-detection yields the historical Mixed/Non-mixed labels."""
+        mixed_df = consensus_sample.copy()
+        rng = np.random.default_rng(3)
+        mixed_df["is_mixed"] = rng.choice([True, False], len(mixed_df))
+        stats_df = calc_trinuc_stats(
+            mixed_df,
+            labels=[True],
+            is_mixed_col="is_mixed",
+            include_quality=True,
+            collapsed=True,
+            motif_orientation="ref_dir",
+        )
+        resolved = _resolve_qual_group_specs(stats_df)
+        labels = [label for _, label, _ in resolved]
+        assert labels == ["Mixed reads", "Non-mixed reads"]
