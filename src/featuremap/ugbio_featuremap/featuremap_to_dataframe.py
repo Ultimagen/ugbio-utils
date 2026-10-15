@@ -921,7 +921,7 @@ def _balanced_sample(frame: pl.DataFrame, n: int, indel_snv_balance_fraction: fl
     return pl.concat(parts, how="vertical") if parts else frame.head(0)
 
 
-def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917
+def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR0915
     parquet_files: list[str],
     output_path: str,
     downsample_reads: int,
@@ -929,6 +929,8 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917
     duplex_oversample_priority: list[str],
     indel_snv_balance_fraction: float | None,
     min_group_fraction: float | None = None,
+    *,
+    within_group_count_priority: bool = False,
 ) -> None:
     """Downsample to ``downsample_reads`` while preserving reads by ``duplex_group`` priority.
 
@@ -943,15 +945,34 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917
     This prevents a flooded high-priority tier (e.g. duplex_pe_full after dropping the dup filter) from
     starving lower tiers such as SSC. With ``min_group_fraction`` unset the behavior is byte-identical to the
     strict top-down fill (a single boundary group is subsampled; lower groups dropped).
+
+    ``within_group_count_priority`` (opt-in, FP concordance oversampling): keep the SAME tier ladder + floor,
+    but whenever a group has to be subsampled (a floored/boundary tier), keep its highest per-(CS + variant)
+    ALT-match COUNT reads first instead of a uniform random sample. Fully-kept tiers are unaffected (every row
+    stays). This enriches concordant FP WITHIN each tier without changing the tier mix (so it does not flood the
+    duplex tiers the way the bare ``cs_alt_count`` mode does); ``indel_snv_balance_fraction`` is not applied in
+    this mode (count order takes precedence, as in the bare count mode).
     """
     seed = downsample_seed if downsample_seed is not None else 0
 
     # Pass 1: annotate each part with duplex_group (per-part is safe — molecules don't span regions) and
-    # tally global per-group counts.
+    # tally global per-group counts. For within-group count priority also attach the per-(CS + variant)
+    # ALT-match count ``_cc`` (safe per-part: a molecule's reads never span parts) + a random tiebreak ``_tie``.
     annotated_files: list[str] = []
     counts: dict[str, int] = {}
-    for f in parquet_files:
+    for i, f in enumerate(parquet_files):
         part = _add_duplex_group_column(pl.read_parquet(f))
+        if within_group_count_priority:
+            mol_keys = [
+                c
+                for c in (COL_CHROM, COL_POS, "REF", "ALT", COL_X_IC, "X_IL", "X_INDEL_SEQ", COL_CS)
+                if c in part.columns
+            ]
+            conc = pl.len().over(mol_keys) if (COL_CS in part.columns and mol_keys) else pl.lit(1)
+            part = part.with_columns(
+                conc.alias("_cc"),
+                pl.int_range(pl.len()).shuffle(seed=seed + i).alias("_tie"),
+            )
         tmp = f + ".dg.parquet"
         part.write_parquet(tmp)
         annotated_files.append(tmp)
@@ -998,22 +1019,32 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917
             b = part.filter(pl.col(DUPLEX_GROUP_COL) == g)
             if b.height:
                 frac = min(1.0, keep_n[g] / counts[g] * 1.05 + 1000.0 / counts[g])
-                kept.append(b.sample(fraction=frac, seed=seed + i))
+                if within_group_count_priority:
+                    # Keep this part's highest-count candidates (bounded); the global exact-trim below picks
+                    # the true top-count rows across parts.
+                    presample_n = min(b.height, int(frac * b.height) + 1)
+                    kept.append(b.sort(by=["_cc", "_tie"], descending=[True, True]).head(presample_n))
+                else:
+                    kept.append(b.sample(fraction=frac, seed=seed + i))
 
     if kept:
         merged = pl.concat(kept, how="vertical")
     else:
         merged = _add_duplex_group_column(pl.read_parquet(annotated_files[0])).head(0)
 
-    # Exact-trim each partial group to its target (balanced if requested); leave full-kept groups intact.
+    # Exact-trim each partial group to its target; leave full-kept groups intact. With count priority keep the
+    # highest per-(CS + variant) ALT-match count rows; otherwise balanced/uniform sample.
     for g in partial_groups:
         gdf = merged.filter(pl.col(DUPLEX_GROUP_COL) == g)
         rest_df = merged.filter(pl.col(DUPLEX_GROUP_COL) != g)
-        gdf = _balanced_sample(gdf, keep_n[g], indel_snv_balance_fraction, seed)
+        if within_group_count_priority:
+            gdf = gdf.sort(by=["_cc", "_tie"], descending=[True, True]).head(keep_n[g])
+        else:
+            gdf = _balanced_sample(gdf, keep_n[g], indel_snv_balance_fraction, seed)
         merged = pl.concat([rest_df, gdf], how="vertical")
 
-    # Drop the helper column, shuffle deterministically so groups interleave, write.
-    merged = merged.drop(DUPLEX_GROUP_COL).sample(fraction=1.0, shuffle=True, seed=seed)
+    # Drop the helper column(s), shuffle deterministically so groups interleave, write.
+    merged = merged.drop([DUPLEX_GROUP_COL, "_cc", "_tie"], strict=False).sample(fraction=1.0, shuffle=True, seed=seed)
     realized = merged.height
     log.info(f"Duplex priority-preserve realized: {realized} rows (target {budget})")
     merged.write_parquet(output_path)
@@ -1221,8 +1252,15 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
         if COL_CS in schema_names:
             total_rows = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
             if total_rows > downsample_reads:
-                # cs_alt_count mode: fill by per-(CS+variant) ALT-match count instead of the duplex_group ladder.
-                if DUPLEX_PRIORITY_CS_ALT_COUNT in duplex_oversample_priority:
+                # cs_alt_count handling, keyed on whether it accompanies a tier ladder:
+                #   * ladder + cs_alt_count (e.g. "duplex_pe_full,duplex,ssc,singleton,cs_alt_count"): keep the
+                #     tier fill + floor, but prefer high per-(CS+variant) ALT-match count reads WITHIN each
+                #     subsampled tier (FP concordance oversampling without flooding the duplex tiers).
+                #   * bare cs_alt_count (no tier groups): fill the whole budget by count (the aggressive mode).
+                #   * no cs_alt_count: the plain tier ladder.
+                tier_groups = [g for g in duplex_oversample_priority if g != DUPLEX_PRIORITY_CS_ALT_COUNT]
+                has_count = DUPLEX_PRIORITY_CS_ALT_COUNT in duplex_oversample_priority
+                if has_count and not tier_groups:
                     _cs_alt_count_downsample(
                         parquet_files,
                         output_path,
@@ -1237,9 +1275,10 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
                         output_path,
                         downsample_reads,
                         downsample_seed,
-                        duplex_oversample_priority,
+                        tier_groups,
                         indel_snv_balance_fraction,
                         duplex_group_min_fraction,
+                        within_group_count_priority=has_count,
                     )
                 return
 

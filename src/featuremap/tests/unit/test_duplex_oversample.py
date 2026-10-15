@@ -223,6 +223,71 @@ def test_cs_alt_count_prefers_high_count_molecules(tmp_path):
     assert res.height == res.unique().height
 
 
+def test_tier_ladder_with_within_group_count_priority(tmp_path):
+    # Tier ladder + cs_alt_count modifier: the ladder/floor are unchanged, but when a tier must be subsampled
+    # its highest per-(CS+variant) ALT-match-count reads are kept first (concordant-first within the group).
+    # One ssc tier only (so it is the boundary): "hi" molecule = 10 one-strand reads (count 10); five "mid"
+    # molecules = 2 reads each (count 2); twenty "lo" molecules = 1 read each (count 1). Budget 15 -> the whole
+    # count-10 molecule is kept first, then count-2 reads; count-1 singletons of the tier are dropped.
+    rows = [_row("chr1", 500, "C", "T", "hi", 3, 0, ds=None) for _ in range(10)]
+    for j in range(5):
+        rows += [_row("chr1", 600 + j, "C", "T", f"mid{j}", 3, 0, ds=None) for _ in range(2)]
+    rows += [_row("chr1", 800 + j, "C", "T", f"lo{j}", 3, 0, ds=None) for j in range(20)]
+    for i, r in enumerate(rows):  # unique per-read id so identical consensus rows stay distinct
+        r["RN"] = f"r{i}"
+    files = _write_parts(tmp_path, [rows])
+    out = str(tmp_path / "out.parquet")
+    _merge_parquet_files_lazy(
+        files,
+        out,
+        downsample_reads=15,
+        downsample_seed=1,
+        duplex_oversample_priority=[DUPLEX_GROUP_SSC, DUPLEX_PRIORITY_CS_ALT_COUNT],
+    )
+    res = pl.read_parquet(out)
+    assert res.height == 15
+    assert res.filter(pl.col("CS") == "hi").height == 10  # highest-count molecule kept whole first
+    assert res.height == res.unique().height  # no row duplication
+    assert "_cc" not in res.columns and "_tie" not in res.columns  # helper cols dropped
+
+
+def test_within_group_count_priority_keeps_tier_order_and_floor(tmp_path):
+    # Count priority must not flood the duplex tiers: the tier ladder + floor still govern the mix. Budget 20,
+    # floor 0.1 -> ssc floor = 2. duplex_pe_full (10) kept whole, duplex (10) kept whole, ssc is the boundary.
+    rows = [_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, ds=2) for j in range(10)]  # duplex_pe_full
+    for j in range(5):
+        rows += [
+            _row("chr1", 2000 + j, "C", "T", f"d{j}", 3, 0, ds=None),
+            _row("chr1", 2000 + j, "C", "T", f"d{j}", 0, 3, ds=None),
+        ]  # duplex
+    rows += [_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, ds=None) for j in range(100)]  # ssc
+    for i, r in enumerate(rows):
+        r["RN"] = f"r{i}"
+    files = _write_parts(tmp_path, [rows])
+    out = str(tmp_path / "out.parquet")
+    _merge_parquet_files_lazy(
+        files,
+        out,
+        downsample_reads=20,
+        downsample_seed=1,
+        duplex_oversample_priority=[
+            DUPLEX_GROUP_DUPLEX_PE_FULL,
+            DUPLEX_GROUP_DUPLEX,
+            DUPLEX_GROUP_SSC,
+            DUPLEX_GROUP_SINGLETON,
+            DUPLEX_PRIORITY_CS_ALT_COUNT,
+        ],
+        duplex_group_min_fraction=0.1,
+    )
+    res = _add_duplex_group_column(pl.read_parquet(out))
+    counts = dict(res.group_by(DUPLEX_GROUP_COL).len().iter_rows())
+    assert res.height == 20
+    # Ladder preserved: duplex_pe_full + duplex kept whole (10 each would overflow -> floor leaves room). The
+    # top tiers are not flooded beyond their true counts, ssc keeps at least its floor.
+    assert counts.get(DUPLEX_GROUP_DUPLEX_PE_FULL, 0) == 10
+    assert counts.get(DUPLEX_GROUP_SSC, 0) >= 2  # floor honored
+
+
 def test_cs_alt_count_floor_keeps_low_count_class(tmp_path):
     # One concordant molecule with count 20 (duplex); 50 singletons (count 1). Budget 15.
     rows = [
