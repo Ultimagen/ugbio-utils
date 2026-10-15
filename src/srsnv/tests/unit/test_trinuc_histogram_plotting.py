@@ -93,6 +93,64 @@ class TestTrinucHistogramPlotting:
         assert len(mixed_true_cols) > 0
         assert len(mixed_false_cols) > 0
 
+    def test_trinuc_quality_split_uses_is_mixed_start(self):
+        """Regression (BIOIN-3125): the trinuc quality panels must split on the requested column.
+
+        On start-only ppmSeq libraries there is no end tag, so the legacy both-ends ``is_mixed``
+        (= is_mixed_start AND is_mixed_end) collapses to all-False and the plot falls back to a
+        single "all reads" curve. The start tag (``is_mixed_start``) still carries the mixed signal,
+        so passing ``is_mixed_col="is_mixed_start"`` must restore the mixed/non-mixed split.
+        """
+        rng = np.random.default_rng(7)
+        trinuc_contexts = [
+            "AAAC", "AAAG", "AAAT", "AACG", "ACAC", "ACAG", "ACAT", "ACCG",
+            "AGAC", "AGAG", "AGAT", "AGCG", "ATAC", "ATAG", "ATAT", "ATCG",
+        ] * 100  # fmt: skip
+        n = len(trinuc_contexts)
+        data = pd.DataFrame(
+            {
+                "tcwa_fwd": trinuc_contexts,
+                "label": rng.choice([False, True], n, p=[0.5, 0.5]),
+                "is_forward": rng.choice([True, False], n),
+                "SNVQ": rng.normal(35, 12, n).clip(5, 70),
+                # start-only ppmSeq: no end tag -> both-ends is_mixed is uniformly False,
+                # while the start tag (is_mixed_start) still carries the mixed/non-mixed signal.
+                "is_mixed": np.zeros(n, dtype=bool),
+                "is_mixed_start": rng.choice([True, False], n, p=[0.7, 0.3]),
+            }
+        )
+        # Sanity: is_mixed is single-valued, is_mixed_start varies among TP (label=True) reads.
+        assert not data["is_mixed"].any()
+        assert data.loc[data["label"], "is_mixed_start"].nunique() == 2
+
+        # Splitting on is_mixed_start yields both Mixed (True) and Non-mixed (False) series.
+        stats_start = calc_trinuc_stats(
+            data, labels=[False, True], include_quality=True, collapsed=True, is_mixed_col="is_mixed_start"
+        )
+        assert any("mixed=True median_qual" in c for c in stats_start.columns)
+        assert any("mixed=False median_qual" in c for c in stats_start.columns)
+
+        # The legacy both-ends is_mixed (all-False) produces no mixed=True series -> the plot would
+        # collapse to a single "all reads" curve (the bug this change fixes).
+        stats_legacy = calc_trinuc_stats(
+            data, labels=[False, True], include_quality=True, collapsed=True, is_mixed_col="is_mixed"
+        )
+        assert not any("mixed=True median_qual" in c for c in stats_legacy.columns)
+        assert any("mixed=all median_qual" in c for c in stats_legacy.columns)
+
+        # calc_and_plot_trinuc_hist must forward is_mixed_col down to calc_trinuc_stats.
+        fig, stats_df = calc_and_plot_trinuc_hist(
+            data,
+            trinuc_col="tcwa_fwd",
+            labels=[False, True],
+            collapsed=True,
+            include_quality=True,
+            is_mixed_col="is_mixed_start",
+        )
+        assert any("mixed=True median_qual" in c for c in stats_df.columns)
+        assert any("mixed=False median_qual" in c for c in stats_df.columns)
+        fig.clear()
+
     def test_calc_trinuc_stats_collapsed_vs_full_shapes(self, sample_data):
         """Test that collapsed and full modes return expected shapes."""
         stats_collapsed = calc_trinuc_stats(sample_data, labels=[False, True], collapsed=True)

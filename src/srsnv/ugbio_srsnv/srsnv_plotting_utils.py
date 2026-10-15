@@ -2637,6 +2637,10 @@ class SRSNVReport:
             motif_orientation=motif_orientation,
             q1=0.1,
             q2=0.9,
+            # Split quality panels by start-tag mixed status (is_mixed_start), consistent with the
+            # rest of the report. The legacy both-ends `is_mixed` collapses to all-False on start-only
+            # ppmSeq libraries (no `et` tag), which would force a single "all reads" curve.
+            is_mixed_col=IS_MIXED_START,
         )
         stats_df.to_hdf(self.output_h5_filename, key="trinuc_stats", mode="a")
 
