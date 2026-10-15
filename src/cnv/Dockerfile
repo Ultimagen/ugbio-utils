@@ -167,10 +167,10 @@ COPY --from=build ${OUT_DIR} ${OUT_DIR}
 # which ties the image to the build runner's CPU: an image built on an AVX-512 runner dies with
 # "Illegal instruction" on hosts without AVX-512. Pin both to AVX2, available on all current
 # x86 HealthOmics instances. Same flags as [tool.uv.extra-build-variables] in the root pyproject.toml.
-# pywfa: MAKEFLAGS overrides WFA2's CC_FLAGS, which hardcodes -march=native; the build log check
-# fails the build if a future pywfa stops honoring the override.
-ARG PYWFA_VERSION=0.5.1
-RUN MAKEFLAGS='CC_FLAGS=-Wall\ -g\ -fPIC\ -O3\ -march=x86-64-v3' \
+# pywfa: PYWFA_MARCH (pywfa >= 0.6.0) replaces WFA2's -march=native; the build log check
+# fails the build if a future pywfa stops honoring it.
+ARG PYWFA_VERSION=0.6.0
+RUN PYWFA_MARCH=x86-64-v3 \
     pip install -v --no-binary pywfa pywfa==${PYWFA_VERSION} > /tmp/pywfa_build.log 2>&1 || \
     { cat /tmp/pywfa_build.log; exit 1; }; \
     grep -q -- '-march=x86-64-v3' /tmp/pywfa_build.log && \
