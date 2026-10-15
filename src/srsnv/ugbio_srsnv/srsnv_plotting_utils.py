@@ -3661,8 +3661,8 @@ class SRSNVReport:
         cross = pd.to_numeric(data[CS_N_CROSSING], errors="coerce").to_numpy()
         supp = pd.to_numeric(data[CS_N_SUPPORTING], errors="coerce").to_numpy()
         conc_masks = [
-            ("concordant (n_cross==n_support)", pe & (cross == supp)),
-            ("non-concordant (n_cross>n_support)", pe & (cross > supp)),
+            ("concordant", pe & (cross == supp)),
+            ("non-concordant", pe & (cross > supp)),
         ]
         rows = []
         for cls_name, cls_mask in class_conds.items():

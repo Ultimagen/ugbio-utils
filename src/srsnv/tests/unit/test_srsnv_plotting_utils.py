@@ -1235,10 +1235,10 @@ def test_calc_pe_concordance_summary_table(consensus_resources, real_models_calc
         report.calc_pe_concordance_summary_table()
         table = pd.read_hdf(report.output_h5_filename, key="run_quality_summary_table_pe_concordance")
         conc_vals = set(table["concordance"].unique())
-        assert "concordant (n_cross==n_support)" in conc_vals
-        assert "non-concordant (n_cross>n_support)" in conc_vals
+        assert "concordant" in conc_vals
+        assert "non-concordant" in conc_vals
         for col in ("n_TP", "n_FP", "Median SNVQ (TP)", "Median SNVQ (FP)", "TP%>=60", "FP%>=60", "ROC AUC (Phred)"):
             assert col in table.columns, f"missing column {col}"
         # non-empty: at least one concordant cell has reads
-        conc = table[table["concordance"] == "concordant (n_cross==n_support)"]
+        conc = table[table["concordance"] == "concordant"]
         assert (conc["n_TP"].to_numpy() + conc["n_FP"].to_numpy()).sum() > 0
