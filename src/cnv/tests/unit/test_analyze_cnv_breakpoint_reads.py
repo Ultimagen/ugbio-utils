@@ -10,11 +10,9 @@ from ugbio_cnv import analyze_cnv_breakpoint_reads
 from ugbio_cnv.analyze_cnv_breakpoint_reads import (
     MIN_PAIR_SPAN,
     PAIR_READ_GROUP,
-    PairedEndConfig,
     _collect_fragments_from_region,
     _FragmentEvidence,
     _mate_aware_key,
-    _pair_mates_flank_deleted_segment,
     _summarize_fragments,
     analyze_cnv_breakpoints,
     analyze_interval_breakpoints,
@@ -350,7 +348,7 @@ def test_collect_fragments_from_region_uses_independent_fetch_iterators(monkeypa
 
     monkeypatch.setattr(
         "ugbio_cnv.analyze_cnv_breakpoint_reads._get_fragment_votes",
-        lambda read, alignment_file, interval, pe_config: [],  # noqa: ARG005
+        lambda read, interval, min_pair_span: [],  # noqa: ARG005
     )
 
     evidence = _collect_fragments_from_region(
@@ -360,7 +358,7 @@ def test_collect_fragments_from_region_uses_independent_fetch_iterators(monkeypa
         2000,
         100,
         (900, 1100, 1900, 2100),
-        PairedEndConfig(),
+        MIN_PAIR_SPAN,
     )
 
     # Both breakpoint windows were read: each read is one (non-voting) fragment
@@ -712,22 +710,9 @@ PE_LEFT_START = 950
 PE_RIGHT_START = 1950
 PE_SPAN = 1050
 
-# A longer interval, chr1:1000-6000, for the deletion-flanking tests: at cushion 100 its interior is 1100-5900.
-# A leftmost mate at 950 with span 5050 ends at 6000, inside the end window, so such a pair passes bracketing
-# and is rejected by the flanking rule alone.
+# A longer interval, chr1:1000-6000, for the pair geometry tests
 PE_LONG_INTERVAL_END = 6000
-PE_LONG_SPAN = 5050
-PE_INSIDE_START = 4000  # ~2.9 kb inside the deleted segment
 PE_OUTSIDE_RIGHT_START = 5950  # just past the end breakpoint
-
-
-def pe_config(**overrides):
-    """Build a PairedEndConfig with an explicit span floor."""
-    defaults = {
-        "min_pair_span": MIN_PAIR_SPAN,
-        "min_pair_mapping_quality": 20,
-    }
-    return PairedEndConfig(**{**defaults, **overrides})
 
 
 def _make_pe_mate(
@@ -809,15 +794,15 @@ def pe_bam_factory():
         Path(path + ".bai").unlink(missing_ok=True)
 
 
-def _analyze(bam_file, config, chrom="chr1", start=PE_INTERVAL_START, end=PE_INTERVAL_END, cushion=PE_CUSHION):
+def _analyze(bam_file, chrom="chr1", start=PE_INTERVAL_START, end=PE_INTERVAL_END, cushion=PE_CUSHION):
     """Run analyze_interval_breakpoints over a BAM path."""
     with pysam.AlignmentFile(bam_file, "rb") as alignment_file:
-        return analyze_interval_breakpoints(alignment_file, chrom, start, end, cushion, config)
+        return analyze_interval_breakpoints(alignment_file, chrom, start, end, cushion)
 
 
-def _check_pair(read, config=None, start=PE_INTERVAL_START, end=PE_INTERVAL_END, cushion=PE_CUSHION):
+def _check_pair(read, min_pair_span=MIN_PAIR_SPAN, start=PE_INTERVAL_START, end=PE_INTERVAL_END, cushion=PE_CUSHION):
     """Run check_pair_cnv_consistency with the standard geometry."""
-    return check_pair_cnv_consistency(read, start, end, cushion, config if config is not None else pe_config())
+    return check_pair_cnv_consistency(read, start, end, cushion, min_pair_span)
 
 
 # --- pair classification ---------------------------------------------------
@@ -872,7 +857,7 @@ def test_check_pair_cnv_consistency_deletion_requires_minimum_span():
     """An FR pair with a span below the floor is not deletion evidence."""
     read = _make_pe_mate("frag", PE_LEFT_START)
 
-    assert _check_pair(read, pe_config(min_pair_span=5000)) == (False, False, None)
+    assert _check_pair(read, 5000) == (False, False, None)
 
 
 def test_check_pair_cnv_consistency_duplication_requires_minimum_span():
@@ -883,7 +868,7 @@ def test_check_pair_cnv_consistency_duplication_requires_minimum_span():
     """
     read = _make_pe_mate("frag", PE_LEFT_START, is_reverse=True, mate_is_reverse=False)
 
-    assert _check_pair(read, pe_config(min_pair_span=5000)) == (False, False, None)
+    assert _check_pair(read, 5000) == (False, False, None)
 
 
 @pytest.mark.parametrize(
@@ -895,8 +880,8 @@ def test_pair_span_gate_is_on_the_raw_span(is_reverse, mate_is_reverse, classifi
     """Both classes compare the floor against the template length, with nothing subtracted."""
     read = _make_pe_mate("frag", PE_LEFT_START, is_reverse=is_reverse, mate_is_reverse=mate_is_reverse)
 
-    assert _check_pair(read, pe_config(min_pair_span=PE_SPAN + 1)) == (False, False, None)
-    assert _check_pair(read, pe_config(min_pair_span=PE_SPAN)) == (*classification, PE_SPAN)
+    assert _check_pair(read, PE_SPAN + 1) == (False, False, None)
+    assert _check_pair(read, PE_SPAN) == (*classification, PE_SPAN)
 
 
 @pytest.mark.parametrize(
@@ -911,30 +896,23 @@ def test_pair_span_gate_boundary_at_the_default(is_reverse, mate_is_reverse, cla
     below = _make_pe_mate("frag", PE_LEFT_START, mate_reference_start=1669, template_length=799, **orientation)
     at = _make_pe_mate("frag", PE_LEFT_START, mate_reference_start=1670, template_length=800, **orientation)
 
-    assert _check_pair(below, pe_config(), **short) == (False, False, None)
-    assert _check_pair(at, pe_config(), **short) == (*classification, 800)
+    assert _check_pair(below, **short) == (False, False, None)
+    assert _check_pair(at, **short) == (*classification, 800)
 
 
 def test_pair_span_gate_bites_when_the_interval_is_short():
     """
     The floor only matters for intervals short relative to the cushion.
 
-    A 400 bp interval against a 1500 bp cushion, so the floor and not bracketing decides. The interior is
-    empty here, which also exercises the degenerate case of the flanking rule.
+    A 400 bp interval against a 1500 bp cushion, so the floor and not bracketing decides.
     """
     short = {"start": 1000, "end": 1400, "cushion": 1500}
 
     below = _make_pe_mate("frag", PE_LEFT_START, mate_reference_start=1470, template_length=600)
-    assert _check_pair(below, pe_config(), **short) == (False, False, None)
+    assert _check_pair(below, **short) == (False, False, None)
 
     above = _make_pe_mate("frag", PE_LEFT_START, mate_reference_start=1870, template_length=1000)
-    assert _check_pair(above, pe_config(), **short) == (False, True, 1000)
-
-
-def test_paired_end_config_defaults_to_the_module_minimum_span():
-    """The default floor comes from the module constant, so the CLI and the config agree."""
-    assert PairedEndConfig().min_pair_span == MIN_PAIR_SPAN
-    assert MIN_PAIR_SPAN == 800
+    assert _check_pair(above, **short) == (False, True, 1000)
 
 
 def test_check_pair_cnv_consistency_ignores_pair_starting_outside_start_window():
@@ -958,82 +936,9 @@ def test_check_pair_cnv_consistency_ignores_cross_contig_pair():
     assert _check_pair(read) == (False, False, None)
 
 
-# --- deletion pairs must flank the deleted segment -------------------------
+# --- pair geometry --------------------------------------------------------
 
 _LONG = {"end": PE_LONG_INTERVAL_END}
-
-
-def test_deletion_pair_with_mate_inside_the_deleted_segment_is_rejected():
-    """
-    A deletion pair cannot have a mate aligned inside the deleted segment.
-
-    Bracketing only pins the rightmost mate's end, so it admits a mate starting deep inside the interval. The
-    same pair with the mate past the end breakpoint is counted, so the flanking rule alone rejects this one.
-    """
-    inside = _make_pe_mate("frag", PE_LEFT_START, mate_reference_start=PE_INSIDE_START, template_length=PE_LONG_SPAN)
-    assert _check_pair(inside, **_LONG) == (False, False, None)
-
-    outside = _make_pe_mate(
-        "frag", PE_LEFT_START, mate_reference_start=PE_OUTSIDE_RIGHT_START, template_length=PE_LONG_SPAN
-    )
-    assert _check_pair(outside, **_LONG) == (False, True, PE_LONG_SPAN)
-
-
-def test_mate_inside_the_deleted_segment_is_rejected_from_either_mate():
-    """
-    The same fragment is rejected when examined from the mate that lies inside the segment.
-
-    A fragment counts as soon as one alignment passes, so the verdict must not depend on which mate is on hand.
-    """
-    read = _make_pe_mate(
-        "frag",
-        PE_INSIDE_START,
-        is_read1=False,
-        is_reverse=True,
-        mate_reference_start=PE_LEFT_START,
-        mate_is_reverse=False,
-        template_length=-PE_LONG_SPAN,
-    )
-
-    assert _check_pair(read, **_LONG) == (False, False, None)
-
-
-def test_duplication_pair_is_exempt_from_the_flanking_rule():
-    """
-    An everted pair supporting a tandem duplication has both mates inside the region by design.
-
-    The rule is therefore applied on the deletion branch only; hoisting it above the
-    classification would remove pair-based duplication evidence entirely.
-    """
-    read = _make_pe_mate(
-        "frag",
-        PE_LEFT_START,
-        is_reverse=True,
-        mate_is_reverse=False,
-        mate_reference_start=PE_INSIDE_START,
-        template_length=PE_LONG_SPAN,
-    )
-
-    assert _check_pair(read, **_LONG) == (True, False, PE_LONG_SPAN)
-
-
-def test_flanking_rule_is_inert_for_short_intervals():
-    """For an interval no longer than 2*cushion the windows cover it, so there is no interior."""
-    read = _make_pe_mate("frag", PE_LEFT_START, mate_reference_start=2400, template_length=1550)
-
-    assert _check_pair(read, pe_config(), start=1000, end=2000, cushion=1500) == (False, True, 1550)
-
-
-def test_mate_starting_on_the_end_window_edge_is_kept():
-    """A mate starting exactly on the window edge is inside the window, so the pair counts."""
-    read = _make_pe_mate(
-        "frag",
-        PE_LEFT_START,
-        mate_reference_start=PE_LONG_INTERVAL_END - PE_CUSHION,
-        template_length=PE_LONG_SPAN,
-    )
-
-    assert _check_pair(read, **_LONG) == (False, True, PE_LONG_SPAN)
 
 
 def test_leftmost_mate_ending_past_the_junction_is_still_counted():
@@ -1045,18 +950,6 @@ def test_leftmost_mate_ending_past_the_junction_is_still_counted():
     read = _make_pe_mate("frag", 1090, mate_reference_start=PE_OUTSIDE_RIGHT_START, template_length=4910)
 
     assert _check_pair(read, **_LONG) == (False, True, 4910)
-
-
-def test_pair_mates_flank_deleted_segment_rejects_a_leftmost_mate_inside():
-    """
-    The leftmost-mate clause is only reachable by calling the predicate directly.
-
-    Bracketing already caps the leftmost mate's start at interval_start + cushion, but the
-    predicate states the physical rule on its own rather than relying on its caller.
-    """
-    read = _make_pe_mate("frag", 2000, mate_reference_start=PE_INSIDE_START, template_length=2050)
-
-    assert _pair_mates_flank_deleted_segment(read, PE_INTERVAL_START, PE_LONG_INTERVAL_END, PE_CUSHION) is False
 
 
 def test_pair_with_both_mates_on_the_same_side_is_rejected():
@@ -1094,21 +987,6 @@ def test_check_pair_cnv_consistency_ignores_unorderable_mates():
     assert _check_pair(read) == (False, False, None)
 
 
-def test_check_pair_cnv_consistency_honours_mapping_quality_floor():
-    """A read below the mapping quality floor contributes no pair evidence."""
-    read = _make_pe_mate("frag", PE_LEFT_START, mapping_quality=10)
-
-    assert _check_pair(read) == (False, False, None)
-
-
-def test_check_pair_cnv_consistency_ignores_mate_mapping_quality_tag():
-    """The floor applies to the alignment at hand; a mate MQ tag, if some tool wrote one, is not read."""
-    read = _make_pe_mate("frag", PE_LEFT_START)
-    read.set_tag("MQ", 5, value_type="i")
-
-    assert _check_pair(read)[1] is True
-
-
 # --- fragment-level counting ----------------------------------------------
 
 
@@ -1116,7 +994,7 @@ def test_both_discordant_mates_count_as_one_fragment(pe_bam_factory):
     """One fragment casts one pair vote, however many of its alignments are discordant."""
     bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
 
-    evidence = _analyze(bam_file, pe_config())
+    evidence = _analyze(bam_file)
 
     assert evidence.total_reads == 1
     assert evidence.deletion_pairs == 1
@@ -1130,39 +1008,13 @@ def test_both_discordant_mates_count_as_one_fragment(pe_bam_factory):
     assert {read_group for _, read_group in evidence.supporting_reads} == {PAIR_READ_GROUP}
 
 
-def test_fragment_with_a_mate_inside_the_deleted_segment_casts_no_vote(pe_bam_factory):
-    """
-    Per-fragment voting cannot rescue a pair whose mate sits inside the deleted segment.
-
-    Both alignments of the fragment are present, and both must reject it, so the fragment reaches
-    the denominator without supporting either class.
-    """
-    left = _make_pe_mate("frag", PE_LEFT_START, mate_reference_start=PE_INSIDE_START, template_length=PE_LONG_SPAN)
-    inside = _make_pe_mate(
-        "frag",
-        PE_INSIDE_START,
-        is_read1=False,
-        is_reverse=True,
-        mate_reference_start=PE_LEFT_START,
-        mate_is_reverse=False,
-        template_length=-PE_LONG_SPAN,
-    )
-    bam_file = pe_bam_factory([left, inside])
-
-    evidence = _analyze(bam_file, pe_config(), end=PE_LONG_INTERVAL_END)
-
-    assert evidence.total_reads == 1
-    assert evidence.deletion_reads == 0
-    assert evidence.duplication_reads == 0
-
-
 def test_conflicting_mates_count_towards_denominator_only(pe_bam_factory):
     """A fragment whose mates disagree is counted in the total but in neither numerator."""
     left = _make_pe_mate("frag", PE_LEFT_START)  # FR from the left mate's view -> DEL
     right = _make_right_mate("frag", is_reverse=False, mate_is_reverse=True)  # everted -> DUP
     bam_file = pe_bam_factory([left, right])
 
-    evidence = _analyze(bam_file, pe_config())
+    evidence = _analyze(bam_file)
 
     assert evidence.total_reads == 1
     assert evidence.deletion_reads == 0
@@ -1188,7 +1040,7 @@ def test_fragment_with_split_and_pair_evidence_counts_in_both(pe_bam_factory):
     )
     bam_file = pe_bam_factory([primary, supplementary, _make_right_mate("frag")])
 
-    evidence = _analyze(bam_file, pe_config())
+    evidence = _analyze(bam_file)
 
     assert evidence.total_reads == 1
     assert evidence.deletion_reads == 1
@@ -1222,7 +1074,7 @@ def test_overlapping_breakpoint_windows_count_an_alignment_once(pe_bam_factory):
     )
     bam_file = pe_bam_factory([primary, supplementary])
 
-    evidence = _analyze(bam_file, pe_config(), start=1000, end=1100)
+    evidence = _analyze(bam_file, start=1000, end=1100)
 
     assert evidence.total_reads == 1
     assert evidence.duplication_reads == 1
@@ -1242,7 +1094,7 @@ def test_read_reaching_into_disjoint_end_window_counts_once(pe_bam_factory):
     )
     bam_file = pe_bam_factory([primary])
 
-    evidence = _analyze(bam_file, pe_config(), start=1000, end=1300)
+    evidence = _analyze(bam_file, start=1000, end=1300)
 
     assert evidence.total_reads == 1
     assert evidence.deletion_reads == 1
@@ -1267,7 +1119,7 @@ def test_non_voting_fragments_do_not_allocate_evidence(pe_bam_factory, monkeypat
     ]
     bam_file = pe_bam_factory([*concordant, _make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
 
-    evidence = _analyze(bam_file, pe_config())
+    evidence = _analyze(bam_file)
 
     assert evidence.total_reads == 51
     assert evidence.deletion_pairs == 1
@@ -1276,12 +1128,12 @@ def test_non_voting_fragments_do_not_allocate_evidence(pe_bam_factory, monkeypat
 
 def test_late_voting_mate_keeps_fragment_order(pe_bam_factory):
     """A fragment that votes only through its later mate keeps its first-seen position."""
-    a_left = _make_pe_mate("a", PE_LEFT_START, mapping_quality=5)
+    a_left = _make_pe_mate("a", PE_LEFT_START, template_length=0)  # not analyzable, so "a" votes only via a_right
     a_right = _make_right_mate("a")
     b_left = _make_pe_mate("b", PE_LEFT_START + 10, mate_reference_start=PE_RIGHT_START + 10)
     bam_file = pe_bam_factory([a_left, b_left, a_right])
 
-    evidence = _analyze(bam_file, pe_config())
+    evidence = _analyze(bam_file)
 
     assert evidence.total_reads == 2
     assert evidence.deletion_pairs == 2
@@ -1309,7 +1161,7 @@ def test_mate2_split_evidence_is_detected(pe_bam_factory):
     )
     bam_file = pe_bam_factory([mate1, mate2])
 
-    pe_evidence = _analyze(bam_file, pe_config())
+    pe_evidence = _analyze(bam_file)
     assert pe_evidence.duplication_reads == 1
     assert pe_evidence.total_reads == 1
 
@@ -1350,7 +1202,7 @@ def test_supplementary_lookup_is_mate_aware(pe_bam_factory):
     )
     bam_file = pe_bam_factory([mate1, mate1_supp, mate2, mate2_supp])
 
-    evidence = _analyze(bam_file, pe_config())
+    evidence = _analyze(bam_file)
 
     assert evidence.total_reads == 1
     assert evidence.deletion_reads == 1
@@ -1362,7 +1214,7 @@ def test_supplementary_lookup_is_mate_aware(pe_bam_factory):
     for key, supplementaries in evidence.supplementary_reads.items():
         assert len(supplementaries) == 1, f"cross-mate leakage for {key}"
 
-    mate1_key = next(key for key in keys if key[1] == 0x40)
+    mate1_key = next(key for key in keys if key[1])
     assert evidence.supplementary_reads[mate1_key][0].reference_start == 2050
 
 
@@ -1376,7 +1228,7 @@ def test_summarize_fragments_keeps_split_and_pair_values_apart():
     pair_dup.pair.add(_make_pe_mate("b", PE_LEFT_START), "DUP", 400)
     pair_del.pair.add(_make_pe_mate("c", PE_LEFT_START), "DEL", 800)
     # None is a non-voting fragment
-    fragments = {("a", "RG"): split_dup, ("b", "RG"): pair_dup, ("c", "RG"): pair_del, ("d", "RG"): None}
+    fragments = {"a": split_dup, "b": pair_dup, "c": pair_del, "d": None}
 
     evidence = _summarize_fragments(fragments, ("chr1", 1000, 2000))
 
@@ -1388,7 +1240,7 @@ def test_summarize_fragments_keeps_split_and_pair_values_apart():
     assert (evidence.dup_pair_spans, evidence.del_pair_spans) == ([400], [800])
 
 
-def _write_evidence_bam(bam_file, fasta_file, config):
+def _write_evidence_bam(bam_file, fasta_file):
     """Run analyze_cnv_breakpoints on the standard DEL interval; return (read group IDs, BAM reads, INFO)."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as vcf_f:
         vcf_path = vcf_f.name
@@ -1412,7 +1264,6 @@ def _write_evidence_bam(bam_file, fasta_file, config):
             cushion=PE_CUSHION,
             output_file=output_vcf_path,
             output_bam=output_bam_path,
-            paired_end_config=config,
         )
         with pysam.AlignmentFile(output_bam_path, "rb") as bam_out:
             rg_ids = {rg["ID"] for rg in bam_out.header.to_dict()["RG"]}
@@ -1430,7 +1281,7 @@ def test_pair_fields_are_written_for_paired_input(pe_bam_factory, dummy_fasta_fi
     """The VCF record carries pair counts, fractions and spans next to the unchanged split-read fields."""
     bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
 
-    _, _, info = _write_evidence_bam(bam_file, dummy_fasta_file, pe_config())
+    _, _, info = _write_evidence_bam(bam_file, dummy_fasta_file)
 
     assert (info["CNV_DEL_PAIRS"], info["CNV_DUP_PAIRS"]) == (1, 0)
     assert (info["CNV_DEL_PAIRS_FRAC"], info["CNV_DUP_PAIRS_FRAC"]) == (1.0, 0.0)
@@ -1446,7 +1297,7 @@ def test_pair_only_support_is_written_under_the_pair_read_group(pe_bam_factory, 
     """
     bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
 
-    rg_ids, reads, _ = _write_evidence_bam(bam_file, dummy_fasta_file, pe_config())
+    rg_ids, reads, _ = _write_evidence_bam(bam_file, dummy_fasta_file)
 
     assert {"DUP", "DEL", PAIR_READ_GROUP} <= rg_ids
     assert sorted(read.reference_start for read in reads) == [PE_LEFT_START, PE_RIGHT_START]
@@ -1487,16 +1338,14 @@ def test_single_end_input_gets_zero_pair_fields(dummy_fasta_file, temp_bam_file,
 
 
 def test_parser_pair_option_defaults():
-    """The pair thresholds default to the module constants."""
+    """The pair span defaults to the module constant."""
     args = get_parser().parse_args(["--bam-file", "in.bam", "--vcf-file", "in.vcf", "--reference-fasta", "ref.fasta"])
 
     assert args.min_pair_span == MIN_PAIR_SPAN
-    assert args.min_pair_mapping_quality == 20
-    assert PairedEndConfig.from_args(args) == PairedEndConfig()
 
 
 def test_parser_pair_options():
-    """The pair threshold flags map onto PairedEndConfig fields."""
+    """--min-pair-span is parsed as an int."""
     args = get_parser().parse_args(
         [
             "--bam-file",
@@ -1507,12 +1356,7 @@ def test_parser_pair_options():
             "ref.fasta",
             "--min-pair-span",
             "900",
-            "--min-pair-mapping-quality",
-            "30",
         ]
     )
 
-    config = PairedEndConfig.from_args(args)
-
-    assert config.min_pair_span == 900
-    assert config.min_pair_mapping_quality == 30
+    assert args.min_pair_span == 900

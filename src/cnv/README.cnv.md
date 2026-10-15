@@ -133,9 +133,8 @@ analyze_cnv_breakpoint_reads \
   --min-pair-span 800
 ```
 
-- An everted (RF) pair is DUP evidence. An FR pair is DEL evidence, but only if both mates start outside the deleted segment.
-- A pair must span at least `--min-pair-span` bases (template length, default 800). Its alignment must have MAPQ of at least `--min-pair-mapping-quality` (default 20).
-- `*_READS_MEDIAN_INSERT_SIZE` (the median event length) uses pair spans only when a class has no split reads.
+- An everted (RF) pair is DUP evidence and an FR pair DEL evidence, if the pair starts in the start window and ends in the end window.
+- A pair must span at least `--min-pair-span` bases (template length, default 800).
 - With `--output-bam`, pair mates get read group `PAIR`, which keeps them out of `refine_cnv_breakpoints`.
 
 ### Somatic CNV Tools (ControlFREEC)
