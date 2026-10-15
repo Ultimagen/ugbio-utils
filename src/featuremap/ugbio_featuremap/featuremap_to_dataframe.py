@@ -148,6 +148,10 @@ DUPLEX_PRIORITY_FP = [
     DUPLEX_GROUP_SINGLETON,
 ]
 DUPLEX_PRIORITY_TP = list(DUPLEX_PRIORITY_FP)
+# Special --duplex-oversample-priority value: instead of the duplex_group tier ladder, fill the budget by
+# per-(CS + variant) ALT-matching read COUNT (descending) so concordant FP (several reads of a molecule carry
+# the same ALT) are enriched. The per-duplex_group min-fraction floor still applies (non-starvation).
+DUPLEX_PRIORITY_CS_ALT_COUNT = "cs_alt_count"
 
 
 def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> None:
@@ -1020,6 +1024,66 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917
         Path(f).unlink(missing_ok=True)
 
 
+def _cs_alt_count_downsample(  # noqa: PLR0913, PLR0917
+    parquet_files: list[str],
+    output_path: str,
+    downsample_reads: int,
+    downsample_seed: int | None,
+    indel_snv_balance_fraction: float | None,  # noqa: ARG001 - count priority dominates; kept for call parity
+    min_group_fraction: float | None = None,
+) -> None:
+    """Downsample to ``downsample_reads`` preferring reads with the highest per-(CS + variant) ALT-match COUNT.
+
+    The ``cs_alt_count`` priority mode (FP concordance oversampling). Each read's ``concordance_count`` is the
+    size of its molecule-and-variant group — CS + ``(CHROM, POS, REF, ALT, X_IC, X_IL, X_INDEL_SEQ)`` — i.e. how
+    many reads of that molecule carry this ALT in the featuremap. Concordant errors (both strands / several
+    reads agree) have higher counts than singleton errors, so filling the budget highest-count-first enriches
+    concordant FP WITHOUT duplicating any row. Keys on CS, never MI (MI is per-strand on this unpaired-PE data).
+
+    ``min_group_fraction`` (0..1, optional) keeps the per-``duplex_group`` non-starvation FLOOR: each present
+    group is guaranteed its own top-count ``min(round(min_group_fraction * budget), count)`` reads before the
+    remaining budget is filled globally by count — so singleton/ssc are not starved by the duplex enrichment.
+    Note: ``indel_snv_balance_fraction`` is intentionally not applied here (count priority takes precedence).
+    """
+    seed = downsample_seed if downsample_seed is not None else 0
+    frame = pl.concat([_add_duplex_group_column(pl.read_parquet(f)) for f in parquet_files], how="vertical")
+    total = frame.height
+    budget = min(downsample_reads, total)
+    mol_keys = [
+        c for c in (COL_CHROM, COL_POS, "REF", "ALT", COL_X_IC, "X_IL", "X_INDEL_SEQ", COL_CS) if c in frame.columns
+    ]
+    conc = pl.len().over(mol_keys) if (COL_CS in frame.columns and mol_keys) else pl.lit(1)
+    frame = frame.with_columns(
+        conc.alias("_cc"),
+        pl.int_range(pl.len()).shuffle(seed=seed).alias("_tie"),  # deterministic random tiebreak within equal counts
+    )
+    helpers = [DUPLEX_GROUP_COL, "_cc", "_tie"]
+    if total <= budget:
+        frame.drop(helpers).write_parquet(output_path)
+        for f in parquet_files:
+            Path(f).unlink(missing_ok=True)
+        return
+    # Per-duplex_group floor: within each group, rank top-count-first and mark the top floor_g rows guaranteed.
+    floor = round(min_group_fraction * budget) if min_group_fraction else 0
+    frame = frame.sort(by=[DUPLEX_GROUP_COL, "_cc", "_tie"], descending=[False, True, True]).with_columns(
+        pl.int_range(pl.len()).over(DUPLEX_GROUP_COL).alias("_grp_idx")
+    )
+    frame = frame.with_columns(
+        (pl.col("_grp_idx") < pl.min_horizontal(pl.lit(floor), pl.len().over(DUPLEX_GROUP_COL))).alias("_is_floor")
+    )
+    # Final keep: floor rows first (guaranteed), then globally by concordance count (desc); keep exactly budget.
+    kept = (
+        frame.sort(by=["_is_floor", "_cc", "_tie"], descending=[True, True, True])
+        .head(budget)
+        .drop([*helpers, "_grp_idx", "_is_floor"])
+        .sample(fraction=1.0, shuffle=True, seed=seed)  # interleave so groups aren't blocked in output order
+    )
+    log.info(f"cs_alt_count downsample: total={total} budget={budget} floor_per_group={floor} realized={kept.height}")
+    kept.write_parquet(output_path)
+    for f in parquet_files:
+        Path(f).unlink(missing_ok=True)
+
+
 def _stratified_downsample_by_variant_type(
     parquet_files: list[str],
     output_path: str,
@@ -1157,15 +1221,26 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
         if COL_CS in schema_names:
             total_rows = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
             if total_rows > downsample_reads:
-                _priority_preserve_downsample(
-                    parquet_files,
-                    output_path,
-                    downsample_reads,
-                    downsample_seed,
-                    duplex_oversample_priority,
-                    indel_snv_balance_fraction,
-                    duplex_group_min_fraction,
-                )
+                # cs_alt_count mode: fill by per-(CS+variant) ALT-match count instead of the duplex_group ladder.
+                if DUPLEX_PRIORITY_CS_ALT_COUNT in duplex_oversample_priority:
+                    _cs_alt_count_downsample(
+                        parquet_files,
+                        output_path,
+                        downsample_reads,
+                        downsample_seed,
+                        indel_snv_balance_fraction,
+                        duplex_group_min_fraction,
+                    )
+                else:
+                    _priority_preserve_downsample(
+                        parquet_files,
+                        output_path,
+                        downsample_reads,
+                        downsample_seed,
+                        duplex_oversample_priority,
+                        indel_snv_balance_fraction,
+                        duplex_group_min_fraction,
+                    )
                 return
 
     # Stratified (indel/SNV-balanced) downsample: opt-in and only when it can change the

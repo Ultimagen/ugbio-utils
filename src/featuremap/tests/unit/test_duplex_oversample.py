@@ -18,6 +18,7 @@ from ugbio_featuremap.featuremap_to_dataframe import (
     DUPLEX_GROUP_DUPLEX_PE_FULL,
     DUPLEX_GROUP_SINGLETON,
     DUPLEX_GROUP_SSC,
+    DUPLEX_PRIORITY_CS_ALT_COUNT,
     DUPLEX_PRIORITY_FP,
     _add_duplex_group_column,
     _balanced_sample,
@@ -193,3 +194,69 @@ def test_merge_gate_noop_when_priority_unset(tmp_path):
     res = pl.read_parquet(out)
     assert res.height == 30
     assert DUPLEX_GROUP_COL not in res.columns
+
+
+def test_cs_alt_count_prefers_high_count_molecules(tmp_path):
+    # One concordant molecule: 10 reads, same CS + pos + ALT, both strands -> concordance_count == 10.
+    # 100 singleton errors: distinct CS, concordance_count == 1 each. Budget 15, no floor.
+    rows = []
+    for k in range(10):
+        rows.append(_row("chr1", 500, "C", "T", "cs_hi", 3 if k % 2 == 0 else 0, 0 if k % 2 == 0 else 3, ds=None))
+    for j in range(100):
+        rows.append(_row("chr2", 1000 + j, "C", "T", f"cs_s{j}", 0, 0, ds=None))  # singleton, count 1
+    for i, r in enumerate(rows):  # unique per-read id so identical consensus rows stay distinct
+        r["RN"] = f"r{i}"
+    files = _write_parts(tmp_path, [rows])
+    out = str(tmp_path / "out.parquet")
+    _merge_parquet_files_lazy(
+        files,
+        out,
+        downsample_reads=15,
+        downsample_seed=1,
+        duplex_oversample_priority=[DUPLEX_PRIORITY_CS_ALT_COUNT],
+    )
+    res = pl.read_parquet(out)
+    assert res.height == 15
+    # the whole high-count molecule is retained (count fill keeps the 10 highest-count reads first)
+    assert res.filter(pl.col("CS") == "cs_hi").height == 10
+    # no row duplication
+    assert res.height == res.unique().height
+
+
+def test_cs_alt_count_floor_keeps_low_count_class(tmp_path):
+    # One concordant molecule with count 20 (duplex); 50 singletons (count 1). Budget 15.
+    rows = [
+        _row("chr1", 500, "C", "T", "cs_hi", 3 if k % 2 == 0 else 0, 0 if k % 2 == 0 else 3, ds=None) for k in range(20)
+    ]
+    rows += [_row("chr2", 1000 + j, "C", "T", f"cs_s{j}", 0, 0, ds=None) for j in range(50)]
+    files = _write_parts(tmp_path, [rows])
+
+    # Without a floor: pure count fill keeps 15 of the count-20 reads; singletons starved to 0.
+    out0 = str(tmp_path / "out0.parquet")
+    _merge_parquet_files_lazy(
+        files.copy(),
+        out0,
+        downsample_reads=15,
+        downsample_seed=1,
+        duplex_oversample_priority=[DUPLEX_PRIORITY_CS_ALT_COUNT],
+    )
+    r0 = _add_duplex_group_column(pl.read_parquet(out0))
+    c0 = dict(r0.group_by(DUPLEX_GROUP_COL).len().iter_rows())
+    assert r0.height == 15
+    assert c0.get(DUPLEX_GROUP_SINGLETON, 0) == 0
+
+    # With a 0.2 floor: the singleton duplex_group is guaranteed >= round(0.2*15)=3 (non-starvation).
+    files2 = _write_parts(tmp_path, [rows])
+    out1 = str(tmp_path / "out1.parquet")
+    _merge_parquet_files_lazy(
+        files2,
+        out1,
+        downsample_reads=15,
+        downsample_seed=1,
+        duplex_oversample_priority=[DUPLEX_PRIORITY_CS_ALT_COUNT],
+        duplex_group_min_fraction=0.2,
+    )
+    r1 = _add_duplex_group_column(pl.read_parquet(out1))
+    c1 = dict(r1.group_by(DUPLEX_GROUP_COL).len().iter_rows())
+    assert r1.height == 15
+    assert c1.get(DUPLEX_GROUP_SINGLETON, 0) >= 3
