@@ -37,6 +37,7 @@ from ugbio_srsnv.split_scheme import resolve_scheme_and_add_columns
 from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport, create_srsnv_report_html
 from ugbio_srsnv.srsnv_utils import (
     ET,
+    PE_DUPLEX_GROUP,
     ST,
 )
 
@@ -329,6 +330,9 @@ def prepare_report(
     data_df[VARIANT_TYPE] = compute_variant_type_column(data_df)
     params["has_hmer_indels"] = bool((data_df[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).any())
     params["has_non_hmer_indels"] = bool((data_df[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL).any())
+    # paired-end-duplex use case: the scheme assigned the pe_duplex_group column (CS-family-derived
+    # SE/PE split). Gates the duplex-PE CS-concordance table/cell.
+    params["has_duplex_pe"] = PE_DUPLEX_GROUP in data_df.columns
 
     # Handle random seed
     rng = np.random.default_rng(random_seed) if random_seed is not None else None
@@ -372,6 +376,7 @@ def prepare_report(
         display_suffix=scheme.display_suffix,
         has_hmer_indels=params["has_hmer_indels"],
         has_non_hmer_indels=params["has_non_hmer_indels"],
+        has_duplex_pe=params["has_duplex_pe"],
     )
 
 

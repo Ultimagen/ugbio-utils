@@ -124,6 +124,8 @@ CS_FAMILY_SIZE = "cs_family_size"  # reads fetched for the CS (present slots), 1
 CS_N_CROSSING = "cs_n_crossing"  # family reads crossing the variant (focus != PAD; GAP counts)
 CS_N_SUPPORTING = "cs_n_supporting"  # crossing reads carrying the ALT at focus
 CS_N_PE_PAIRS = "cs_n_pe_pairs"  # complete (fwd,rev) pairs present, 0..2
+CS_N_CAND = "cs_n_cand"  # consensus candidates in the subject read's PE slot (multi-consensus; 1 if single)
+CS_SEC_SUPPORT = "cs_sec_support"  # support (nf+nr) of the top dropped consensus candidate (0=none)
 # PE-duplex display groups: simplex-SE / simplex-PE / duplex-SE / duplex-PE, driven by DS
 # (mate_present) + cs_n_crossing. Every molecule is displayed (a single-read family, cs_family_size==1,
 # is a valid simplex-SE observation). Ordered by ascending support (simplex/single-strand before

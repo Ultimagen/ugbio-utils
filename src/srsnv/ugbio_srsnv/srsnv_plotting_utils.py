@@ -45,14 +45,18 @@ from ugbio_srsnv.split_scheme import (
 )
 from ugbio_srsnv.srsnv_utils import (
     CS_FAMILY_SIZE,
+    CS_N_CAND,
     CS_N_CROSSING,
     CS_N_PE_PAIRS,
     CS_N_SUPPORTING,
+    CS_SEC_SUPPORT,
     ET,
     ET_FILLNA,
     FS,
     MAX_PHRED,
     PE_DUPLEX_GROUP,
+    PE_DUPLEX_GROUP_PE,
+    PE_DUPLEX_GROUP_SIMPLEX_PE,
     READ_GROUP,
     RS,
     ST,
@@ -331,6 +335,7 @@ def create_srsnv_report_html(
     *,
     has_hmer_indels: bool = False,
     has_non_hmer_indels: bool = False,
+    has_duplex_pe: bool = False,
 ):
     if len(out_basename) > 0 and not out_basename.endswith("."):
         out_basename += "."
@@ -384,6 +389,7 @@ def create_srsnv_report_html(
         "display_suffix": display_suffix,
         "has_hmer_indels": has_hmer_indels,
         "has_non_hmer_indels": has_non_hmer_indels,
+        "has_duplex_pe": has_duplex_pe,
         "hmer_indel_by_class_plot": hmer_indel_by_class_plot,
         "hmer_indel_fq_recall_plot": hmer_indel_fq_recall_plot,
         "hmer_indel_context_plot": hmer_indel_context_plot,
@@ -2096,6 +2102,8 @@ class SRSNVReport:
             ("Median reads crossing / CS", CS_N_CROSSING),
             ("Median reads supporting / CS", CS_N_SUPPORTING),
             ("Median PE pairs / CS", CS_N_PE_PAIRS),
+            ("Median CS candidates", CS_N_CAND),
+            ("Median dropped-cand support", CS_SEC_SUPPORT),
         )
         group_masks = dict(self._group_masks())
         for row_label, col in cs_stat_rows:
@@ -3528,7 +3536,9 @@ class SRSNVReport:
         """Ordered ``{label: boolean mask}`` over the variant-type / indel-class axis.
 
         Always ``snv (baseline)``. When hmer-indel rows are present: ``all indel`` + ``ins`` / ``del``
-        (the existing hmer axis, unchanged so hmer-only reports are byte-identical). When non-hmer-indel
+        (the existing hmer axis, unchanged so hmer-only reports are byte-identical) and, when
+        ``X_HMER_RUN`` is available, additional homopolymer run-length bins ``hmer run 1-3`` / ``4-6`` /
+        ``7-9`` / ``10-12`` / ``13+`` (the 13+ bin is open — not clipped at 12). When non-hmer-indel
         rows are present, additionally: ``non-hmer indel`` + ``non-hmer ins`` / ``non-hmer del``. Masks are
         plain numpy bool arrays aligned to ``self.data_df``. Returns ``None`` when there are no indel rows
         of either class.
@@ -3547,6 +3557,17 @@ class SRSNVReport:
             conditions["all indel"] = is_hmer
             conditions["ins"] = is_hmer & (cls == "ins")
             conditions["del"] = is_hmer & (cls == "del")
+            # Homopolymer run-length bins (X_HMER_RUN = affected reference run length; 13+ is open).
+            if X_HMER_RUN in data.columns:
+                run = pd.to_numeric(data[X_HMER_RUN], errors="coerce").to_numpy()
+                for _lbl, _lo, _hi in (
+                    ("hmer run 1-3", 1, 3),
+                    ("hmer run 4-6", 4, 6),
+                    ("hmer run 7-9", 7, 9),
+                    ("hmer run 10-12", 10, 12),
+                    ("hmer run 13+", 13, 10**9),
+                ):
+                    conditions[_lbl] = is_hmer & (run >= _lo) & (run <= _hi)
         if is_nonhmer.any():
             conditions["non-hmer indel"] = is_nonhmer
             conditions["non-hmer ins"] = is_nonhmer & (cls == "ins")
@@ -3611,6 +3632,67 @@ class SRSNVReport:
                 rows.append(row)
         table = pd.DataFrame(rows)
         table.to_hdf(self.output_h5_filename, key="run_quality_summary_table_hmer_indel", mode="a")
+
+    @exception_handler
+    def calc_pe_concordance_summary_table(self):
+        """Duplex-PE CS-family concordance SNVQ summary (PE reads only).
+
+        For the paired-end-duplex use case, restrict to PE reads (``pe_duplex_group`` in {simplex PE,
+        duplex PE}) and split them by CS-family concordance derived from the per-image CS stats:
+        **concordant** = ``cs_n_crossing == cs_n_supporting`` (every crossing family read carries the ALT),
+        **non-concordant** = ``cs_n_crossing > cs_n_supporting`` (some crossing reads disagree). For each
+        (indel-class, concordance) cell reports BOTH the TP (signal) and FP (noise) sides: n_TP, n_FP,
+        Median SNVQ (TP), Median SNVQ (FP), TP%>=60 (= conditional recall at 60), FP%>=60 (= high-SNVQ
+        leakage), and ROC-AUC(Phred) (TP-vs-FP separation). Self-skips unless the CS / pe-duplex columns
+        are present. Writes the tidy table to the QC h5 under ``run_quality_summary_table_pe_concordance``.
+        """
+        if any(c not in self.data_df.columns for c in (CS_N_CROSSING, CS_N_SUPPORTING, PE_DUPLEX_GROUP)):
+            logger.info("calc_pe_concordance_summary_table: CS / pe-duplex columns missing; skipping")
+            return
+        class_conds = self._hmer_indel_class_conditions()
+        if class_conds is None:
+            logger.info("calc_pe_concordance_summary_table: no indel rows; skipping")
+            return
+        data = self.data_df
+        label = data[LABEL].to_numpy().astype(bool)
+        snvq = pd.to_numeric(data[QUAL], errors="coerce").to_numpy()
+        pct60 = 60  # high-confidence SNVQ threshold (signal recall / noise leakage)
+        pe = data[PE_DUPLEX_GROUP].isin([PE_DUPLEX_GROUP_SIMPLEX_PE, PE_DUPLEX_GROUP_PE]).to_numpy()
+        cross = pd.to_numeric(data[CS_N_CROSSING], errors="coerce").to_numpy()
+        supp = pd.to_numeric(data[CS_N_SUPPORTING], errors="coerce").to_numpy()
+        conc_masks = [
+            ("concordant (n_cross==n_support)", pe & (cross == supp)),
+            ("non-concordant (n_cross>n_support)", pe & (cross > supp)),
+        ]
+        rows = []
+        for cls_name, cls_mask in class_conds.items():
+            for conc_name, conc_mask in conc_masks:
+                mask = cls_mask & conc_mask
+                tp_mask = mask & label
+                fp_mask = mask & ~label
+                n_tp, n_fp = int(tp_mask.sum()), int(fp_mask.sum())
+                row = {
+                    "indel_class": cls_name,
+                    "concordance": conc_name,
+                    "n_TP": n_tp,
+                    "n_FP": n_fp,
+                    "Median SNVQ (TP)": signif(np.nanmedian(snvq[tp_mask]) if n_tp else np.nan, SIG_DIGITS),
+                    "Median SNVQ (FP)": signif(np.nanmedian(snvq[fp_mask]) if n_fp else np.nan, SIG_DIGITS),
+                    "TP%>=60": signif(100 * (tp_mask & (snvq >= pct60)).sum() / n_tp if n_tp else np.nan, SIG_DIGITS),
+                    "FP%>=60": signif(100 * (fp_mask & (snvq >= pct60)).sum() / n_fp if n_fp else np.nan, SIG_DIGITS),
+                }
+                if n_tp > 0 and n_fp > 0:
+                    sub = data[mask]
+                    auc_phred = prob_to_phred(
+                        self._safe_roc_auc(sub[LABEL], sub[ML_PROB_1_TEST], name=f"pe conc {cls_name}/{conc_name}"),
+                        max_value=self.max_qual,
+                    )
+                else:
+                    auc_phred = np.nan
+                row["ROC AUC (Phred)"] = signif(auc_phred, SIG_DIGITS)
+                rows.append(row)
+        table = pd.DataFrame(rows)
+        table.to_hdf(self.output_h5_filename, key="run_quality_summary_table_pe_concordance", mode="a")
 
     @exception_handler
     def plot_hmer_indel_fq_recall(self, output_filename: str = None, *, font_size: int = 20):
@@ -4381,6 +4463,9 @@ class SRSNVReport:
         # SNVQ-based hmer-indel section: cross-product summary table + FQ-vs-recall. Each self-skips
         # SNV-only runs.
         self.calc_hmer_indel_run_info_table()
+        # Duplex-PE CS-family concordance summary (PE reads, concordant vs non-concordant). Self-skips
+        # unless the CS / pe-duplex columns are present.
+        self.calc_pe_concordance_summary_table()
         hmer_indel_fq_recall_plot = os.path.join(
             self.params["workdir"], f"{self.params['data_name']}hmer_indel_fq_recall"
         )

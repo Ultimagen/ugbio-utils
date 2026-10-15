@@ -873,7 +873,18 @@ def test_hmer_indel_snvq_summary_and_plots(consensus_resources, real_models_calc
             assert "/hmer_indel_class_stats" in store.keys()
 
         table = pd.read_hdf(h5_file, key="run_quality_summary_table_hmer_indel")
-        assert set(table["indel_class"]) == {"snv (baseline)", "all indel", "ins", "del"}
+        # base hmer rows + the homopolymer run-length bins (added when X_HMER_RUN is present)
+        assert set(table["indel_class"]) == {
+            "snv (baseline)",
+            "all indel",
+            "ins",
+            "del",
+            "hmer run 1-3",
+            "hmer run 4-6",
+            "hmer run 7-9",
+            "hmer run 10-12",
+            "hmer run 13+",
+        }
         assert "All reads" in set(table["read_type"])
         assert {"single read", "consensus, one strand", "consensus, duplex"} <= set(table["read_type"])
         for col in ["Median SNVQ", "Recall at SNVQ=50", "Recall at SNVQ=60", "Recall at SNVQ=70", "ROC AUC (Phred)"]:
@@ -1171,3 +1182,63 @@ def test_run_info_table_has_cs_family_stats(consensus_resources, real_models_cal
             "Median PE pairs / CS",
         ):
             assert expected in row_labels
+
+
+def _augment_pe_indel_df(base_df):
+    """Add variant_type + indel/CS columns to a base featuremap for the hmer-run / concordance tests.
+
+    All rows are made duplex-PE (DS==2, cs_n_crossing>=3) so they fall in the PE groups; concordance is
+    set per row (cs_n_supporting == cs_n_crossing -> concordant, else non-concordant). variant_type is
+    cycled snv / hmer_indel / non_hmer_indel, hmer rows spread across the X_HMER_RUN bins.
+    """
+    df = base_df.copy()  # noqa: PD901
+    n = len(df)
+    vt_cycle = ["snv", "hmer_indel", "non_hmer_indel"]
+    df["variant_type"] = [vt_cycle[i % 3] for i in range(n)]
+    runs = [2, 5, 8, 11, 15]  # one per run-length bin (1-3,4-6,7-9,10-12,13+)
+    df["X_HMER_RUN"] = [runs[i % len(runs)] for i in range(n)]
+    df["X_IC"] = [("ins" if i % 2 else "del") for i in range(n)]
+    _xic_map = {"hmer_indel": "hmer", "non_hmer_indel": "non_hmer"}
+    df["X_INDEL_CLASS"] = [_xic_map.get(vt, ".") for vt in df["variant_type"]]
+    df["DS"] = 2  # full duplex
+    df["cs_family_size"] = 4
+    df["cs_n_crossing"] = 4  # >=3 -> duplex PE
+    df["cs_n_supporting"] = [4 if i % 2 == 0 else 2 for i in range(n)]  # ==4 concordant, ==2 non-concordant
+    df["cs_n_pe_pairs"] = 2
+    df["cs_n_cand"] = [1 if i % 3 else 2 for i in range(n)]
+    df["cs_sec_support"] = [0 if i % 3 else 3 for i in range(n)]
+    df["label"] = [i % 2 for i in range(n)]  # both TP and FP present in each group
+    return df
+
+
+def test_hmer_indel_class_conditions_has_run_length_bins(consensus_resources, real_models_calc_run_info):
+    """_hmer_indel_class_conditions adds the hmer run-length bins (true-hmer only) when X_HMER_RUN present."""
+    base_df, metadata = consensus_resources
+    pe_df = _augment_pe_indel_df(base_df)
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_pe_duplex_report(pe_df, metadata, temp_output_dir, real_models_calc_run_info)
+        conds = report._hmer_indel_class_conditions()
+        assert conds is not None
+        for k in ("hmer run 1-3", "hmer run 4-6", "hmer run 7-9", "hmer run 10-12", "hmer run 13+"):
+            assert k in conds, f"missing run-length key {k}"
+        # run-length bins are restricted to true hmer rows (X_INDEL_CLASS == 'hmer')
+        is_hmer = (report.data_df["variant_type"] == "hmer_indel").to_numpy()
+        assert bool((conds["hmer run 1-3"] & ~is_hmer).any()) is False
+
+
+def test_calc_pe_concordance_summary_table(consensus_resources, real_models_calc_run_info):
+    """calc_pe_concordance_summary_table writes concordant/non-concordant rows with TP+FP columns."""
+    base_df, metadata = consensus_resources
+    pe_df = _augment_pe_indel_df(base_df)
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_pe_duplex_report(pe_df, metadata, temp_output_dir, real_models_calc_run_info)
+        report.calc_pe_concordance_summary_table()
+        table = pd.read_hdf(report.output_h5_filename, key="run_quality_summary_table_pe_concordance")
+        conc_vals = set(table["concordance"].unique())
+        assert "concordant (n_cross==n_support)" in conc_vals
+        assert "non-concordant (n_cross>n_support)" in conc_vals
+        for col in ("n_TP", "n_FP", "Median SNVQ (TP)", "Median SNVQ (FP)", "TP%>=60", "FP%>=60", "ROC AUC (Phred)"):
+            assert col in table.columns, f"missing column {col}"
+        # non-empty: at least one concordant cell has reads
+        conc = table[table["concordance"] == "concordant (n_cross==n_support)"]
+        assert (conc["n_TP"].to_numpy() + conc["n_FP"].to_numpy()).sum() > 0
