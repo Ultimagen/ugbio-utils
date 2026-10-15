@@ -133,6 +133,12 @@ class TestTransformers:
                 "copynumber": [3],
                 "cnv_source": [("cn.mops",)],
                 "cipos": [(-100, 100)],
+                "cnv_dup_pairs": [0],
+                "cnv_del_pairs": [0],
+                "cnv_dup_pairs_frac": [0],
+                "cnv_del_pairs_frac": [0],
+                "dup_pairs_median_span": [0],
+                "del_pairs_median_span": [0],
             }
         )
         result = transformer.fit_transform(test_df)
@@ -173,6 +179,12 @@ class TestTransformers:
                 "copynumber": [3],
                 "cnv_source": [("cn.mops",)],
                 "cipos": [(-100, 101)],
+                "cnv_dup_pairs": [0],
+                "cnv_del_pairs": [0],
+                "cnv_dup_pairs_frac": [0],
+                "cnv_del_pairs_frac": [0],
+                "dup_pairs_median_span": [0],
+                "del_pairs_median_span": [0],
             }
         )
         result = transformer.fit_transform(test_df)
@@ -213,6 +225,12 @@ class TestTransformers:
                 "copynumber": [3, 4],
                 "cnv_source": [("cn.mops",), ("cn.mops",)],
                 "cipos": [(-100, 100), (-50, 50)],
+                "cnv_dup_pairs": [0, 0],
+                "cnv_del_pairs": [0, 0],
+                "cnv_dup_pairs_frac": [0, 0],
+                "cnv_del_pairs_frac": [0, 0],
+                "dup_pairs_median_span": [0, 0],
+                "del_pairs_median_span": [0, 0],
             }
         )
         # sanity: these columns start as object dtype, as get_vcf_df would produce
@@ -226,3 +244,56 @@ class TestTransformers:
         ]:
             assert col in result.columns
             assert (result[col] == 0).all()
+
+    @staticmethod
+    def _cnv_df():
+        """One-row CNV dataframe with every CNV feature, including the read pair fields."""
+        return pd.DataFrame(
+            {
+                "svtype": ["DEL"],
+                "pytorq0": [0.1],
+                "pytorp2": [0.2],
+                "pytorrd": [0.3],
+                "pytorp1": [0.4],
+                "pytorp3": [0.5],
+                "gap_percentage": [0.01],
+                "cnv_dup_reads": [10],
+                "cnv_del_reads": [5],
+                "cnv_dup_frac": [0.6],
+                "cnv_del_frac": [0.3],
+                "del_reads_median_insert_size": [100.0],
+                "dup_reads_median_insert_size": [200.0],
+                "jalign_dup_support": [8],
+                "jalign_del_support": [4],
+                "jalign_dup_support_strong": [6],
+                "jalign_del_support_strong": [3],
+                "svlen": [(1000,)],
+                "cn": [2],
+                "copynumber": [3],
+                "cnv_source": [("cn.mops",)],
+                "cipos": [(-100, 100)],
+                "cnv_dup_pairs": [0],
+                "cnv_del_pairs": [7],
+                "cnv_dup_pairs_frac": [0.0],
+                "cnv_del_pairs_frac": [0.07],
+                "dup_pairs_median_span": [None],
+                "del_pairs_median_span": [1450.0],
+            }
+        )
+
+    def test_cnv_transformer_uses_pair_fields(self):
+        result = get_transformer(VcfType.CNV).fit_transform(self._cnv_df())
+        assert result["cnv_del_pairs__cnv_del_pairs"].iloc[0] == 7
+        assert result["del_pairs_median_span__del_pairs_median_span"].iloc[0] == 1450.0
+        assert result["dup_pairs_median_span__dup_pairs_median_span"].iloc[0] == 0
+
+    def test_cnv_transformer_requires_pair_fields(self):
+        # VCFs annotated before the pair fields existed are not compatible with the CNV model
+        with pytest.raises(ValueError):
+            get_transformer(VcfType.CNV).fit_transform(self._cnv_df().drop(columns=["cnv_del_pairs"]))
+
+    def test_cnv_transformer_does_not_require_training_only_columns(self):
+        # Training data carries a label column that the VCFs filtered later do not have
+        transformer = get_transformer(VcfType.CNV).fit(self._cnv_df().assign(label=[1]))
+        result = transformer.transform(self._cnv_df())
+        assert len(result) == 1

@@ -330,6 +330,12 @@ def modify_features_based_on_vcf_type(  # noqa C901
             ("copynumber", copy_number_encode_filter, ["cn", "copynumber"]),
             ("cnv_source", cnv_source_encode_filter, ["cnv_source"]),
             ("cipos", cilen_transformer, "cipos"),
+            ("cnv_dup_pairs", numeric_filler, ["cnv_dup_pairs"]),
+            ("cnv_del_pairs", numeric_filler, ["cnv_del_pairs"]),
+            ("cnv_dup_pairs_frac", numeric_filler, ["cnv_dup_pairs_frac"]),
+            ("cnv_del_pairs_frac", numeric_filler, ["cnv_del_pairs_frac"]),
+            ("dup_pairs_median_span", numeric_filler, ["dup_pairs_median_span"]),
+            ("del_pairs_median_span", numeric_filler, ["del_pairs_median_span"]),
         ]
         features = [[x[2]] if isinstance(x[2], str) else x[2] for x in transform_list]
         features = sum(features, [])
