@@ -8,6 +8,7 @@ import pysam
 import pytest
 from ugbio_cnv import analyze_cnv_breakpoint_reads
 from ugbio_cnv.analyze_cnv_breakpoint_reads import (
+    MIN_PAIR_MAPPING_QUALITY,
     MIN_PAIR_SPAN,
     PAIR_READ_GROUP,
     _collect_fragments_from_region,
@@ -348,7 +349,7 @@ def test_collect_fragments_from_region_uses_independent_fetch_iterators(monkeypa
 
     monkeypatch.setattr(
         "ugbio_cnv.analyze_cnv_breakpoint_reads._get_fragment_votes",
-        lambda read, interval, min_pair_span: [],  # noqa: ARG005
+        lambda read, interval, min_pair_span, min_pair_mapping_quality: [],  # noqa: ARG005
     )
 
     evidence = _collect_fragments_from_region(
@@ -359,6 +360,7 @@ def test_collect_fragments_from_region_uses_independent_fetch_iterators(monkeypa
         100,
         (900, 1100, 1900, 2100),
         MIN_PAIR_SPAN,
+        MIN_PAIR_MAPPING_QUALITY,
     )
 
     # Both breakpoint windows were read: each read is one (non-voting) fragment
@@ -987,6 +989,21 @@ def test_check_pair_cnv_consistency_ignores_unorderable_mates():
     assert _check_pair(read) == (False, False, None)
 
 
+def test_check_pair_cnv_consistency_honours_mapping_quality_floor():
+    """A read below the mapping quality floor contributes no pair evidence."""
+    read = _make_pe_mate("frag", PE_LEFT_START, mapping_quality=10)
+
+    assert _check_pair(read) == (False, False, None)
+
+
+def test_check_pair_cnv_consistency_ignores_mate_mapping_quality_tag():
+    """The floor applies to the alignment at hand; a mate MQ tag, if some tool wrote one, is not read."""
+    read = _make_pe_mate("frag", PE_LEFT_START)
+    read.set_tag("MQ", 5, value_type="i")
+
+    assert _check_pair(read)[1] is True
+
+
 # --- fragment-level counting ----------------------------------------------
 
 
@@ -1338,14 +1355,15 @@ def test_single_end_input_gets_zero_pair_fields(dummy_fasta_file, temp_bam_file,
 
 
 def test_parser_pair_option_defaults():
-    """The pair span defaults to the module constant."""
+    """The pair thresholds default to the module constants."""
     args = get_parser().parse_args(["--bam-file", "in.bam", "--vcf-file", "in.vcf", "--reference-fasta", "ref.fasta"])
 
     assert args.min_pair_span == MIN_PAIR_SPAN
+    assert args.min_pair_mapping_quality == MIN_PAIR_MAPPING_QUALITY
 
 
 def test_parser_pair_options():
-    """--min-pair-span is parsed as an int."""
+    """The pair threshold flags are parsed as ints."""
     args = get_parser().parse_args(
         [
             "--bam-file",
@@ -1356,7 +1374,10 @@ def test_parser_pair_options():
             "ref.fasta",
             "--min-pair-span",
             "900",
+            "--min-pair-mapping-quality",
+            "30",
         ]
     )
 
     assert args.min_pair_span == 900
+    assert args.min_pair_mapping_quality == 30

@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pysam
 import pytest
 from ugbio_cnv import combine_cnmops_cnvpytor_cnv_calls
-from ugbio_cnv.analyze_cnv_breakpoint_reads import MIN_PAIR_SPAN
+from ugbio_cnv.analyze_cnv_breakpoint_reads import MIN_PAIR_MAPPING_QUALITY, MIN_PAIR_SPAN
 
 
 @pytest.fixture
@@ -648,11 +648,12 @@ def test_main_analyze_breakpoints_calls_analyze_cnv_breakpoints():
                 reference_fasta=test_reference_fasta,
                 output_bam=None,
                 min_pair_span=MIN_PAIR_SPAN,
+                min_pair_mapping_quality=MIN_PAIR_MAPPING_QUALITY,
             )
 
 
-def test_main_analyze_breakpoints_passes_min_pair_span():
-    """Test that --min-pair-span reaches analyze_cnv_breakpoints."""
+def test_main_analyze_breakpoints_passes_pair_options():
+    """Test that the pair threshold flags reach analyze_cnv_breakpoints."""
     test_argv = [
         "analyze_breakpoint_reads",
         "--bam-file",
@@ -663,6 +664,8 @@ def test_main_analyze_breakpoints_passes_min_pair_span():
         "/path/to/ref.fa",
         "--min-pair-span",
         "900",
+        "--min-pair-mapping-quality",
+        "30",
     ]
 
     with patch.object(sys, "argv", test_argv):
@@ -670,3 +673,4 @@ def test_main_analyze_breakpoints_passes_min_pair_span():
             combine_cnmops_cnvpytor_cnv_calls.main_analyze_breakpoints()
 
             assert mock_analyze.call_args.kwargs["min_pair_span"] == 900
+            assert mock_analyze.call_args.kwargs["min_pair_mapping_quality"] == 30

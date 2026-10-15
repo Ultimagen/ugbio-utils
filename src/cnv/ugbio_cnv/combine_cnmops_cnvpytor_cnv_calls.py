@@ -571,6 +571,7 @@ def run(argv: list[str]):
             reference_fasta=args.reference_fasta,
             output_bam=args.output_bam,
             min_pair_span=args.min_pair_span,
+            min_pair_mapping_quality=args.min_pair_mapping_quality,
         )
     elif args.tool == "merge_cnv_sv":
         merge_cnv_sv_vcfs(
