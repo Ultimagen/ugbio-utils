@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_utils"
-version = "1.32.0-0"
+version = "1.32.0"
 description = "Ultima Genomics bioinfo utils"
 authors = [
     { name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" },
@@ -43,13 +43,11 @@ default-groups = [
     "dev",
 ]
 
-# pywfa and pyabpoa (truvari dependencies) have no Linux wheels and compile with -march=native, which ties
-# the build to the host CPU (e.g. "Illegal instruction" on hosts without AVX-512). Pin both to AVX2.
-# pywfa: MAKEFLAGS overrides WFA2's CC_FLAGS, which hardcodes -march=native. pyabpoa: AVX2=1 selects -mavx2.
-# Requires uv >= 0.8.6. Keep in sync with src/cnv/Dockerfile.
-[tool.uv.extra-build-variables]
-pywfa = { MAKEFLAGS = 'CC_FLAGS=-Wall\ -g\ -fPIC\ -O3\ -march=x86-64-v3' }
-pyabpoa = { AVX2 = "1" }
+[tool.uv.extra-build-variables.pywfa]
+MAKEFLAGS = "CC_FLAGS=-Wall\\ -g\\ -fPIC\\ -O3\\ -march=x86-64-v3"
+
+[tool.uv.extra-build-variables.pyabpoa]
+AVX2 = "1"
 
 [tool.uv.workspace]
 members = [
