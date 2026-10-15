@@ -18,6 +18,7 @@ import pysam
 import pytest
 from ugbio_cnv.jalign import (
     JAlignConfig,
+    _fetch_reads_at_breakpoints,
     create_bam_record_from_alignment,
     create_bam_records_from_json,
     create_bam_records_from_jump_alignment,
@@ -394,6 +395,39 @@ class TestJSONParsing:
             json_file.unlink()
 
 
+class TestFetchReadsAtBreakpoints:
+    """Test breakpoint windows, including CNVs that run past the contig end."""
+
+    CONTIG_LEN = 57_227_415  # hg38 chrY
+
+    @pytest.fixture
+    def empty_reads_file(self):
+        reads_file = MagicMock(spec=pysam.AlignmentFile)
+        reads_file.fetch = MagicMock(side_effect=lambda *_args: iter([]))
+        reads_file.get_reference_length = MagicMock(return_value=self.CONTIG_LEN)
+        return reads_file
+
+    def test_in_bounds_extents_unchanged(self, empty_reads_file, default_config):
+        _, refs_extents = _fetch_reads_at_breakpoints("chrY", 10_000_000, 10_050_000, empty_reads_file, default_config)
+        assert refs_extents == [[9_999_500, 10_000_500], [10_049_500, 10_050_500]]
+
+    def test_start_past_contig_is_skipped(self, empty_reads_file, default_config):
+        reads, refs_extents = _fetch_reads_at_breakpoints(
+            "chrY", self.CONTIG_LEN + 100, self.CONTIG_LEN + 2_000, empty_reads_file, default_config
+        )
+        assert reads == {}
+        assert refs_extents == []
+        empty_reads_file.fetch.assert_not_called()
+
+    def test_end_past_contig_is_clamped(self, empty_reads_file, default_config):
+        # chrY:56887500-57230000 overruns chrY by 2,585 bp, more than
+        # fetch_read_padding, so an unclamped second window lies entirely off the contig
+        _, refs_extents = _fetch_reads_at_breakpoints("chrY", 56_887_500, 57_230_000, empty_reads_file, default_config)
+        for rmin, rmax in refs_extents:
+            assert 0 <= rmin < rmax <= self.CONTIG_LEN
+        assert refs_extents[1] == [self.CONTIG_LEN - default_config.fetch_read_padding, self.CONTIG_LEN]
+
+
 class TestProcessCNV:
     """Test main CNV processing function with mocked alignment tool."""
 
@@ -446,6 +480,7 @@ class TestProcessCNV:
             # Create a mock that returns these reads
             mock_reads_file = MagicMock(spec=pysam.AlignmentFile)
             mock_reads_file.fetch = MagicMock(return_value=iter(all_reads[:10]))
+            mock_reads_file.get_reference_length = MagicMock(return_value=248_956_422)
             mock_reads_file.header = reads_file.header
 
             # Mock the alignment tool
@@ -484,6 +519,39 @@ class TestProcessCNV:
                 # Verify header
                 assert header is not None
                 assert isinstance(header, pysam.AlignmentHeader)
+                assert list(tmp_path.iterdir()) == []
+
+    def test_input_file_removed_when_write_fails(self, jalign_test_bam, tmp_path, default_config):
+        """A failure while writing the alignment input must not leave the file behind."""
+        mock_fasta = MagicMock(spec=pyfaidx.Fasta)
+        mock_fasta.__getitem__ = MagicMock(return_value=MagicMock(seq="ACGT" * 500))
+
+        with pysam.AlignmentFile(jalign_test_bam, "rb", check_sq=False) as reads_file:
+            all_reads = list(reads_file.fetch(until_eof=True))
+            if len(all_reads) == 0:
+                pytest.skip("No reads in test BAM file")
+            mock_reads_file = MagicMock(spec=pysam.AlignmentFile)
+            mock_reads_file.fetch = MagicMock(side_effect=lambda *_args, **_kwargs: iter(all_reads[:10]))
+            mock_reads_file.get_reference_length = MagicMock(return_value=248_956_422)
+            mock_reads_file.header = reads_file.header
+
+            log_file = MagicMock()
+            # First write is the CNV header line, the second is the first read of the input file
+            log_file.write = MagicMock(side_effect=[None, OSError("disk full")])
+            with pytest.raises(OSError, match="disk full"):
+                process_cnv(
+                    chrom="chr1",
+                    start=219455000,
+                    end=219456000,
+                    reads_file=mock_reads_file,
+                    fasta_file=mock_fasta,
+                    config=default_config,
+                    temp_dir=tmp_path,
+                    log_file=log_file,
+                    header=None,
+                )
+
+        assert list(tmp_path.iterdir()) == []
 
 
 class TestIntegration:

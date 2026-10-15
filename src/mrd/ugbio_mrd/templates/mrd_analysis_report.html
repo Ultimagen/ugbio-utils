@@ -213,6 +213,13 @@
     border: 1px solid #f1c40f;
     border-radius: 4px;
   }
+
+  .note.critical {
+    color: #7b241c;
+    font-weight: 600;
+    background: #fdedec;
+    border: 1px solid #c0392b;
+  }
 </style>
 </head>
 <body>
@@ -263,8 +270,11 @@
             <span class="stat-value">{{ "{:,}".format(detection.matched_supporting_reads) }}</span>
           </div>
         </div>
+      </div>      {% if detection.warning %}
+      <div class="note critical">
+        &#128721; {{ detection.warning }}
       </div>
-      {% if detection.jeffreys_prior_applied %}
+      {% endif %}      {% if detection.jeffreys_prior_applied %}
       <div class="note">
         &#8505; No background reads observed in synthetic controls — noise rate estimated via Jeffreys prior (p_err = {{ noise_rate_str }}).
       </div>

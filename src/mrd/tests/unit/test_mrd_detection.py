@@ -1,5 +1,8 @@
 """Unit tests for ugbio_mrd.mrd_detection module."""
 
+from types import SimpleNamespace
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -8,6 +11,7 @@ from ugbio_mrd.mrd_detection import (
     DetectionResult,
     compute_sample_specific_lod,
     format_scientific,
+    plot_cohort_scatter,
     run_detection_analysis,
 )
 
@@ -326,6 +330,44 @@ class TestComputePersonalLod:
         )
         assert result.call == "Indeterminate", f"Expected Indeterminate when db_control coverage=0, got {result.call}"
 
+    def test_snvq_zero_fraction_forces_indeterminate(self, mock_df_tf_not_detected, mock_df_signatures_filt):
+        """All matched reads with SNVQ=0 must force Indeterminate + warning.
+
+        Regression for misleading 'MRD Not Detected' calls caused by an SRSNV scoring
+        failure (reads never receiving a valid SNVQ) rather than a genuine absence of
+        ctDNA signal.
+        """
+        result = run_detection_analysis(
+            df_tf=mock_df_tf_not_detected,
+            df_signatures_filt=mock_df_signatures_filt,
+            matched_snvq_zero_fraction=1.0,
+        )
+        assert result.detected is None
+        assert result.call == "Indeterminate"
+        assert result.warning is not None
+        assert "SNVQ = 0" in result.warning
+
+    def test_snvq_zero_fraction_below_threshold_does_not_override(
+        self, mock_df_tf_not_detected, mock_df_signatures_filt
+    ):
+        """Anything less than literally all reads (e.g. 99%) must not override the call."""
+        result = run_detection_analysis(
+            df_tf=mock_df_tf_not_detected,
+            df_signatures_filt=mock_df_signatures_filt,
+            matched_snvq_zero_fraction=0.99,
+        )
+        assert result.call == "MRD Not Detected"
+        assert result.warning is None
+
+    def test_snvq_zero_fraction_none_does_not_override(self, mock_df_tf_detected, mock_df_signatures_filt):
+        """Default (no fraction supplied) must not alter a clean detected call."""
+        result = run_detection_analysis(
+            df_tf=mock_df_tf_detected,
+            df_signatures_filt=mock_df_signatures_filt,
+        )
+        assert result.call == "MRD Detected"
+        assert result.warning is None
+
 
 class TestMultiReadSupportQcCheck:
     """Tests for the per-locus outlier detection QC checks (matched + controls)."""
@@ -614,6 +656,25 @@ class TestFormatScientific:
     def test_power_of_ten(self):
         result = format_scientific(1e-6)
         assert "10" in result
+
+
+class TestPlotCohortScatter:
+    def test_x_axis_in_k_events(self):
+        detection = SimpleNamespace(matched_ctdna_vaf=1e-5, signature_size=2500, matched_supporting_reads=3)
+        idx = pd.MultiIndex.from_tuples([("control", "c0"), ("control", "c1")], names=["signature_type", "signature"])
+        df_tf = pd.DataFrame({"ctdna_vaf": [1e-6, 2e-6], "supporting_reads": [1, 2]}, index=idx)
+        ctrl_n_loci = pd.Series({"c0": 1000, "c1": 4500})
+
+        _, ax = plt.subplots()
+        plot_cohort_scatter(detection, df_tf, ctrl_n_loci, ax=ax)
+        fig = ax.figure
+        fig.canvas.draw()
+
+        assert ax.get_xlabel() == "Signature size (k events)"
+        labels = [t.get_text() for t in ax.get_xticklabels() if t.get_text()]
+        assert labels
+        assert all(float(label) < 100 for label in labels)  # raw loci counts would be >= 1000
+        plt.close(fig)
 
 
 class TestDetectionBoundaryStrict:
