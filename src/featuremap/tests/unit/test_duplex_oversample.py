@@ -251,6 +251,35 @@ def test_tier_ladder_with_within_group_count_priority(tmp_path):
     assert "_cc" not in res.columns and "_tie" not in res.columns  # helper cols dropped
 
 
+def test_within_group_count_priority_preserves_indel_snv_balance(tmp_path):
+    # Count priority must still honor indel_snv_balance_fraction: the top-count pick is applied WITHIN each
+    # indel/SNV stratum. One ssc tier: snv has a count-10 molecule + 40 singletons; indel (ins) has a count-10
+    # molecule + 40 singletons. Budget 20, balance 0.5 -> 10 indel + 10 snv, and each side keeps its count-10
+    # molecule whole (concordant-first within type).
+    rows = [_row("chr1", 500, "C", "T", "snv_hi", 3, 0, ds=None) for _ in range(10)]
+    rows += [_row("chr1", 1000 + j, "C", "T", f"snv_lo{j}", 3, 0, ds=None) for j in range(40)]
+    rows += [_row("chr1", 600, "C", "CA", "ind_hi", 3, 0, ds=None, x_ic="ins") for _ in range(10)]
+    rows += [_row("chr1", 2000 + j, "C", "CA", f"ind_lo{j}", 3, 0, ds=None, x_ic="ins") for j in range(40)]
+    for i, r in enumerate(rows):
+        r["RN"] = f"r{i}"
+    files = _write_parts(tmp_path, [rows])
+    out = str(tmp_path / "out.parquet")
+    _merge_parquet_files_lazy(
+        files,
+        out,
+        downsample_reads=20,
+        downsample_seed=1,
+        indel_snv_balance_fraction=0.5,
+        duplex_oversample_priority=[DUPLEX_GROUP_SSC, DUPLEX_PRIORITY_CS_ALT_COUNT],
+    )
+    res = pl.read_parquet(out)
+    assert res.height == 20
+    indel = res.filter(pl.col("X_IC").is_in(["ins", "del"])).height
+    assert indel == 10  # balance 0.5 honored
+    assert res.filter(pl.col("CS") == "snv_hi").height == 10  # high-count kept within SNV stratum
+    assert res.filter(pl.col("CS") == "ind_hi").height == 10  # high-count kept within indel stratum
+
+
 def test_within_group_count_priority_keeps_tier_order_and_floor(tmp_path):
     # Count priority must not flood the duplex tiers: the tier ladder + floor still govern the mix. Budget 20,
     # floor 0.1 -> ssc floor = 2. duplex_pe_full (10) kept whole, duplex (10) kept whole, ssc is the boundary.

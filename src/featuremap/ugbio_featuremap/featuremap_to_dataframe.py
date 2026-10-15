@@ -897,12 +897,32 @@ def _add_duplex_group_column(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.drop("_is_fwd", "_is_rev", "_is_consensus", "_ds_full")
 
 
-def _balanced_sample(frame: pl.DataFrame, n: int, indel_snv_balance_fraction: float | None, seed: int) -> pl.DataFrame:
-    """Sample ``n`` rows from ``frame``; if a balance fraction is given, keep ~that fraction of indel rows."""
+def _balanced_sample(
+    frame: pl.DataFrame,
+    n: int,
+    indel_snv_balance_fraction: float | None,
+    seed: int,
+    *,
+    count_col: str | None = None,
+) -> pl.DataFrame:
+    """Pick ``n`` rows from ``frame``; if a balance fraction is given, keep ~that fraction of indel rows.
+
+    ``count_col`` (optional): when set, pick the highest-``count_col`` rows within each stratum (ties broken by
+    the ``_tie`` column) instead of a uniform random sample. This is the concordance-oversampling selector —
+    it preserves the indel/SNV balance while preferring high per-(CS + variant) ALT-match-count reads.
+    """
     if frame.height <= n:
         return frame
+
+    def _take(sub: pl.DataFrame, k: int) -> pl.DataFrame:
+        if sub.height <= k:
+            return sub
+        if count_col is not None:
+            return sub.sort(by=[count_col, "_tie"], descending=[True, True]).head(k)
+        return sub.sample(n=k, seed=seed)
+
     if indel_snv_balance_fraction is None:
-        return frame.sample(n=n, seed=seed)
+        return _take(frame, n)
     pred = (
         pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False)
         if COL_X_IC in frame.columns
@@ -915,9 +935,9 @@ def _balanced_sample(frame: pl.DataFrame, n: int, indel_snv_balance_fraction: fl
     want_indel = min(indel_df.height, n - want_snv)  # refill if SNV-scarce
     parts = []
     if want_indel > 0:
-        parts.append(indel_df.sample(n=want_indel, seed=seed) if indel_df.height > want_indel else indel_df)
+        parts.append(_take(indel_df, want_indel))
     if want_snv > 0:
-        parts.append(snv_df.sample(n=want_snv, seed=seed) if snv_df.height > want_snv else snv_df)
+        parts.append(_take(snv_df, want_snv))
     return pl.concat(parts, how="vertical") if parts else frame.head(0)
 
 
@@ -950,8 +970,9 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
     but whenever a group has to be subsampled (a floored/boundary tier), keep its highest per-(CS + variant)
     ALT-match COUNT reads first instead of a uniform random sample. Fully-kept tiers are unaffected (every row
     stays). This enriches concordant FP WITHIN each tier without changing the tier mix (so it does not flood the
-    duplex tiers the way the bare ``cs_alt_count`` mode does); ``indel_snv_balance_fraction`` is not applied in
-    this mode (count order takes precedence, as in the bare count mode).
+    duplex tiers the way the bare ``cs_alt_count`` mode does). ``indel_snv_balance_fraction`` is still honored:
+    the top-count selection is applied WITHIN each indel/SNV stratum, so the balance target is preserved while
+    concordant reads are preferred within each type.
     """
     seed = downsample_seed if downsample_seed is not None else 0
 
@@ -1021,9 +1042,22 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
                 frac = min(1.0, keep_n[g] / counts[g] * 1.05 + 1000.0 / counts[g])
                 if within_group_count_priority:
                     # Keep this part's highest-count candidates (bounded); the global exact-trim below picks
-                    # the true top-count rows across parts.
+                    # the true top-count rows across parts. When balancing, presample top-count per indel/SNV
+                    # stratum so neither type is starved before the balanced trim.
                     presample_n = min(b.height, int(frac * b.height) + 1)
-                    kept.append(b.sort(by=["_cc", "_tie"], descending=[True, True]).head(presample_n))
+                    if indel_snv_balance_fraction is not None and COL_X_IC in b.columns:
+                        pred = pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False)
+                        kept.append(
+                            pl.concat(
+                                [
+                                    b.filter(pred).sort(by=["_cc", "_tie"], descending=[True, True]).head(presample_n),
+                                    b.filter(~pred).sort(by=["_cc", "_tie"], descending=[True, True]).head(presample_n),
+                                ],
+                                how="vertical",
+                            )
+                        )
+                    else:
+                        kept.append(b.sort(by=["_cc", "_tie"], descending=[True, True]).head(presample_n))
                 else:
                     kept.append(b.sample(fraction=frac, seed=seed + i))
 
@@ -1038,7 +1072,7 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
         gdf = merged.filter(pl.col(DUPLEX_GROUP_COL) == g)
         rest_df = merged.filter(pl.col(DUPLEX_GROUP_COL) != g)
         if within_group_count_priority:
-            gdf = gdf.sort(by=["_cc", "_tie"], descending=[True, True]).head(keep_n[g])
+            gdf = _balanced_sample(gdf, keep_n[g], indel_snv_balance_fraction, seed, count_col="_cc")
         else:
             gdf = _balanced_sample(gdf, keep_n[g], indel_snv_balance_fraction, seed)
         merged = pl.concat([rest_df, gdf], how="vertical")
