@@ -217,13 +217,6 @@ def modify_features_based_on_vcf_type(  # noqa C901
     def cipos_encode_df(df):
         return pd.DataFrame(df.apply(lambda x: x[1] - x[0] - 1), index=df.index)
 
-    def optional_numeric_df(df, columns):
-        # Columns absent from the input (e.g. paired-end-only fields on single-end data) are filled with 0
-        return pd.DataFrame(
-            {c: pd.to_numeric(df[c], errors="coerce") if c in df.columns else np.nan for c in columns},
-            index=df.index,
-        ).fillna(0)
-
     default_filler = impute.SimpleImputer(strategy="constant", fill_value=0)
     numeric_filler = make_pipeline(
         preprocessing.FunctionTransformer(coerce_to_numeric_df),
@@ -337,27 +330,15 @@ def modify_features_based_on_vcf_type(  # noqa C901
             ("copynumber", copy_number_encode_filter, ["cn", "copynumber"]),
             ("cnv_source", cnv_source_encode_filter, ["cnv_source"]),
             ("cipos", cilen_transformer, "cipos"),
+            ("cnv_dup_pairs", numeric_filler, ["cnv_dup_pairs"]),
+            ("cnv_del_pairs", numeric_filler, ["cnv_del_pairs"]),
+            ("cnv_dup_pairs_frac", numeric_filler, ["cnv_dup_pairs_frac"]),
+            ("cnv_del_pairs_frac", numeric_filler, ["cnv_del_pairs_frac"]),
+            ("dup_pairs_median_span", numeric_filler, ["dup_pairs_median_span"]),
+            ("del_pairs_median_span", numeric_filler, ["del_pairs_median_span"]),
         ]
         features = [[x[2]] if isinstance(x[2], str) else x[2] for x in transform_list]
-        # Discordant read pair evidence, written only for paired-end input
-        pair_fields = [
-            "cnv_dup_pairs",
-            "cnv_del_pairs",
-            "cnv_dup_pairs_frac",
-            "cnv_del_pairs_frac",
-            "dup_pairs_median_span",
-            "del_pairs_median_span",
-        ]
-        features = sum(features, []) + pair_fields
-        transform_list.append(
-            (
-                "pair_evidence",
-                preprocessing.FunctionTransformer(optional_numeric_df, kw_args={"columns": pair_fields}),
-                # svtype is always present; the pair fields only when the data has them. Selecting every
-                # column would make the fitted model require training-only columns such as label.
-                lambda df: ["svtype"] + [c for c in pair_fields if c in df.columns],
-            )
-        )
+        features = sum(features, [])
 
     else:
         raise ValueError("Unrecognized VCF type")

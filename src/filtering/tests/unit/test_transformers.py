@@ -133,6 +133,12 @@ class TestTransformers:
                 "copynumber": [3],
                 "cnv_source": [("cn.mops",)],
                 "cipos": [(-100, 100)],
+                "cnv_dup_pairs": [0],
+                "cnv_del_pairs": [0],
+                "cnv_dup_pairs_frac": [0],
+                "cnv_del_pairs_frac": [0],
+                "dup_pairs_median_span": [0],
+                "del_pairs_median_span": [0],
             }
         )
         result = transformer.fit_transform(test_df)
@@ -173,6 +179,12 @@ class TestTransformers:
                 "copynumber": [3],
                 "cnv_source": [("cn.mops",)],
                 "cipos": [(-100, 101)],
+                "cnv_dup_pairs": [0],
+                "cnv_del_pairs": [0],
+                "cnv_dup_pairs_frac": [0],
+                "cnv_del_pairs_frac": [0],
+                "dup_pairs_median_span": [0],
+                "del_pairs_median_span": [0],
             }
         )
         result = transformer.fit_transform(test_df)
@@ -213,6 +225,12 @@ class TestTransformers:
                 "copynumber": [3, 4],
                 "cnv_source": [("cn.mops",), ("cn.mops",)],
                 "cipos": [(-100, 100), (-50, 50)],
+                "cnv_dup_pairs": [0, 0],
+                "cnv_del_pairs": [0, 0],
+                "cnv_dup_pairs_frac": [0, 0],
+                "cnv_del_pairs_frac": [0, 0],
+                "dup_pairs_median_span": [0, 0],
+                "del_pairs_median_span": [0, 0],
             }
         )
         # sanity: these columns start as object dtype, as get_vcf_df would produce
@@ -229,7 +247,7 @@ class TestTransformers:
 
     @staticmethod
     def _cnv_df():
-        """One-row CNV dataframe with every single-end feature, and none of the paired-end ones."""
+        """One-row CNV dataframe with every CNV feature, including the read pair fields."""
         return pd.DataFrame(
             {
                 "svtype": ["DEL"],
@@ -254,29 +272,25 @@ class TestTransformers:
                 "copynumber": [3],
                 "cnv_source": [("cn.mops",)],
                 "cipos": [(-100, 100)],
+                "cnv_dup_pairs": [0],
+                "cnv_del_pairs": [7],
+                "cnv_dup_pairs_frac": [0.0],
+                "cnv_del_pairs_frac": [0.07],
+                "dup_pairs_median_span": [None],
+                "del_pairs_median_span": [1450.0],
             }
         )
 
     def test_cnv_transformer_uses_pair_fields(self):
-        test_df = self._cnv_df().assign(
-            cnv_dup_pairs=[0],
-            cnv_del_pairs=[7],
-            cnv_dup_pairs_frac=[0.0],
-            cnv_del_pairs_frac=[0.07],
-            dup_pairs_median_span=[None],
-            del_pairs_median_span=[1450.0],
-        )
-        result = get_transformer(VcfType.CNV).fit_transform(test_df)
-        assert result["pair_evidence__cnv_del_pairs"].iloc[0] == 7
-        assert result["pair_evidence__del_pairs_median_span"].iloc[0] == 1450.0
-        assert result["pair_evidence__dup_pairs_median_span"].iloc[0] == 0
-
-    def test_cnv_transformer_fills_absent_pair_fields(self):
-        # Single-end data and training sets built before the pair fields existed have no pair columns
         result = get_transformer(VcfType.CNV).fit_transform(self._cnv_df())
-        pair_columns = [c for c in result.columns if c.startswith("pair_evidence__")]
-        assert len(pair_columns) == 6
-        assert (result[pair_columns] == 0).all().all()
+        assert result["cnv_del_pairs__cnv_del_pairs"].iloc[0] == 7
+        assert result["del_pairs_median_span__del_pairs_median_span"].iloc[0] == 1450.0
+        assert result["dup_pairs_median_span__dup_pairs_median_span"].iloc[0] == 0
+
+    def test_cnv_transformer_requires_pair_fields(self):
+        # VCFs annotated before the pair fields existed are not compatible with the CNV model
+        with pytest.raises(ValueError):
+            get_transformer(VcfType.CNV).fit_transform(self._cnv_df().drop(columns=["cnv_del_pairs"]))
 
     def test_cnv_transformer_does_not_require_training_only_columns(self):
         # Training data carries a label column that the VCFs filtered later do not have
