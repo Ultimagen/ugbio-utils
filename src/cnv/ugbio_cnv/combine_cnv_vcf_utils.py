@@ -23,7 +23,6 @@ CNV_AGGREGATION_ACTIONS = {
         "CNMOPS_SAMPLE_STDEV",
         "CNMOPS_COHORT_MEAN",
         "CNMOPS_COHORT_STDEV",
-        "CopyNumber",
     ],
     "max": [
         "GAP_PERCENTAGE",
@@ -35,7 +34,13 @@ CNV_AGGREGATION_ACTIONS = {
     ],
     "aggregate": ["CNV_SOURCE"],
     "minlength": ["CIPOS"],
-    "weighted_majority": ["SVTYPE"],
+    # SVTYPE must come first: copy number is voted only among records matching the winning SVTYPE
+    "weighted_majority": ["SVTYPE", "CopyNumber"],
+}
+
+# FORMAT (per-sample) fields aggregated like INFO fields; CN is the copy number reported by CNVpytor
+CNV_FORMAT_AGGREGATION_ACTIONS = {
+    "weighted_majority": ["CN"],
 }
 
 
@@ -474,7 +479,12 @@ def cnv_vcf_to_bed(input_vcf: str, output_bed: str, *, assign_id=True) -> None:
 
 
 def _prepare_update_dataframe(
-    removed_vcf: str, collapsed_vcf: str, aggregation_fields: list[str], *, ignore_filter: bool
+    removed_vcf: str,
+    collapsed_vcf: str,
+    aggregation_fields: list[str],
+    *,
+    ignore_filter: bool,
+    original_vcf: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Load and prepare dataframe of collapsed variants for aggregation.
@@ -486,9 +496,12 @@ def _prepare_update_dataframe(
     collapsed_vcf : str
         Path to the VCF file containing collapsed variants
     aggregation_fields : list[str]
-        List of INFO field names to include in the dataframe
+        List of INFO/FORMAT field names to include in the dataframe
     ignore_filter : bool
         Whether to include filtered variants in the update dataframe
+    original_vcf : str | None
+        VCF that was collapsed. If given, FORMAT fields of the kept (collapsed) variants are taken
+        from it, since truvari collapse may overwrite them with values of a removed variant
 
     Returns
     -------
@@ -501,6 +514,17 @@ def _prepare_update_dataframe(
 
     update_df["matchid"] = update_df["matchid"].apply(lambda x: x[0]).astype(float)
     update_df["end"] = update_df["pos"] + update_df["svlen"].apply(lambda x: x[0])
+
+    # truvari collapse "consolidates" genotypes: when the kept call's GT looks unknown (e.g. DUP ./1) it copies
+    # all FORMAT values (incl. CN) of a removed call into it. Restore the kept calls' own FORMAT values.
+    if original_vcf is not None and "id" in collapsed_df.columns:
+        format_fields = sum(CNV_FORMAT_AGGREGATION_ACTIONS.values(), [])
+        original_df = vcftools.get_vcf_df(original_vcf, custom_info_fields=format_fields)
+        if "id" in original_df.columns:
+            original_df = original_df.set_index("id")
+            for col in (f.lower() for f in format_fields):
+                if col in collapsed_df.columns and col in original_df.columns:
+                    collapsed_df[col] = collapsed_df["id"].map(original_df[col])
 
     # Process collapsed_df - only need "end" column, not matchid (we use index instead)
     collapsed_df["end"] = collapsed_df["pos"] + collapsed_df["svlen"].apply(lambda x: x[0])
@@ -536,7 +560,8 @@ def _aggregate_record_info_fields(
 
     Modifies the record in-place by:
     1. Updating start/stop boundaries using CIPOS window selection
-    2. Aggregating INFO field values using specified actions
+    2. Aggregating INFO field values using specified actions, then FORMAT fields
+       from CNV_FORMAT_AGGREGATION_ACTIONS
     3. Updating SVLEN based on new boundaries
     4. Removing collapse metadata fields (no-op for smoothing records)
 
@@ -567,6 +592,9 @@ def _aggregate_record_info_fields(
                     header.info[field].number,
                     header.info[field].type,
                 )
+
+    # Aggregate FORMAT fields (e.g. CNVpytor CN) consistently with the aggregated SVTYPE
+    _aggregate_format_fields(record, update_records, header)
 
     # Update SVLEN to match new boundaries
     record.info["SVLEN"] = (record.stop - record.start - 1,)
@@ -832,9 +860,9 @@ def merge_cnvs_in_vcf(  # noqa: PLR0915
     temporary_files.append(str(removed_vcf))
 
     # Stage 1.25: Aggregate INFO fields (common to both modes)
-    all_fields = sum(CNV_AGGREGATION_ACTIONS.values(), [])
+    all_fields = sum(CNV_AGGREGATION_ACTIONS.values(), []) + sum(CNV_FORMAT_AGGREGATION_ACTIONS.values(), [])
     update_df, collapsed_df = _prepare_update_dataframe(
-        str(removed_vcf), output_vcf_collapse, all_fields, ignore_filter=ignore_filter
+        str(removed_vcf), output_vcf_collapse, all_fields, ignore_filter=ignore_filter, original_vcf=input_vcf
     )
 
     output_vcf_unsorted = output_vcf.replace(".vcf.gz", ".unsorted.vcf.gz")
@@ -1088,6 +1116,58 @@ def _aggregate_set(
     record.info[field] = tuple(set(values))
 
 
+def _weighted_majority_value(
+    update_records: pd.DataFrame,
+    field: str,
+    values: list,
+    svtype: str | None = None,
+):
+    """
+    Return the field value with the highest total absolute SVLEN across records.
+
+    Parameters
+    ----------
+    update_records : pd.DataFrame
+        DataFrame containing records to aggregate
+    field : str
+        Field name being aggregated
+    values : list
+        List of field values from all records being merged (aligned with update_records rows)
+    svtype : str | None
+        If given (and field is not SVTYPE), only records with this SVTYPE vote, so that the
+        selected copy number agrees with the merged SVTYPE.
+
+    Returns
+    -------
+    The winning value, or None if no record has a valid value
+    """
+    # Collect SVLEN values from update_records
+    # Note: update_records now includes collapsed record's original SVLEN
+    # (added in _aggregate_collapsed_vcf), so don't add record.info["SVLEN"] again
+    lengths = list(update_records["svlen"].apply(lambda x: x[0]))
+    voters = [True] * len(values)
+    if svtype is not None and field != "SVTYPE" and "svtype" in update_records.columns:
+        voters = list(update_records["svtype"] == svtype)
+
+    # Filter out None values
+    valid_pairs = [
+        (v, abs(length))
+        for v, length, vote in zip(values, lengths, voters, strict=True)
+        if vote and v is not None and not pd.isna(v)
+    ]
+
+    if not valid_pairs:
+        return None
+
+    # Group by field value and sum absolute SVLENs
+    value_weights = defaultdict(int)
+    for value, length in valid_pairs:
+        value_weights[value] += length
+
+    # Select value with highest total SVLEN
+    return max(value_weights.items(), key=lambda x: x[1])[0]
+
+
 def _aggregate_weighted_majority(
     record: pysam.VariantRecord,
     update_records: pd.DataFrame,
@@ -1099,6 +1179,10 @@ def _aggregate_weighted_majority(
 
     For SVTYPE: computes total SVLEN for each SVTYPE value and selects
     the SVTYPE with the highest cumulative length.
+    For other fields (e.g. CopyNumber): same vote, restricted to records whose SVTYPE
+    matches the record's (already aggregated) SVTYPE. Unlike averaging, the result is always
+    one of the input values (a real copy-number state). If no matching record has a value,
+    the field is removed rather than taking a value that contradicts the SVTYPE.
 
     Parameters
     ----------
@@ -1111,27 +1195,53 @@ def _aggregate_weighted_majority(
     values : list
         List of field values from all records being merged
     """
-    # Collect SVLEN values from update_records
-    # Note: update_records now includes collapsed record's original SVLEN
-    # (added in _aggregate_collapsed_vcf), so don't add record.info["SVLEN"] again
-    lengths = list(update_records["svlen"].apply(lambda x: x[0]))
+    svtype = record.info.get("SVTYPE")
+    majority_value = _weighted_majority_value(update_records, field, values, svtype)
+    if majority_value is not None:
+        record.info[field] = majority_value
+    elif field in record.info:
+        del record.info[field]
 
-    # Filter out None values
-    valid_pairs = [
-        (v, abs(length)) for v, length in zip(values, lengths, strict=True) if v is not None and not pd.isna(v)
-    ]
 
-    if not valid_pairs:
+def _aggregate_format_fields(
+    record: pysam.VariantRecord,
+    update_records: pd.DataFrame,
+    header: pysam.VariantHeader,
+) -> None:
+    """
+    Aggregate FORMAT fields listed in CNV_FORMAT_AGGREGATION_ACTIONS for the (single) sample.
+
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        VCF record to update
+    update_records : pd.DataFrame
+        DataFrame containing records to aggregate
+    header : pysam.VariantHeader
+        VCF header containing FORMAT field definitions
+    """
+    if not record.samples:
         return
-
-    # Group by field value and sum absolute SVLENs
-    value_weights = defaultdict(int)
-    for value, length in valid_pairs:
-        value_weights[value] += length
-
-    # Select value with highest total SVLEN
-    majority_value = max(value_weights.items(), key=lambda x: x[1])[0]
-    record.info[field] = majority_value
+    sample_name = list(record.samples.keys())[0]  # CNV records have single sample
+    svtype = record.info.get("SVTYPE")
+    for action, fields in CNV_FORMAT_AGGREGATION_ACTIONS.items():
+        if action != "weighted_majority":
+            raise ValueError(f"Unsupported FORMAT aggregation action: {action}")
+        for field in fields:
+            if field not in header.formats or field.lower() not in update_records.columns:
+                continue
+            values = list(update_records[field.lower()])
+            majority_value = _weighted_majority_value(update_records, field, values, svtype)
+            if majority_value is None:
+                if record.samples[sample_name].get(field) is not None:
+                    record.samples[sample_name][field] = None
+                continue
+            val_type = str(header.formats[field].type)
+            if val_type == "Float":
+                majority_value = float(majority_value)
+            elif val_type == "Integer":
+                majority_value = int(majority_value)
+            record.samples[sample_name][field] = majority_value
 
 
 def _update_genotype_from_svtype(record: pysam.VariantRecord) -> None:
@@ -1518,7 +1628,7 @@ def _apply_smoothing_merges(
         List of CNV ID groups to merge, each group is a set of CNV IDs
     aggregation_actions : dict[str, list[str]]
         Dictionary mapping aggregation action to list of INFO field names
-        (e.g., {"weighted_avg": ["CopyNumber"], "max": ["TREE_SCORE"]})
+        (e.g., {"weighted_majority": ["SVTYPE", "CopyNumber"], "max": ["TREE_SCORE"]})
     ignore_filter : bool
         Should the PASS filter be ignored (otherwise only PASS variants will be output)
 
@@ -1614,7 +1724,7 @@ def _merge_cnv_group(
 
     # Create DataFrame using get_vcf_df with tuple input (header, records)
     # This ensures exact format consistency with _prepare_update_dataframe
-    all_fields = sum(aggregation_actions.values(), [])
+    all_fields = sum(aggregation_actions.values(), []) + sum(CNV_FORMAT_AGGREGATION_ACTIONS.values(), [])
     df_all = vcftools.get_vcf_df((header, records), custom_info_fields=all_fields + ["SVLEN"])
 
     # Calculate 'end' column (same logic as _prepare_update_dataframe)
