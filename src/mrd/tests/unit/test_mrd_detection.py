@@ -1,19 +1,25 @@
 """Unit tests for ugbio_mrd.mrd_detection module."""
 
+from functools import partial
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
-from scipy.stats import binom
+from scipy.stats import binom, chi2
 from ugbio_mrd.mrd_detection import (
     DetectionResult,
     compute_sample_specific_lod,
+    compute_vaf_confidence_interval,
     format_scientific,
     plot_cohort_scatter,
-    run_detection_analysis,
 )
+from ugbio_mrd.mrd_detection import run_detection_analysis as _run_detection_analysis
+
+# Fixture df_tf tables use coverage=50000 and corrected_coverage=25000, i.e. P = 0.5.
+SNVQ_RECALL = 0.5
+run_detection_analysis = partial(_run_detection_analysis, snvq_recall=SNVQ_RECALL)
 
 
 class TestComputePersonalLod:
@@ -232,7 +238,8 @@ class TestComputePersonalLod:
         )
         assert result.sample_specific_lod is not None
         p_err = result.noise_rate
-        n = result.n_effective
+        n = int(result.total_coverage)
+        p_obs = result.snvq_recall * p_err
 
         # 1. personal_lod >= p_err (total VAF can never be below noise floor)
         assert result.sample_specific_lod >= p_err
@@ -240,17 +247,19 @@ class TestComputePersonalLod:
         # 2. At personal_lod, the Binomial recall must be >= lod_recall.
         #    Re-derive detection threshold n_th at lod_fpr, then check recall.
         k_range = np.arange(0, min(n + 1, 10000))
-        sf_vals = binom.sf(k_range - 1, n, p_err)
+        sf_vals = binom.sf(k_range - 1, n, p_obs)
         hits = np.where(sf_vals < lod_fpr)[0]
         if len(hits) > 0:
             n_th = int(hits[0])
-            recall_at_lod = float(binom.sf(n_th - 1, n, result.sample_specific_lod))
+            recall_at_lod = float(binom.sf(n_th - 1, n, result.snvq_recall * result.sample_specific_lod))
             assert (
                 recall_at_lod >= lod_recall - 1e-6
             ), f"recall at personal_lod {recall_at_lod:.6f} < lod_recall {lod_recall}"
 
         # 3. personal_lod == noise_rate + compute_personal_lod(incremental)
-        lod_incremental = compute_sample_specific_lod(n=n, p_err=p_err, target_recall=lod_recall, fpr=lod_fpr)
+        lod_incremental = compute_sample_specific_lod(
+            n=n, p_err=p_err, target_recall=lod_recall, fpr=lod_fpr, snvq_recall=result.snvq_recall
+        )
         assert lod_incremental is not None
         assert abs(result.sample_specific_lod - (p_err + lod_incremental)) < 1e-12
 
@@ -295,8 +304,8 @@ class TestComputePersonalLod:
         assert result.call == "Indeterminate"
         assert result.p_value == 1.0
 
-    def test_zero_corrected_coverage_is_indeterminate(self, mock_df_signatures_filt):
-        """Controls present but corrected_coverage==0 must yield Indeterminate, not a false detection.
+    def test_zero_db_control_coverage_is_indeterminate(self, mock_df_signatures_filt):
+        """Controls present but zero coverage must yield Indeterminate, not a false detection.
 
         Regression: previously p_err was forced to 0.0 in this branch, causing
         binom.sf(obs-1, n, 0) == 0 for any positive obs -> spurious 'MRD Detected'.
@@ -732,7 +741,7 @@ class TestDetectionBoundaryStrict:
     def test_at_threshold_not_detected(self):
         """matched_reads == detection_threshold must be Not Detected (strict >, not >=)."""
         thr = self._threshold()
-        result = run_detection_analysis(df_tf=self._df_tf(thr), df_signatures_filt=self._df_sigs())
+        result = run_detection_analysis(df_tf=self._df_tf(thr), df_signatures_filt=self._df_sigs(), snvq_recall=1.0)
         assert result.detected is False, f"threshold={thr}: reads==threshold must be Not Detected"
         assert result.call == "MRD Not Detected"
         assert result.detection_threshold == thr
@@ -740,7 +749,7 @@ class TestDetectionBoundaryStrict:
     def test_one_above_threshold_detected(self):
         """matched_reads == detection_threshold + 1 must be Detected."""
         thr = self._threshold()
-        result = run_detection_analysis(df_tf=self._df_tf(thr + 1), df_signatures_filt=self._df_sigs())
+        result = run_detection_analysis(df_tf=self._df_tf(thr + 1), df_signatures_filt=self._df_sigs(), snvq_recall=1.0)
         assert result.detected is True, f"threshold={thr}: reads=threshold+1 must be Detected"
         assert result.call == "MRD Detected"
 
@@ -748,6 +757,129 @@ class TestDetectionBoundaryStrict:
         """matched_reads == detection_threshold - 1 must be Not Detected."""
         thr = self._threshold()
         assert thr >= 2, "threshold must be >= 2 for this test to be meaningful"  # noqa: PLR2004
-        result = run_detection_analysis(df_tf=self._df_tf(thr - 1), df_signatures_filt=self._df_sigs())
+        result = run_detection_analysis(df_tf=self._df_tf(thr - 1), df_signatures_filt=self._df_sigs(), snvq_recall=1.0)
         assert result.detected is False, f"threshold={thr}: reads=threshold-1 must be Not Detected"
         assert result.call == "MRD Not Detected"
+
+
+class TestComputeVafConfidenceInterval:
+    """Exact (Clopper-Pearson) interval on the ctDNA VAF (K/P)/N."""
+
+    def test_matches_exact_poisson_limit(self):
+        """For tiny proportions the interval equals the exact Poisson interval (chi-square form)."""
+        k, n = 3, 1_000_000
+        low, high = compute_vaf_confidence_interval(k, n, snvq_recall=1.0)
+        assert low == pytest.approx(chi2.ppf(0.025, 2 * k) / 2 / n, rel=1e-3)
+        assert high == pytest.approx(chi2.ppf(0.975, 2 * k + 2) / 2 / n, rel=1e-3)
+
+    def test_zero_reads_has_zero_lower_bound(self):
+        """K=0 gives lower=0 and the upper bound 1 - (alpha/2)**(1/N) (~3.7/N at 95%)."""
+        n = 1_000_000
+        low, high = compute_vaf_confidence_interval(0, n, snvq_recall=1.0)
+        assert low == 0.0
+        assert high == pytest.approx(1 - 0.025 ** (1 / n), rel=1e-6)
+        assert high == pytest.approx(3.689 / n, rel=1e-3)
+
+    def test_bounds_are_divided_by_snvq_recall(self):
+        """The interval on K/N is scaled by 1/P to give the interval on (K/P)/N."""
+        low_1, high_1 = compute_vaf_confidence_interval(5, 100_000, snvq_recall=1.0)
+        low_p, high_p = compute_vaf_confidence_interval(5, 100_000, snvq_recall=0.5)
+        assert low_p == pytest.approx(2 * low_1)
+        assert high_p == pytest.approx(2 * high_1)
+
+    def test_interval_contains_point_estimate(self):
+        low, high = compute_vaf_confidence_interval(12, 50_000, snvq_recall=0.4)
+        assert low < (12 / 0.4) / 50_000 < high
+
+    def test_higher_confidence_is_wider(self):
+        low_95, high_95 = compute_vaf_confidence_interval(8, 200_000, snvq_recall=0.5, ci_level=0.95)
+        low_99, high_99 = compute_vaf_confidence_interval(8, 200_000, snvq_recall=0.5, ci_level=0.99)
+        assert low_99 < low_95
+        assert high_99 > high_95
+
+    def test_upper_bound_capped_at_one(self):
+        _, high = compute_vaf_confidence_interval(10, 10, snvq_recall=0.5)
+        assert high == 1.0
+
+    def test_both_endpoints_capped_and_ordered(self):
+        """K=N with P<1 pushes the lower bound above 1 before capping; the interval must stay ordered."""
+        low, high = compute_vaf_confidence_interval(10, 10, snvq_recall=0.5)
+        assert low <= high <= 1.0
+
+    @pytest.mark.parametrize("ci_level", [0.0, 1.0, -0.1, 1.5, float("nan")])
+    def test_invalid_ci_level_raises(self, ci_level):
+        with pytest.raises(ValueError, match="ci_level"):
+            compute_vaf_confidence_interval(5, 1000, snvq_recall=0.5, ci_level=ci_level)
+
+    @pytest.mark.parametrize("n,p", [(0, 0.5), (-1, 0.5), (1000, 0.0)])
+    def test_invalid_inputs_return_none(self, n, p):
+        assert compute_vaf_confidence_interval(1, n, snvq_recall=p) is None
+
+
+class TestDetectionConfidenceInterval:
+    """CI and raw-coverage fields of DetectionResult from run_detection_analysis."""
+
+    @pytest.fixture
+    def df_tf(self):
+        idx = pd.MultiIndex.from_tuples(
+            [("matched", "patient_sig")] + [("db_control", f"syn{i}") for i in range(30)],
+            names=["signature_type", "signature"],
+        )
+        return pd.DataFrame(
+            {
+                "supporting_reads": [10] + [1] * 30,
+                "coverage": [50_000] * 31,
+                "corrected_coverage": [25_000] * 31,
+                "ctdna_vaf": [4e-4] + [4e-5] * 30,
+            },
+            index=idx,
+        )
+
+    @pytest.fixture
+    def df_signatures_filt(self):
+        n = 500
+        idx = pd.MultiIndex.from_arrays([["chr1"] * n, range(1000, 1000 + n)], names=["chrom", "pos"])
+        return pd.DataFrame(
+            {"signature_type": ["matched"] * n, "signature": ["patient_sig"] * n, "coverage": [100] * n},
+            index=idx,
+        )
+
+    def test_ci_is_populated_and_contains_vaf(self, df_tf, df_signatures_filt):
+        result = run_detection_analysis(df_tf=df_tf, df_signatures_filt=df_signatures_filt)
+        assert result.ci_level == 0.95
+        assert result.total_coverage == 50_000
+        assert result.snvq_recall == SNVQ_RECALL
+        assert result.vaf_ci_low < result.matched_ctdna_vaf < result.vaf_ci_high
+        expected = compute_vaf_confidence_interval(10, 50_000, SNVQ_RECALL)
+        assert (result.vaf_ci_low, result.vaf_ci_high) == expected
+
+    def test_invalid_ci_level_raises(self, df_tf, df_signatures_filt):
+        with pytest.raises(ValueError, match="ci_level"):
+            run_detection_analysis(df_tf=df_tf, df_signatures_filt=df_signatures_filt, ci_level=1.5)
+
+    def test_ci_level_is_configurable(self, df_tf, df_signatures_filt):
+        narrow = run_detection_analysis(df_tf=df_tf, df_signatures_filt=df_signatures_filt, ci_level=0.8)
+        wide = run_detection_analysis(df_tf=df_tf, df_signatures_filt=df_signatures_filt, ci_level=0.99)
+        assert wide.vaf_ci_low < narrow.vaf_ci_low
+        assert wide.vaf_ci_high > narrow.vaf_ci_high
+
+    def test_noise_rate_is_vaf_scale(self, df_tf, df_signatures_filt):
+        """p_err = (k_db / P) / N_db, the same scale as ctdna_vaf."""
+        result = run_detection_analysis(df_tf=df_tf, df_signatures_filt=df_signatures_filt)
+        assert result.noise_rate == pytest.approx((30 / SNVQ_RECALL) / (30 * 50_000))
+
+    def test_p_value_uses_raw_coverage_and_recall(self, df_tf, df_signatures_filt):
+        result = run_detection_analysis(df_tf=df_tf, df_signatures_filt=df_signatures_filt)
+        expected = binom.sf(10 - 1, 50_000, SNVQ_RECALL * result.noise_rate)
+        assert result.p_value == pytest.approx(expected)
+
+    def test_detection_threshold_vaf(self, df_tf, df_signatures_filt):
+        result = run_detection_analysis(df_tf=df_tf, df_signatures_filt=df_signatures_filt)
+        assert result.detection_threshold_vaf == pytest.approx((result.detection_threshold / SNVQ_RECALL) / 50_000)
+
+    def test_no_matched_signature_has_no_ci(self, df_tf, df_signatures_filt):
+        df_tf_no_matched = df_tf.drop("matched", level="signature_type")
+        result = run_detection_analysis(df_tf=df_tf_no_matched, df_signatures_filt=df_signatures_filt)
+        assert result.call == "Indeterminate"
+        assert result.vaf_ci_low is None
+        assert result.vaf_ci_high is None
