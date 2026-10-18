@@ -297,3 +297,19 @@ class TestTransformers:
         transformer = get_transformer(VcfType.CNV).fit(self._cnv_df().assign(label=[1]))
         result = transformer.transform(self._cnv_df())
         assert len(result) == 1
+
+    def test_cnv_transformer_fills_missing_jalign_fields(self):
+        # run_jalign keeps CNVs whose jump alignment failed, with JALIGN_* missing (BIOIN-3132)
+        jalign_fields = [
+            "jalign_dup_support",
+            "jalign_del_support",
+            "jalign_dup_support_strong",
+            "jalign_del_support_strong",
+        ]
+        test_df = pd.concat([self._cnv_df(), self._cnv_df()], ignore_index=True)
+        test_df.loc[1, jalign_fields] = np.nan
+        result = get_transformer(VcfType.CNV).fit_transform(test_df)
+        assert result.isna().sum().sum() == 0
+        for field in jalign_fields:
+            assert result[f"{field}__{field}"].iloc[1] == 0
+        assert result["jalign_dup_support__jalign_dup_support"].iloc[0] == 8
