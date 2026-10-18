@@ -299,7 +299,7 @@ class TestTransformers:
         assert len(result) == 1
 
     def test_cnv_transformer_fills_missing_jalign_fields(self):
-        # run_jalign keeps CNVs whose jump alignment failed, with JALIGN_* missing (BIOIN-3132)
+        # run_jalign keeps CNVs whose jump alignment failed, with JALIGN_* missing
         jalign_fields = [
             "jalign_dup_support",
             "jalign_del_support",
