@@ -99,8 +99,8 @@ def test_performance(mock_get_run_info, mock_boto3_client, mock_run_info, mock_l
 
     total_performance_df = performance(run_id, output_dir=output_dir, output_prefix=output_prefix)
 
-    # cpu_model / gpu are empty here (the mock logs have no Host Information line), so read them as text
-    expected_df = pd.read_csv(resources_dir / "expected_performance.csv", dtype={"cpu_model": object, "gpu": object})
+    # the mock log is a CPU task (Host Information line without GPU), so the empty gpu column is read as text
+    expected_df = pd.read_csv(resources_dir / "expected_performance.csv", dtype={"gpu": object})
     pd.testing.assert_frame_equal(total_performance_df, expected_df)
 
 
