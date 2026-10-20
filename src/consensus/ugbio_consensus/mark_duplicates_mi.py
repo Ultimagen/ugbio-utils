@@ -11,6 +11,11 @@ Singletons (unique pairs, unmapped, or unpaired reads) get MI = their own query 
 With --use-umi a second tag, CS, links the two strands of one original duplex molecule,
 which the UMI part of the key necessarily splits into two MI families. See assign_cs().
 
+--orientation-in-key adds the pair orientation (F1R2, F2R1, FF, RR) to the key, for libraries
+whose u5 and u3 can be equal. A molecule keys as (A, B) on one strand and (B, A) on the other, which
+is what keeps the strands apart; with A == B both strands key as (A, A) and, without the
+orientation, land in one MI family. CS still links them. See _pair_key().
+
 Two opt-in refinements, both off by default so the default output is unchanged:
 --position-tolerance merges same-UMI clusters whose fragment boundaries differ by a few bp
 (read1/read2 use asymmetric adapters, so one molecule's copies can map 1-3 bp apart), and
@@ -130,6 +135,14 @@ def parse_args():
         "within --position-tolerance.",
     )
     parser.add_argument(
+        "--orientation-in-key",
+        action="store_true",
+        help="Add the pair orientation (F1R2, F2R1, FF, RR) to the deduplication key, so that pairs of "
+        "different orientation never share an MI. Needed when u5 and u3 can be equal (a symmetric UMI): "
+        "the two strands of a molecule then key identically and would otherwise be one family. CS still "
+        "links the strands. Cannot be combined with --cross-strand, which merges them on purpose.",
+    )
+    parser.add_argument(
         "--reference",
         "-T",
         help="Reference FASTA (required for CRAM I/O)",
@@ -202,7 +215,10 @@ def parse_args():
         metavar="DIR",
         help="Directory for per-shard BAMs (default: alongside the output)",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.orientation_in_key and args.cross_strand:
+        parser.error("--orientation-in-key and --cross-strand contradict each other")
+    return args
 
 
 # ---------------------------------------------------------------------------
@@ -227,12 +243,15 @@ def _read_rec(read, use_umi: bool, umis: dict[str, str] | None = None) -> tuple:
     return (read.reference_name, read.reference_start, read.reference_end, read.is_read1, read.is_reverse, u5, u3)
 
 
-def _pair_key(r1: tuple, r2: tuple, use_umi: bool) -> tuple:
+def _pair_key(r1: tuple, r2: tuple, use_umi: bool, orientation_in_key: bool = False) -> tuple:
     left, right = (r1, r2) if r1[_START] <= r2[_START] else (r2, r1)
     key: tuple = (left[_CHROM], left[_START], right[_END])
     if use_umi:
         # u5 is always on R1 and u3 on R2 by library design, regardless of strand
         key += (r1[_U5], r2[_U3])
+    if orientation_in_key:
+        # Last, so key[:UMI_KEY_LEN] stays the positional part plus the UMI pair that assign_cs reads.
+        key += (_pair_orientation(r1, r2),)
     return key
 
 
@@ -279,6 +298,7 @@ def collect_pair_keys(
     open_kwargs: dict,
     limit: int | None = None,
     orientations: dict[str, str] | None = None,
+    orientation_in_key: bool = False,
 ) -> tuple[dict[str, tuple | None], dict[tuple, bool]]:
     """
     Stream the coordinate-sorted file once, matching mates via a sliding buffer.
@@ -324,7 +344,7 @@ def collect_pair_keys(
                 else:
                     # ensure r1/r2 order for UMI extraction
                     r1, r2 = (rec, mate) if rec[_IS_READ1] else (mate, rec)
-                    key = _pair_key(r1, r2, use_umi)
+                    key = _pair_key(r1, r2, use_umi, orientation_in_key)
                     pair_keys[name] = key
                     orient.setdefault(key, _r1_is_reverse(r1, r2))
                     if orientations is not None and r1[_IS_READ1] != r2[_IS_READ1]:
@@ -488,7 +508,9 @@ def merge_duplex_partners(
         umi = key[3:5]
         if cross_strand and orient.get(key):  # F2R1: undo the swap, as in assign_cs
             umi = umi[::-1]
-        groups[(key[0], umi)].append(key)
+        # Without cross_strand the orientation (if it is in the key) must match as well, so a tolerance
+        # merge never joins two orientations.
+        groups[(key[0], umi, () if cross_strand else key[UMI_KEY_LEN:])].append(key)
 
     parent: dict[tuple, tuple] = {}
 
@@ -774,6 +796,7 @@ def process_shard(job: tuple) -> dict:
         strip_run_id,
         prev_end,
         po_tag,
+        orientation_in_key,
     ) = job
 
     # Cluster straight off the stream: at panel depth an intermediate name -> key dict
@@ -798,7 +821,7 @@ def process_shard(job: tuple) -> dict:
             if name in pending:
                 mate = pending.pop(name)
                 r1, r2 = (rec, mate) if rec[_IS_READ1] else (mate, rec)
-                key = _pair_key(r1, r2, use_umi)
+                key = _pair_key(r1, r2, use_umi, orientation_in_key)
                 clusters[key].append(name)
                 orient.setdefault(key, _r1_is_reverse(r1, r2))
                 if po_tag and r1[_IS_READ1] != r2[_IS_READ1]:
@@ -939,6 +962,7 @@ def run_sharded(args, open_kwargs: dict) -> None:
             args.strip_run_id,
             shards[i - 1][2] if i > 0 and shards[i - 1][0] == chrom else 0,
             args.pair_orientation_tag,
+            args.orientation_in_key,
         )
         for i, (chrom, start, end) in enumerate(shards)
     ]
@@ -1070,7 +1094,9 @@ def main():
 
     logging.info("Pass 1 — scanning %s", args.input)
     orientations: dict[str, str] | None = {} if args.pair_orientation_tag else None
-    pair_keys, orient = collect_pair_keys(args.input, args.use_umi, open_kwargs, args.limit, orientations)
+    pair_keys, orient = collect_pair_keys(
+        args.input, args.use_umi, open_kwargs, args.limit, orientations, args.orientation_in_key
+    )
     logging.info("Collected info for %d primary paired read names", len(pair_keys))
 
     mi_map, ds_map, clusters = build_mi_map(

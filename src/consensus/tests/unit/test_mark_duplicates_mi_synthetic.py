@@ -378,6 +378,84 @@ def test_same_strand_umi_collision_is_not_a_duplex_pair(tmp_path):
     assert got["rev"]["CS"] == "rev"
 
 
+# --- whole-file: orientation in the key (symmetric UMI) -------------------------------------
+
+
+def _symmetric(tmp_path, *args):
+    """Two F1R2 pairs and two F2R1 pairs, all u5 == u3 and with one boundary: one molecule's two strands."""
+    recs = flatten(
+        pair("fwd1", "chr1", 1000, 1200, UMI_A, UMI_A, kind="F1R2"),
+        pair("fwd2", "chr1", 1000, 1200, UMI_A, UMI_A, kind="F1R2"),
+        pair("rev1", "chr1", 1000, 1200, UMI_A, UMI_A, kind="F2R1"),
+        pair("rev2", "chr1", 1000, 1200, UMI_A, UMI_A, kind="F2R1"),
+    )
+    return marked(run(tmp_path, recs, "--use-umi", *args))
+
+
+def test_symmetric_umi_puts_both_orientations_in_one_family_by_default(tmp_path):
+    got = _symmetric(tmp_path)
+    assert {n: (g["MI"], g["DS"]) for n, g in got.items()} == dict.fromkeys(("fwd1", "fwd2", "rev1", "rev2"), ("fwd1", 4))
+
+
+def test_orientation_in_key_gives_each_orientation_its_own_family_and_cs_links_them(tmp_path):
+    got = _symmetric(tmp_path, "--orientation-in-key")
+    assert [(got[n]["MI"], got[n]["DS"]) for n in ("fwd1", "fwd2")] == [("fwd1", 2), ("fwd1", 2)]
+    assert [(got[n]["MI"], got[n]["DS"]) for n in ("rev1", "rev2")] == [("rev1", 2), ("rev1", 2)]
+    assert {g["CS"] for g in got.values()} == {"fwd1"}
+
+
+def test_orientation_in_key_leaves_asymmetric_umi_strands_as_they_were(tmp_path):
+    """(A,B) and (B,A) already key apart, so the option changes nothing for them."""
+    recs = flatten(
+        pair("fwd", "chr1", 1000, 1200, UMI_A, UMI_B, kind="F1R2"),
+        pair("rev", "chr1", 1000, 1200, UMI_B, UMI_A, kind="F2R1"),
+    )
+    plain = run(tmp_path, recs, "--use-umi", name="plain.bam")
+    with_orientation = run(tmp_path, recs, "--use-umi", "--orientation-in-key", name="orient.bam")
+    assert snapshot(plain) == snapshot(with_orientation)
+
+
+def test_orientation_in_key_splits_same_umi_pairs_of_different_orientation_that_are_not_one_molecule(tmp_path):
+    """Same (A,B) and boundaries but opposite orientation: not partners (a partner would be (B,A))."""
+    recs = flatten(
+        pair("fwd", "chr1", 1000, 1200, UMI_A, UMI_B, kind="F1R2"),
+        pair("rev", "chr1", 1000, 1200, UMI_A, UMI_B, kind="F2R1"),
+    )
+    assert marked(run(tmp_path, recs, "--use-umi", name="plain.bam"))["fwd"]["DS"] == 2
+    got = marked(run(tmp_path, recs, "--use-umi", "--orientation-in-key", name="orient.bam"))
+    assert (got["fwd"]["DS"], got["rev"]["DS"]) == (1, 1)
+
+
+def test_tolerance_never_merges_across_orientations_with_orientation_in_key(tmp_path):
+    recs = flatten(
+        pair("fwd", "chr1", 1000, 1200, UMI_A, UMI_A, kind="F1R2"),
+        pair("rev", "chr1", 1000, 1201, UMI_A, UMI_A, kind="F2R1"),
+    )
+    merged = marked(run(tmp_path, recs, "--use-umi", "--position-tolerance", "2", name="plain.bam"))
+    assert (merged["fwd"]["DS"], merged["rev"]["DS"]) == (2, 2)
+    split = marked(
+        run(tmp_path, recs, "--use-umi", "--position-tolerance", "2", "--orientation-in-key", name="orient.bam")
+    )
+    assert (split["fwd"]["DS"], split["rev"]["DS"]) == (1, 1)
+
+
+def test_orientation_in_key_cannot_be_combined_with_cross_strand(tmp_path):
+    inp = build_bam(tmp_path / "in.bam", pair("p", "chr1", 1000, 1200, UMI_A, UMI_A))
+    result = cli(inp, "--use-umi", "--orientation-in-key", "--cross-strand", out=tmp_path / "out.bam", check=False)
+    assert result.returncode != 0
+    assert "contradict" in result.stderr
+
+
+def test_orientation_in_key_without_umi_only_splits_orientations(tmp_path):
+    recs = flatten(
+        pair("fwd", "chr1", 1000, 1200, UMI_A, UMI_A, kind="F1R2"),
+        pair("rev", "chr1", 1000, 1200, UMI_B, UMI_C, kind="F2R1"),
+    )
+    assert marked(run(tmp_path, recs, name="plain.bam"))["fwd"]["DS"] == 2
+    got = marked(run(tmp_path, recs, "--orientation-in-key", name="orient.bam"))
+    assert (got["fwd"]["DS"], got["rev"]["DS"], got["fwd"]["CS"]) == (1, 1, None)
+
+
 def test_same_orientation_partners_merge_under_tolerance_alone(tmp_path):
     recs = flatten(
         pair("p1", "chr1", 1000, 1200, UMI_A, UMI_B),
@@ -862,6 +940,11 @@ OPTION_SETS = [
     pytest.param(("--use-umi", "--cross-strand"), id="umi-cross"),
     pytest.param(("--use-umi", "--cross-strand", "--position-tolerance", "3"), id="umi-cross-tol3"),
     pytest.param(("--use-umi", "--pair-orientation-tag", "po"), id="umi-po"),
+    pytest.param(("--use-umi", "--orientation-in-key"), id="umi-orient"),
+    pytest.param(
+        ("--use-umi", "--orientation-in-key", "--position-tolerance", "2", "--pair-orientation-tag", "po"),
+        id="umi-orient-tol2-po",
+    ),
     pytest.param(
         ("--use-umi", "--cross-strand", "--position-tolerance", "2", "--pair-orientation-tag", "po", "--strip-run-id"),
         id="everything",

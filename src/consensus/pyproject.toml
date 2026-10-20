@@ -21,6 +21,7 @@ text = "Apache-2.0"
 run_tests = "pytest:main"
 consensus_report = "ugbio_consensus.consensus_report:main"
 mark_duplicates_mi = "ugbio_consensus.mark_duplicates_mi:main"
+mark_duplex_consensus = "ugbio_consensus.mark_duplex_consensus:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true

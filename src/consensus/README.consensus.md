@@ -6,6 +6,7 @@ Duplicate marking and performance & duplex reports for the **ReadFuserAlignSort*
 | Entry point | Runs | Role |
 |-------------|------|------|
 | `mark_duplicates_mi` | *before* `read_fuser` | Assign `MI`/`DS` duplicate families, and with `--use-umi` the `CS` cross-strand duplex tag. |
+| `mark_duplex_consensus` | *after* the consensus is sorted | Write `dx=1` on the consensus reads of CS families whose `po` shows both orientations (F1R2 and F2R1). |
 | `consensus_report` | *after* the pipeline | Per-sample HTML report of alignment, duplication, coverage and duplex family metrics. |
 
 ## mark_duplicates_mi
@@ -46,6 +47,10 @@ clusters that are the same molecule into one `MI` family:
 - `--cross-strand` also merges the F1R2/F2R1 strands of a duplex molecule into one `MI`,
   using the same orientation-aware rule as `CS`. Boundaries must match within
   `--position-tolerance`.
+- `--orientation-in-key` does the opposite: the pair orientation (F1R2/F2R1/FF/RR) joins the
+  dedup key, so the two strands of one molecule never share an `MI`. It matters for a symmetric
+  UMI (`u5 == u3`), where both strands otherwise get the same key and so one `MI`. `CS` still links
+  the strands. Cannot be combined with `--cross-strand`.
 
 ```bash
 # whole-file
@@ -95,6 +100,22 @@ mode further than `--pad` away, gets no tag, and a stale one is dropped. Like
 > ~30 of 12.67 M records versus that baseline. Do not refactor it — including "just" reordering the `set_tag` calls,
 > which fixes the emitted aux order as `MI, DS, CS` — without re-running
 > `/data/Runs/BIOIN-3068/cmp_stream.py` and `cs_links.py`.
+
+## mark_duplex_consensus
+
+Writes `dx:i:1` on the consensus reads of duplex families. `DS` cannot say this: the sorter gives
+`DS=2` to two consensus reads of one orientation as readily as to the two strands of a duplex
+molecule. `dx` reads the orientation instead: a `CS` family is duplex when its consensus reads
+include both `po=F1R2` and `po=F2R1`, and then every read of the family gets `dx=1`.
+
+```bash
+mark_duplex_consensus consensus.cram consensus.dx.cram -T Homo_sapiens_assembly38.fasta --threads 8
+```
+
+The input is coordinate-sorted and is streamed with a window of `--pad` bp (default 2000); a family
+whose orientations start further apart than that is not seen as duplex. Reads of other families
+get no `dx` (`dx=0` with `--write-simplex`), a stale `dx` is replaced, reads without `CS` and
+secondary or supplementary records are left as they are. The output is indexed.
 
 ## consensus_report
 
@@ -200,6 +221,7 @@ Outputs (alongside `--output`):
 | Module | Role |
 |--------|------|
 | `mark_duplicates_mi.py` | Duplicate families (`MI`/`DS`) and the `CS` cross-strand duplex tag; whole-file and sharded writers. |
+| `mark_duplex_consensus.py` | Streams a sorted consensus CRAM and writes `dx` on the reads of duplex CS families. |
 | `duplex_metrics.py` | Parse `rn`/`nf`/`nr`, classify families, family size + coverage per category (with an `MI`-tag fallback). |
 | `on_target.py` | Genome-wide and optional on-target coverage from a bedGraph + targets BED. |
 | `consensus_log.py` | Parse the consensus tool stdout log for performance counters. |
