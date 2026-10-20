@@ -441,7 +441,7 @@ def _probability_rescaling(
     return p_rescaled_snvq
 
 
-def recalibrate_snvq(
+def recalibrate_snvq(  # noqa: PLR0915
     mqual: np.ndarray,
     labels: np.ndarray,
     **kwargs,
@@ -490,11 +490,10 @@ def recalibrate_snvq(
         Corresponding SNVQ values of the lookup table.
     """
 
-    pos_stats = kwargs["pos_stats"]
-    neg_stats = kwargs["neg_stats"]
-    raw_stats = kwargs["raw_stats"]
-    mean_coverage = kwargs["mean_coverage"]
-    n_bases_in_region = kwargs["n_bases_in_region"]
+    # When ``snvq_prefactor_override`` is given (per-class recalibration), the absolute error scale is
+    # supplied directly and the stats-based prefactor computation is skipped (pos/neg/raw/coverage/n_bases
+    # become optional). Everything else — the survival curves and the LUT — is identical.
+    snvq_prefactor_override = kwargs.get("snvq_prefactor_override")
     lut_mask = kwargs.get("lut_mask")
     prior_train_error = kwargs.get("prior_train_error")
     fp_mqual_cutoff_quantile = kwargs.get("fp_mqual_cutoff_quantile", 1 - 1e-6)
@@ -503,41 +502,55 @@ def recalibrate_snvq(
 
     labels_bool = np.asarray(labels, dtype=bool)
 
-    # --- priors -----------------------------------------------------------
     def _last_non_downsample_rows(stats: dict) -> int:
         for f in reversed(stats["filters"]):
             if f.get("type") != "downsample":
                 return f.get(TYPE_FUNNEL, f.get(STAT_ROWS))
         raise ValueError("stats JSON has no non-downsample filter entry")
 
-    pos_after_filter = _last_non_downsample_rows(pos_stats)
-    neg_after_filter = _last_non_downsample_rows(neg_stats)
-    raw_after_filter = _last_non_downsample_rows(raw_stats)
+    if snvq_prefactor_override is not None:
+        snvq_prefactor = float(snvq_prefactor_override)
+        prior_train_error = prior_train_error if prior_train_error is not None else float("nan")
+        prior_real_error = float("nan")
+    else:
+        pos_stats = kwargs["pos_stats"]
+        neg_stats = kwargs["neg_stats"]
+        raw_stats = kwargs["raw_stats"]
+        mean_coverage = kwargs["mean_coverage"]
+        n_bases_in_region = kwargs["n_bases_in_region"]
 
-    prior_real_error = max(eps, min(1.0 - eps, neg_after_filter / (neg_after_filter + pos_after_filter)))
+        # --- priors -------------------------------------------------------
+        pos_after_filter = _last_non_downsample_rows(pos_stats)
+        neg_after_filter = _last_non_downsample_rows(neg_stats)
+        raw_after_filter = _last_non_downsample_rows(raw_stats)
 
-    if prior_train_error is None:
-        n_neg = int((~labels_bool).sum())
-        prior_train_error = n_neg / len(labels_bool) if len(labels_bool) > 0 else 0.5
+        prior_real_error = max(eps, min(1.0 - eps, neg_after_filter / (neg_after_filter + pos_after_filter)))
 
-    # --- snvq_prefactor ---------------------------------------------------
-    filtering_ratio = get_filter_ratio(pos_stats["filters"], numerator_type="label", denominator_type="raw")
-    effective_bases_covered = mean_coverage * n_bases_in_region * filtering_ratio
-    snvq_prefactor = raw_after_filter / effective_bases_covered
+        if prior_train_error is None:
+            n_neg = int((~labels_bool).sum())
+            prior_train_error = n_neg / len(labels_bool) if len(labels_bool) > 0 else 0.5
 
-    logger.info(
-        "recalibrate_snvq: mean_coverage=%.1f, n_bases_in_region=%d, "
-        "filtering_ratio=%.6f, raw_after_filter=%d, effective_bases_covered=%.0f, "
-        "snvq_prefactor=%.6f, prior_train_error=%.6f, prior_real_error=%.6f",
-        mean_coverage,
-        n_bases_in_region,
-        filtering_ratio,
-        raw_after_filter,
-        effective_bases_covered,
-        snvq_prefactor,
-        prior_train_error,
-        prior_real_error,
-    )
+        # --- snvq_prefactor ----------------------------------------------
+        filtering_ratio = get_filter_ratio(pos_stats["filters"], numerator_type="label", denominator_type="raw")
+        effective_bases_covered = mean_coverage * n_bases_in_region * filtering_ratio
+        snvq_prefactor = raw_after_filter / effective_bases_covered
+
+    if snvq_prefactor_override is not None:
+        logger.info("recalibrate_snvq: snvq_prefactor=%.6g (override)", snvq_prefactor)
+    else:
+        logger.info(
+            "recalibrate_snvq: mean_coverage=%.1f, n_bases_in_region=%d, "
+            "filtering_ratio=%.6f, raw_after_filter=%d, effective_bases_covered=%.0f, "
+            "snvq_prefactor=%.6f, prior_train_error=%.6f, prior_real_error=%.6f",
+            mean_coverage,
+            n_bases_in_region,
+            filtering_ratio,
+            raw_after_filter,
+            effective_bases_covered,
+            snvq_prefactor,
+            prior_train_error,
+            prior_real_error,
+        )
 
     # --- counting-based lookup table (same logic as SRSNVTrainer) ---------
     mqual_clipped = np.clip(mqual, 0.0, max_qual)
@@ -579,6 +592,78 @@ def recalibrate_snvq(
     )
 
     return snvq, x_lut, y_lut
+
+
+def smooth_lut_monotone(
+    x_lut: np.ndarray, y_lut: np.ndarray, cap: float | None = None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Make an SNVQ LUT non-decreasing in MQUAL (cumulative max), optionally capped at ``cap``.
+
+    Robust for sparse high-MQUAL bins (e.g. long homopolymer indels) where the raw counting LUT can
+    wiggle; the cap holds a class's SNVQ below a ceiling until there is evidence to exceed it.
+    """
+    y = np.maximum.accumulate(np.asarray(y_lut, dtype=float))
+    if cap is not None:
+        y = np.minimum(y, float(cap))
+    return np.asarray(x_lut, dtype=float), y
+
+
+def recalibrate_snvq_per_class(
+    mqual: np.ndarray,
+    labels: np.ndarray,
+    class_labels: np.ndarray,
+    *,
+    prefactor_by_class: dict,
+    lut_mask: np.ndarray | None = None,
+    caps_by_class: dict | None = None,
+    smoothing: str = "counting",
+    **recal_kwargs,
+) -> tuple[np.ndarray, dict]:
+    """Build a separate MQUAL->SNVQ LUT per variant class and return per-row SNVQ + the LUT dict.
+
+    The survival curves (fpr/tpr) are computed from each class's own ``lut_mask`` rows and the absolute
+    scale comes from ``prefactor_by_class[class]`` (errors per opportunity). Rows whose class is absent
+    from ``prefactor_by_class`` are left as NaN so the caller can fall back to a global LUT.
+
+    Parameters
+    ----------
+    mqual, labels, class_labels : np.ndarray
+        Per-row MQUAL, boolean TP/FP label, and variant-class label (parallel arrays).
+    prefactor_by_class : dict
+        ``{class: snvq_prefactor}`` absolute error-per-opportunity per class.
+    lut_mask : np.ndarray | None
+        Boolean mask of rows eligible to build the LUT (e.g. out-of-fold validation rows).
+    caps_by_class : dict | None
+        Optional ``{class: SNVQ_ceiling}`` applied when ``smoothing="monotone"``.
+    smoothing : str
+        ``"counting"`` (raw) or ``"monotone"`` (cumulative-max + optional cap).
+
+    Returns
+    -------
+    snvq : np.ndarray
+        Per-row recalibrated SNVQ (NaN where the class had no LUT).
+    luts : dict
+        ``{class: [x_lut, y_lut]}``.
+    """
+    mqual = np.asarray(mqual, dtype=float)
+    labels = np.asarray(labels, dtype=bool)
+    class_labels = np.asarray(class_labels)
+    max_qual = recal_kwargs.get("max_qual", MAX_PHRED)
+    snvq = np.full(mqual.shape, np.nan, dtype=float)
+    luts: dict = {}
+    for cls, pref in prefactor_by_class.items():
+        m = class_labels == cls
+        if not m.any():
+            continue
+        sub_lut_mask = (lut_mask & m)[m] if lut_mask is not None else None
+        _snvq, x_lut, y_lut = recalibrate_snvq(
+            mqual[m], labels[m], snvq_prefactor_override=pref, lut_mask=sub_lut_mask, **recal_kwargs
+        )
+        if smoothing == "monotone":
+            x_lut, y_lut = smooth_lut_monotone(x_lut, y_lut, cap=(caps_by_class or {}).get(cls))
+        snvq[m] = np.interp(np.clip(mqual[m], 0.0, max_qual), x_lut, y_lut)
+        luts[cls] = [np.asarray(x_lut).tolist(), np.asarray(y_lut).tolist()]
+    return snvq, luts
 
 
 def _compute_snvq_prefactor(

@@ -103,6 +103,9 @@ pl.enable_string_cache()
 # ───────────────────────── parsers ────────────────────────────
 
 
+_MIN_STR_UNIT_DISTINCT_BASES = 2  # an STR unit must differ from a homopolymer
+
+
 def _count_bases_in_interval_list(path: str) -> int:
     """
     Count the total number of bases in an interval_list file.
@@ -125,22 +128,92 @@ def _count_bases_in_interval_list(path: str) -> int:
     FileNotFoundError
         If *path* does not exist.
     """
+    return sum(end - start + 1 for _chrom, start, end in _iter_intervals(path))
+
+
+def _iter_intervals(path: str):
+    """Yield ``(chrom, start, end)`` (1-based closed) for each interval in an interval_list/.bed file.
+
+    Accepts Picard ``.interval_list`` (1-based closed, header lines start with ``@``) and BED
+    (0-based half-open); BED is normalized to 1-based closed (start+1).
+    """
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
-
-    n_bases = 0
-    number_of_fields = 3  # chrom, start, end
+    number_of_fields = 3
+    is_bed = path.endswith((".bed", ".bed.gz"))
     opener = gzip.open if path.endswith(".gz") else open
     with opener(path, mode="rt", encoding="utf-8") as fh:
         for line in fh:
-            if line.startswith(("@", "#")) or not line.strip():
+            if line.startswith(("@", "#", "track", "browser")) or not line.strip():
                 continue
             fields = line.rstrip().split("\t")
             if len(fields) < number_of_fields:
                 continue
-            # interval_list is 1-based, closed: bases = end - start + 1
-            n_bases += int(fields[2]) - int(fields[1]) + 1
-    return n_bases
+            start = int(fields[1]) + 1 if is_bed else int(fields[1])  # normalize BED to 1-based
+            yield fields[0], start, int(fields[2])
+
+
+def count_homopolymer_runs_in_interval_list(path: str, ref_fasta: str, min_run: int = 2) -> int:
+    """Count maximal homopolymer runs of length >= ``min_run`` within the intervals.
+
+    A homopolymer-indel error opportunity occurs ~once per homopolymer run (not per base), so this is
+    the per-class "opportunity" denominator for hmer-indels in SNVQ recalibration. Each maximal run of
+    a single base ``A/C/G/T`` with length >= ``min_run`` counts once. Runs are counted within each
+    interval independently (runs spanning interval boundaries are not merged).
+    """
+    import pysam  # local import: pysam is heavy and only needed here
+
+    n_runs = 0
+    with pysam.FastaFile(ref_fasta) as fa:
+        for chrom, start, end in _iter_intervals(path):
+            seq = fa.fetch(chrom, start - 1, end).upper()  # pysam fetch is 0-based half-open
+            n = len(seq)
+            i = 0
+            while i < n:
+                j = i
+                while j < n and seq[j] == seq[i]:
+                    j += 1
+                if seq[i] in "ACGT" and (j - i) >= min_run:
+                    n_runs += 1
+                i = j
+    return n_runs
+
+
+def count_str_loci_in_interval_list(
+    path: str, ref_fasta: str, min_unit: int = 2, max_unit: int = 6, min_copies: int = 2
+) -> int:
+    """Count maximal short-tandem-repeat loci (unit 2..6 bp, >= ``min_copies`` copies) in the intervals.
+
+    Non-homopolymer-indel "opportunity" denominator analog of the homopolymer-run count. Non-overlapping
+    maximal STRs are counted once each.
+    """
+    import pysam
+
+    n_str = 0
+    with pysam.FastaFile(ref_fasta) as fa:
+        for chrom, start, end in _iter_intervals(path):
+            seq = fa.fetch(chrom, start - 1, end).upper()
+            n = len(seq)
+            i = 0
+            while i < n:
+                best = 0
+                for u in range(min_unit, max_unit + 1):
+                    if i + min_copies * u > n:
+                        continue
+                    unit = seq[i : i + u]
+                    if len(set(unit)) < _MIN_STR_UNIT_DISTINCT_BASES:  # skip homopolymer units (hmer, not STR)
+                        continue
+                    k = 0
+                    while i + (k + 1) * u <= n and seq[i + k * u : i + (k + 1) * u] == unit:
+                        k += 1
+                    if k >= min_copies and k * u > best:
+                        best = k * u
+                if best:
+                    n_str += 1
+                    i += best
+                else:
+                    i += 1
+    return n_str
 
 
 def _parse_model_params(mp: str | None) -> dict[str, Any]:
