@@ -50,7 +50,8 @@ clusters that are the same molecule into one `MI` family:
 - `--orientation-in-key` does the opposite: the pair orientation (F1R2/F2R1/FF/RR) joins the
   dedup key, so the two strands of one molecule never share an `MI`. It matters for a symmetric
   UMI (`u5 == u3`), where both strands otherwise get the same key and so one `MI`. `CS` still links
-  the strands. Cannot be combined with `--cross-strand`.
+  the strands. On by default with `--use-umi`; `--no-orientation-in-key` turns it off, and
+  `--cross-strand` does so implicitly (forcing both is an error).
 
 ```bash
 # whole-file
@@ -114,7 +115,7 @@ mark_duplex_consensus consensus.cram consensus.dx.cram -T Homo_sapiens_assembly3
 
 The input is coordinate-sorted and is streamed with a window of `--pad` bp (default 2000); a family
 whose orientations start further apart than that is not seen as duplex. Reads of other families
-get no `dx` (`dx=0` with `--write-simplex`), a stale `dx` is replaced, reads without `CS` and
+get no `dx`, a stale `dx` is replaced, reads without `CS` and
 secondary or supplementary records are left as they are. The output is indexed.
 
 ## consensus_report

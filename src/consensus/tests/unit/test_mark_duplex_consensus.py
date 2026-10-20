@@ -105,17 +105,6 @@ def test_families_are_judged_separately(tmp_path):
     assert dx(out) == {"d1": 1, "d2": 1, "s1": None, "s2": None}
 
 
-def test_write_simplex_writes_zero_on_the_other_families(tmp_path):
-    recs = [
-        read("d1", "chr1", 1000, cs="DUP", po="F1R2"),
-        read("d2", "chr1", 1010, cs="DUP", po="F2R1"),
-        read("s1", "chr1", 1000, cs="SIM", po="F1R2"),
-        read("nocs", "chr1", 1000),
-    ]
-    out, _ = run(tmp_path, recs, write_simplex=True)
-    assert dx(out) == {"d1": 1, "d2": 1, "s1": 0, "nocs": None}
-
-
 def test_a_stale_dx_is_replaced_not_trusted(tmp_path):
     recs = [
         read("lone", "chr1", 1000, cs="C1", po="F1R2", tags={"dx": 1}),

@@ -11,8 +11,7 @@ strands, so a CS family is duplex when its consensus reads include *both* F1R2 a
 UMI (u3 == u5) put both orientations into one MI upstream. ``dx`` looks at ``po`` and cannot be fooled that way.
 
 Every read of a duplex CS family gets ``dx=1``, whichever of its reads it is, so a downstream filter needs
-no second look at the partner. Reads of any other CS family get no ``dx`` (or ``dx=0`` with
-``--write-simplex``), and a ``dx`` that was already on a read is replaced. Reads without ``CS`` are left alone.
+no second look at the partner. Reads of any other CS family get no ``dx``, and a ``dx`` that was already on a read is replaced. Reads without ``CS`` are left alone.
 
 The input must be coordinate-sorted. The two orientations of a molecule start within one fragment length of
 each other, so the file is streamed with a window of ``--pad`` bp: a read is written once no later read can
@@ -49,11 +48,6 @@ def parse_args(argv=None):
         metavar="BP",
         help=f"How far apart the orientations of one family may start (default {DEFAULT_PAD})",
     )
-    parser.add_argument(
-        "--write-simplex",
-        action="store_true",
-        help="Write dx=0 on the reads of CS families that are not duplex, instead of leaving them without the tag",
-    )
     parser.add_argument("--threads", type=int, default=1, help="htslib compression threads (default 1)")
     parser.add_argument("--verbose", "-v", action="store_true")
     return parser.parse_args(argv)
@@ -73,7 +67,6 @@ def mark_duplex(
     cs_tag: str = "CS",
     po_tag: str = "po",
     pad: int = DEFAULT_PAD,
-    write_simplex: bool = False,
     threads: int = 1,
 ) -> dict[str, int]:
     """Stream `input_path` to `output_path`, stamping `tag`. Returns read and family counters."""
@@ -92,8 +85,6 @@ def mark_duplex(
             if duplex:
                 read.set_tag(tag, 1, value_type="i")
                 counters["reads_dx1"] += 1
-            elif write_simplex:
-                read.set_tag(tag, 0, value_type="i")
             state[cs][1] -= 1
             if state[cs][1] == 0:
                 counters["cs_families"] += 1
@@ -144,7 +135,6 @@ def main(argv=None):
         cs_tag=args.cs_tag,
         po_tag=args.po_tag,
         pad=args.pad,
-        write_simplex=args.write_simplex,
         threads=args.threads,
     )
     logging.info("Indexing %s", args.output)

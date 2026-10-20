@@ -11,12 +11,12 @@ Singletons (unique pairs, unmapped, or unpaired reads) get MI = their own query 
 With --use-umi a second tag, CS, links the two strands of one original duplex molecule,
 which the UMI part of the key necessarily splits into two MI families. See assign_cs().
 
---orientation-in-key adds the pair orientation (F1R2, F2R1, FF, RR) to the key, for libraries
-whose u5 and u3 can be equal. A molecule keys as (A, B) on one strand and (B, A) on the other, which
+--orientation-in-key (on by default with --use-umi, off with --cross-strand or --no-orientation-in-key)
+adds the pair orientation (F1R2, F2R1, FF, RR) to the key, for libraries whose u5 and u3 can be equal. A molecule keys as (A, B) on one strand and (B, A) on the other, which
 is what keeps the strands apart; with A == B both strands key as (A, A) and, without the
 orientation, land in one MI family. CS still links them. See _pair_key().
 
-Two opt-in refinements, both off by default so the default output is unchanged:
+Two opt-in refinements, both off by default:
 --position-tolerance merges same-UMI clusters whose fragment boundaries differ by a few bp
 (read1/read2 use asymmetric adapters, so one molecule's copies can map 1-3 bp apart), and
 --cross-strand additionally merges F1R2/F2R1 partners into one MI family. See
@@ -136,11 +136,13 @@ def parse_args():
     )
     parser.add_argument(
         "--orientation-in-key",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="Add the pair orientation (F1R2, F2R1, FF, RR) to the deduplication key, so that pairs of "
         "different orientation never share an MI. Needed when u5 and u3 can be equal (a symmetric UMI): "
         "the two strands of a molecule then key identically and would otherwise be one family. CS still "
-        "links the strands. Cannot be combined with --cross-strand, which merges them on purpose.",
+        "links the strands. Default: on with --use-umi, off with --cross-strand or without --use-umi. "
+        "Cannot be forced on together with --cross-strand, which merges the strands on purpose.",
     )
     parser.add_argument(
         "--reference",
@@ -218,6 +220,8 @@ def parse_args():
     args = parser.parse_args()
     if args.orientation_in_key and args.cross_strand:
         parser.error("--orientation-in-key and --cross-strand contradict each other")
+    if args.orientation_in_key is None:
+        args.orientation_in_key = args.use_umi and not args.cross_strand
     return args
 
 
