@@ -7,6 +7,7 @@ Duplicate marking and performance & duplex reports for the **ReadFuserAlignSort*
 |-------------|------|------|
 | `mark_duplicates_mi` | *before* `read_fuser` | Assign `MI`/`DS` duplicate families, and with `--use-umi` the `CS` cross-strand duplex tag. |
 | `mark_duplex_consensus` | *after* the consensus is sorted | Write `dx=1` on the consensus reads of CS families whose `po` shows both orientations (F1R2 and F2R1). |
+| `pair_consensus_reads` | *after* `read_fuser`, before alignment | Re-pair the two strand-consensus reads of each pair (shared name, R1/R2 flags) so UA 4.x aligns them as a pair. |
 | `consensus_report` | *after* the pipeline | Per-sample HTML report of alignment, duplication, coverage and duplex family metrics. |
 
 ## mark_duplicates_mi
@@ -118,6 +119,26 @@ whose orientations start further apart than that is not seen as duplex. Reads of
 get no `dx`, a stale `dx` is replaced, reads without `CS` and
 secondary or supplementary records are left as they are. The output is indexed.
 
+## pair_consensus_reads
+
+After `unpair_reads_by_strand` each strand of a pair gets its own single-end consensus read, named
+`<stem>0` (forward) and `<stem>1` (reverse) with the same `CS` and `po`. Aligned alone, one of them can
+land with a low MAPQ in a repeat that its mate would have resolved. This writes the two as one unaligned
+pair: R1 is the forward read for `po=F1R2` and the reverse read for `F2R1` (flags 77/141), both are
+named `<stem>`, and the reverse read is reverse-complemented because a mate is handed to the aligner as
+sequenced. `tp`/`t0` are left alone (the read group declares them reference-oriented).
+
+```bash
+pair_consensus_reads consensus.bam consensus.paired.bam --counters pair_counters.txt
+```
+
+Reads without a partner, with another `po`, or whose partners disagree on `po` or `CS` are written
+unchanged. The input need not be sorted: reads are spread over `--buckets` temporary files by stem.
+
+Needs UA 4.x (`--unpaired-cost`, `--max-proper-tlen`); UA 3.x has no paired mode. A 3.x index is
+read as is, with identical alignments. UA sets the strand and pair flags, so do not run the nf/nr strand
+step on paired reads.
+
 ## consensus_report
 
 The consensus step (`read_fuser`) fuses the reads of each UMI/MI family into a
@@ -226,6 +247,7 @@ Outputs (alongside `--output`):
 | `duplex_metrics.py` | Parse `rn`/`nf`/`nr`, classify families, family size + coverage per category (with an `MI`-tag fallback). |
 | `on_target.py` | Genome-wide and optional on-target coverage from a bedGraph + targets BED. |
 | `consensus_log.py` | Parse the consensus tool stdout log for performance counters. |
+| `pair_consensus_reads.py` | Pairs the strand-consensus reads of a pair into unaligned R1/R2 records for UA. |
 | `consensus_report.py` | CLI orchestration: read local inputs, compute metrics, write the HTML report + CSVs. |
 
 ## Requirements
