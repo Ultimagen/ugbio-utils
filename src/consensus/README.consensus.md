@@ -53,6 +53,9 @@ clusters that are the same molecule into one `MI` family:
   UMI (`u5 == u3`), where both strands otherwise get the same key and so one `MI`. `CS` still links
   the strands. On by default with `--use-umi`; `--no-orientation-in-key` turns it off, and
   `--cross-strand` does so implicitly (forcing both is an error).
+  Without `--use-umi` it can still be forced on; `CS` is then the position family: every
+  orientation family at one (chrom, left_start, right_end) shares a `CS`, which over-links
+  independent molecules at the same place.
 
 ```bash
 # whole-file

@@ -471,7 +471,29 @@ def test_orientation_in_key_without_umi_only_splits_orientations(tmp_path):
     )
     assert marked(run(tmp_path, recs, name="plain.bam"))["fwd"]["DS"] == 2
     got = marked(run(tmp_path, recs, "--orientation-in-key", name="orient.bam"))
-    assert (got["fwd"]["DS"], got["rev"]["DS"], got["fwd"]["CS"]) == (1, 1, None)
+    assert (got["fwd"]["DS"], got["rev"]["DS"]) == (1, 1)
+    assert got["fwd"]["CS"] == got["rev"]["CS"] == "fwd"
+
+
+def test_without_umi_cs_links_the_orientations_at_one_position_and_nothing_else(tmp_path):
+    recs = flatten(
+        pair("fwd", "chr1", 1000, 1200, UMI_A, UMI_A, kind="F1R2"),
+        pair("fwd2", "chr1", 1000, 1200, UMI_B, UMI_C, kind="F1R2"),
+        pair("rev", "chr1", 1000, 1200, UMI_B, UMI_C, kind="F2R1"),
+        pair("elsewhere", "chr1", 1000, 1300, UMI_A, UMI_A, kind="F2R1"),
+    )
+    got = marked(run(tmp_path, recs, "--orientation-in-key", name="orient.bam"))
+    assert (got["fwd"]["MI"], got["fwd2"]["MI"], got["rev"]["DS"]) == ("fwd", "fwd", 1)
+    assert {got["fwd"]["CS"], got["fwd2"]["CS"], got["rev"]["CS"]} == {"fwd"}
+    assert got["elsewhere"]["CS"] == "elsewhere"
+
+
+def test_without_umi_and_without_orientation_there_is_still_no_cs(tmp_path):
+    recs = flatten(
+        pair("fwd", "chr1", 1000, 1200, UMI_A, UMI_A, kind="F1R2"),
+        pair("rev", "chr1", 1000, 1200, UMI_B, UMI_C, kind="F2R1"),
+    )
+    assert marked(run(tmp_path, recs, name="plain.bam"))["fwd"]["CS"] is None
 
 
 def test_same_orientation_partners_merge_under_tolerance_alone(tmp_path):
@@ -959,6 +981,7 @@ OPTION_SETS = [
     pytest.param(("--use-umi", "--cross-strand", "--position-tolerance", "3"), id="umi-cross-tol3"),
     pytest.param(("--use-umi", "--pair-orientation-tag", "po"), id="umi-po"),
     pytest.param(("--use-umi", "--orientation-in-key"), id="umi-orient"),
+    pytest.param(("--orientation-in-key",), id="orient-no-umi"),
     pytest.param(
         ("--use-umi", "--orientation-in-key", "--position-tolerance", "2", "--pair-orientation-tag", "po"),
         id="umi-orient-tol2-po",

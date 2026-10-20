@@ -69,6 +69,7 @@ MIN_CLUSTER_SIZE = 2
 # Length of a UMI-bearing dedup key: (chrom, left_start, right_end, u5, u3).
 # A shorter key was built without --use-umi, so there is no cross-strand link to make.
 UMI_KEY_LEN = 5
+POSITION_KEY_LEN = 3
 
 # Default is 0 (exact boundary match) so that --use-umi output is unchanged unless asked.
 DEFAULT_POSITION_TOLERANCE = 0
@@ -440,13 +441,22 @@ def assign_cs(clusters: dict[tuple, list[str]], orient: dict[tuple, bool]) -> di
     chose to keep it. Compare read_fuser/README.md "## Tags", where fs/rs had to be
     renamed for exactly this reason.
 
-    Returns read_name -> CS, empty if the key carries no UMI part (without --use-umi both
-    strands already share one key, so CS would carry no information beyond MI).
+    Without UMIs, CS links by position alone. If the key carries the pair orientation
+    (--orientation-in-key) the two strands are separate MI families, and every family at one
+    (chrom, left_start, right_end) shares a CS: the strands of a molecule cannot be told apart
+    from independent molecules at the same place, so this over-links on a deep panel. Without the
+    orientation both strands share one key, CS would carry no information beyond MI, and no
+    CS is written.
+
+    Returns read_name -> CS, empty if the key carries nothing to link.
     """
     groups: dict[tuple, list[tuple[str, list[str]]]] = defaultdict(list)
     for key, names in clusters.items():
-        if len(key) < UMI_KEY_LEN:  # no UMI part: nothing to normalise, nothing to link
+        if len(key) == POSITION_KEY_LEN:  # no UMI, no orientation: nothing to link
             return {}
+        if len(key) == POSITION_KEY_LEN + 1:  # no UMI, orientation last: link by position
+            groups[key[:POSITION_KEY_LEN]].append((min(names), names))
+            continue
         umi = key[3:5]
         if orient.get(key):  # F2R1: R1 was the rightmost mate, so undo the swap
             umi = umi[::-1]
