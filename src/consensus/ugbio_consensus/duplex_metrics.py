@@ -159,19 +159,21 @@ def _overlap_with_intervals(read, starts: list[int], intervals: list[tuple[str, 
 
     ``starts`` is the sorted list of interval start coordinates (for the read's
     chromosome) enabling a bisect lookup; ``intervals`` are the matching disjoint
-    ``(chrom, start, end)`` tuples. A read may straddle interval boundaries, so we
-    sum the clipped overlap against the interval at/just-before the read start and
-    the following one.
+    ``(chrom, start, end)`` tuples. Only the read's aligned blocks are counted, so
+    CIGAR deletions (``D``) and reference skips (``N``) contribute no covered bases.
+    A block may straddle interval boundaries, so we sum its clipped overlap against
+    the interval at/just-before the block end and the preceding ones.
     """
     total = 0
-    idx = bisect.bisect_right(starts, read.reference_end) - 1
-    # Walk back over the (few) intervals that could overlap this read.
-    while idx >= 0:
-        _chrom, i_start, i_end = intervals[idx]
-        if i_end <= read.reference_start:
-            break
-        total += max(0, min(read.reference_end, i_end) - max(read.reference_start, i_start))
-        idx -= 1
+    for block_start, block_end in read.get_blocks():
+        idx = bisect.bisect_right(starts, block_end) - 1
+        # Walk back over the (few) intervals that could overlap this block.
+        while idx >= 0:
+            _chrom, i_start, i_end = intervals[idx]
+            if i_end <= block_start:
+                break
+            total += max(0, min(block_end, i_end) - max(block_start, i_start))
+            idx -= 1
     return total
 
 
@@ -255,6 +257,13 @@ def _resolve_scan_intervals(
     """
     if intervals is None:
         intervals = [(name, 0, None) for name in samfile.references]
+    # Skip contigs absent from the header (e.g. 'chr20' on a b37 CRAM, or alt/chrM
+    # rows in a targets BED) rather than failing the whole scan on them.
+    known = set(samfile.references)
+    missing = sorted({chrom for chrom, _start, _end in intervals if chrom not in known})
+    if missing:
+        logger.warning("Skipping %d contig(s) not in the alignment header: %s", len(missing), ", ".join(missing))
+        intervals = [iv for iv in intervals if iv[0] in known]
     resolved = [
         (chrom, start, samfile.get_reference_length(chrom) if end is None else end) for chrom, start, end in intervals
     ]
@@ -277,8 +286,9 @@ def collect_family_metrics_from_strand_tags(
     """Classify consensus reads and measure family size and coverage over ``intervals``.
 
     For each primary read overlapping the (merged) intervals we read its strand
-    tags (``nf``/``nr``), classify the family, record family size, and add its aligned span
-    (clipped to the interval) to that category's covered-base total. Family-size
+    tags (``nf``/``nr``), classify the family, record family size, and add its aligned
+    bases (CIGAR aligned blocks, clipped to the interval; deletions and skips excluded)
+    to that category's covered-base total. Family-size
     statistics count each read once, at the interval containing its start, so
     reads spanning an interval boundary are not double-counted.
 
@@ -433,7 +443,6 @@ def collect_family_metrics_from_mi_tags(
         Keys: ``per_category`` (DataFrame with ``n_families`` and
         ``avg_family_size`` per category) and ``n_families``.
     """
-    merged = _merge_intervals(intervals)
     mi_strands: dict[object, list[str]] = defaultdict(list)
 
     open_kwargs = {"reference_filename": reference}
@@ -441,13 +450,15 @@ def collect_family_metrics_from_mi_tags(
         open_kwargs["index_filename"] = index_path
 
     with pysam.AlignmentFile(cram_path, "rc", **open_kwargs) as samfile:
-        for chrom, start, end in merged:
-            for read in samfile.fetch(chrom, start, end):
-                if read.is_secondary or read.is_supplementary or read.is_unmapped:
-                    continue
-                if not read.has_tag("MI"):
-                    continue
-                mi_strands[read.get_tag("MI")].append("-" if read.is_reverse else "+")
+        merged, _total_bp, starts_by_chrom = _resolve_scan_intervals(samfile, intervals)
+        # One fetch per chromosome plus overlap filtering, so a read spanning two
+        # nearby intervals is counted once (a per-interval fetch would return it twice).
+        for chrom_intervals, read in _iter_primary_reads_by_chrom(samfile, merged, None):
+            if not read.has_tag("MI"):
+                continue
+            if _overlap_with_intervals(read, starts_by_chrom[chrom_intervals[0][0]], chrom_intervals) <= 0:
+                continue
+            mi_strands[read.get_tag("MI")].append("-" if read.is_reverse else "+")
 
     sizes: dict[str, list[int]] = {c: [] for c in CATEGORIES}
     for strands in mi_strands.values():

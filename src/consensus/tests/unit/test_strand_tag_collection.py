@@ -1,6 +1,7 @@
 """Build a tiny in-memory BAM with rn/nf/nr/MI tags and check family classification & coverage."""
 
 import numpy as np
+import pandas as pd
 import pysam
 import pytest
 from ugbio_consensus import duplex_metrics
@@ -217,3 +218,64 @@ def test_median_from_histogram_matches_numpy(sizes):
 
 def test_median_from_histogram_empty():
     assert np.isnan(duplex_metrics._median_from_histogram({}, 0))
+
+
+def _write_bam(tmp_path, reads_fn, name="reads.bam"):
+    header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": CHROM, "LN": CHROM_LEN}]}
+    hdr = pysam.AlignmentHeader.from_dict(header)
+    path = tmp_path / name
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for r in reads_fn(hdr):
+            out.write(r)
+    pysam.index(str(path))
+    return str(path)
+
+
+def _deletion_read(hdr):
+    """A single-strand consensus read 10M100D10M at 100: 20 aligned bases spanning [100, 220)."""
+    a = _make_read(hdr, "del1", 100, (2, 0))
+    a.query_sequence = "A" * 20
+    a.cigartuples = [(0, 10), (2, 100), (0, 10)]
+    a.query_qualities = pysam.qualitystring_to_array("I" * 20)
+    return [a]
+
+
+def test_deletion_bases_not_counted_as_covered(tmp_path):
+    path = _write_bam(tmp_path, _deletion_read)
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(path, [(CHROM, 0, CHROM_LEN)], reference=None)
+    assert res["per_category"].loc[duplex_metrics.SINGLE_STRAND, "covered_bases"] == 20
+
+
+def test_target_inside_deletion_is_not_covered(tmp_path):
+    path = _write_bam(tmp_path, _deletion_read)
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(path, [(CHROM, 150, 170)], reference=None)
+    assert res["per_category"].loc[duplex_metrics.SINGLE_STRAND, "covered_bases"] == 0
+    assert res["per_category"].loc[duplex_metrics.SINGLE_STRAND, "n_reads"] == 0
+
+
+def test_unknown_contig_is_skipped(bam_path):
+    """A contig missing from the header (b37 '20' vs 'chr20', chrM, alts) is skipped, not fatal."""
+    expected = duplex_metrics.collect_family_metrics_from_strand_tags(bam_path, [(CHROM, 0, CHROM_LEN)], None)
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(
+        bam_path, [("chr20", 0, None), ("chrM", 0, 100), (CHROM, 0, CHROM_LEN)], reference=None
+    )
+    pd.testing.assert_frame_equal(res["per_category"], expected["per_category"])
+    assert res["total_interval_bp"] == CHROM_LEN
+    mi = duplex_metrics.collect_family_metrics_from_mi_tags(bam_path, [("chrM", 0, 100), (CHROM, 0, CHROM_LEN)], None)
+    assert mi["n_families"] == 4
+
+
+def test_mi_fallback_counts_read_spanning_two_intervals_once(tmp_path):
+    """A read [100, 200) overlapping two disjoint targets is one singleton family, not a size-2 family."""
+    path = _write_bam(tmp_path, lambda hdr: [_make_read(hdr, "r1", 100, None, mi=7)])
+    res = duplex_metrics.collect_family_metrics_from_mi_tags(path, [(CHROM, 100, 120), (CHROM, 150, 170)], None)
+    assert res["n_families"] == 1
+    assert res["per_category"].loc[duplex_metrics.SINGLETON, "n_families"] == 1
+    assert res["per_category"].loc[duplex_metrics.SINGLE_STRAND, "n_families"] == 0
+
+
+def test_mi_fallback_ignores_reads_between_intervals(tmp_path):
+    """The per-chromosome fetch spans the gap between targets; reads only in the gap are excluded."""
+    path = _write_bam(tmp_path, lambda hdr: [_make_read(hdr, "gap", 300, None, mi=9)])
+    res = duplex_metrics.collect_family_metrics_from_mi_tags(path, [(CHROM, 0, 200), (CHROM, 600, 700)], None)
+    assert res["n_families"] == 0
