@@ -113,3 +113,73 @@ def test_missing_bedgraph_raises(tmp_path, targets_multi_sorted):
             targets_bed_sorted=targets_multi_sorted,
             target_size=300,
         )
+
+
+# --- Overlapping targets must not be double counted --------------------------------
+# Depth 10 over chr1:[0,100); targets [0,100) and [50,100) overlap on [50,100).
+_BEDGRAPH_FLAT = "chr1\t0\t100\t10\n"
+_TARGETS_OVERLAPPING = "chr1\t0\t100\nchr1\t50\t100\n"
+
+
+def _write_gz(path, text):
+    with gzip.open(path, "wt") as fh:
+        fh.write(text)
+    return str(path)
+
+
+def test_sorted_bed_merges_overlapping_targets(tmp_path):
+    raw = tmp_path / "overlap.bed"
+    raw.write_text(_TARGETS_OVERLAPPING, encoding="utf-8")
+    out = sorted_bed(str(raw), str(tmp_path / "overlap.sorted.bed"))
+    assert open(out, encoding="utf-8").read().split("\n")[:-1] == ["chr1\t0\t100"]
+
+
+def test_overlapping_targets_not_double_counted(tmp_path):
+    bg = _write_gz(tmp_path / "flat.bedGraph.gz", _BEDGRAPH_FLAT)
+    raw = tmp_path / "overlap.bed"
+    raw.write_text(_TARGETS_OVERLAPPING, encoding="utf-8")
+    targets = sorted_bed(str(raw), str(tmp_path / "overlap.sorted.bed"))
+    size = bed_covered_size(targets)
+    assert size == 100
+    res = compute_coverage_from_bedgraph(bg, genome_size=100, targets_bed_sorted=targets, target_size=size)
+    assert res.on_target_bases_seq == 1000
+    assert res.on_target_rate == pytest.approx(1.0)
+    assert res.target_mean_cvg == pytest.approx(10.0)
+
+
+def test_unmerged_overlapping_targets_rejected(tmp_path):
+    """A direct call with an overlapping (unmerged) BED fails instead of inflating the rate."""
+    bg = _write_gz(tmp_path / "flat.bedGraph.gz", _BEDGRAPH_FLAT)
+    raw = tmp_path / "overlap.bed"
+    raw.write_text(_TARGETS_OVERLAPPING, encoding="utf-8")
+    with pytest.raises(ValueError, match="overlapping"):
+        compute_coverage_from_bedgraph(bg, genome_size=100, targets_bed_sorted=str(raw), target_size=100)
+
+
+def test_bed_covered_size_propagates_upstream_failure(tmp_path):
+    """pipefail: a missing BED must raise, not report a target size of 0."""
+    with pytest.raises(subprocess.CalledProcessError):
+        bed_covered_size(str(tmp_path / "missing.bed"))
+
+
+def test_paths_with_spaces_and_quotes(tmp_path):
+    d = tmp_path / "dir with space's"
+    d.mkdir()
+    bg = _write_gz(d / "cov file.bedGraph.gz", _BEDGRAPH)
+    raw = d / "targets file.bed"
+    raw.write_text(_TARGETS, encoding="utf-8")
+    targets = sorted_bed(str(raw), str(d / "targets sorted.bed"))
+    size = bed_covered_size(str(raw))
+    assert size == 100
+    res = compute_coverage_from_bedgraph(bg, genome_size=1000, targets_bed_sorted=targets, target_size=size)
+    assert res.total_bases_seq == 3500
+    assert res.on_target_bases_seq == 2000
+
+
+def test_check_disjoint_accepts_unsorted_disjoint_bed(tmp_path):
+    """Overlap detection does not depend on row order: unsorted but disjoint targets are accepted."""
+    bg = _write_gz(tmp_path / "cov.bedGraph.gz", _BEDGRAPH)
+    raw = tmp_path / "unsorted.bed"
+    raw.write_text("chr1\t200\t250\nchr1\t100\t150\n", encoding="utf-8")
+    res = compute_coverage_from_bedgraph(bg, genome_size=1000, targets_bed_sorted=str(raw), target_size=100)
+    assert res.on_target_bases_seq == 50 * 20 + 50 * 5

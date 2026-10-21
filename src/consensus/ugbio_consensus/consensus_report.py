@@ -177,7 +177,10 @@ def genome_size_from_sorter_json(sorter_stats_json: str) -> int:
 
 
 def read_targets_bed(targets_bed: str, tmp_dir: str) -> tuple[str, int]:
-    """Prepare a sorted targets BED and return ``(sorted_bed_path, target_size_bp)``.
+    """Prepare a sorted, merged targets BED and return ``(sorted_bed_path, target_size_bp)``.
+
+    The same disjoint union is used for the on-target intersection and the target
+    size, so overlapping target rows are neither double counted nor inconsistent.
 
     Parameters
     ----------
@@ -189,11 +192,11 @@ def read_targets_bed(targets_bed: str, tmp_dir: str) -> tuple[str, int]:
     Returns
     -------
     tuple[str, int]
-        Sorted BED path and merged target size in bp.
+        Sorted, merged BED path and merged target size in bp.
     """
     os.makedirs(tmp_dir, exist_ok=True)
     sorted_path = sorted_bed(targets_bed, os.path.join(tmp_dir, "targets_sorted.bed"))
-    return sorted_path, bed_covered_size(targets_bed)
+    return sorted_path, bed_covered_size(sorted_path)
 
 
 def bed_intervals_on_chrom(bed_path: str, chrom: str | None) -> list[tuple[str, int, int]]:

@@ -21,6 +21,7 @@ notebook, generalised to an arbitrary BED and made target-agnostic.
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 from dataclasses import dataclass
 
@@ -92,28 +93,51 @@ def bed_covered_size(bed_path: str) -> int:
     int
         Sum of merged interval lengths (non-overlapping).
     """
-    cmd = f"sort -k1,1 -k2,2n {bed_path} | bedtools merge -i - | awk '{{s+=$3-$2}} END{{print s+0}}'"
-    out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=True)  # noqa: S607
-    return int(out.stdout.strip() or 0)
+    cmd = f"sort -k1,1 -k2,2n {shlex.quote(bed_path)} | bedtools merge -i - | awk '{{s+=$3-$2}} END{{print s+0}}'"
+    return int(_run(cmd) or 0)
 
 
 def sorted_bed(bed_path: str, output_path: str) -> str:
-    """Write a coordinate-sorted copy of ``bed_path`` (needed for ``intersect -sorted``).
+    """Write a coordinate-sorted, merged (disjoint) copy of ``bed_path``.
+
+    Overlapping intervals are merged so that ``bedtools intersect`` against the
+    result counts each base once - consistent with :func:`bed_covered_size`, which
+    measures the same union. Only the ``chrom``/``start``/``end`` columns are kept.
 
     Parameters
     ----------
     bed_path : str
         Input BED.
     output_path : str
-        Where to write the sorted BED.
+        Where to write the sorted, merged BED.
 
     Returns
     -------
     str
         ``output_path``.
     """
-    subprocess.run(f"sort -k1,1 -k2,2n {bed_path} > {output_path}", shell=True, check=True)  # noqa: S602
+    _run(f"sort -k1,1 -k2,2n {shlex.quote(bed_path)} | bedtools merge -i - > {shlex.quote(output_path)}")
     return output_path
+
+
+def _check_disjoint(bed_path: str) -> None:
+    """Raise if ``bed_path`` has overlapping intervals (they would be counted twice)."""
+    by_chrom: dict[str, list[tuple[int, int]]] = {}
+    with open(bed_path, encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip() or line.startswith(("#", "track", "browser")):
+                continue
+            chrom, start, end = line.split()[:3]
+            by_chrom.setdefault(chrom, []).append((int(start), int(end)))
+    for chrom, intervals in by_chrom.items():
+        max_end = -1
+        for start, end in sorted(intervals):
+            if start < max_end:
+                raise ValueError(
+                    f"{bed_path} has overlapping intervals on {chrom}; "
+                    "prepare it with sorted_bed() so on-target bases are not double counted"
+                )
+            max_end = max(max_end, end)
 
 
 def compute_coverage_from_bedgraph(
@@ -137,8 +161,8 @@ def compute_coverage_from_bedgraph(
         Callable genome size (bp) for ``genome_mean_cvg`` (e.g. from the sorter
         JSON ``base_coverage["Genome"]`` histogram length-weighted sum).
     targets_bed_sorted : str | None, optional
-        Coordinate-sorted targets BED. If ``None``, only genome-wide totals are
-        computed.
+        Coordinate-sorted, non-overlapping targets BED (as written by
+        :func:`sorted_bed`). If ``None``, only genome-wide totals are computed.
     target_size : int | None, optional
         Merged target size in bp (required with ``targets_bed_sorted``).
 
@@ -147,7 +171,7 @@ def compute_coverage_from_bedgraph(
     OnTargetResult
         Coverage summary for the sample.
     """
-    source = f"zcat '{bedgraph}'" if bedgraph.endswith(".gz") else f"cat '{bedgraph}'"
+    source = f"zcat {shlex.quote(bedgraph)}" if bedgraph.endswith(".gz") else f"cat {shlex.quote(bedgraph)}"
     # %.0f, not `print`: the sums reach ~2.5e10 and awk's default OFMT would render
     # them in scientific notation, which int() cannot parse.
     sum_weighted = "awk '{s+=($3-$2)*$4} END{printf \"%.0f\\n\", s+0}'"
@@ -158,6 +182,9 @@ def compute_coverage_from_bedgraph(
 
     if target_size is None:
         raise ValueError("target_size is required when targets_bed_sorted is given")
+    # bedtools intersect emits one clipped block per overlapping target, so an
+    # unmerged BED would count bases in target overlaps more than once.
+    _check_disjoint(targets_bed_sorted)
     # A second streamed pass, deliberately not a `tee` into a process substitution:
     # the shell does not wait for a process substitution, so its result was racy,
     # and any early exit downstream of `tee` truncated it via EPIPE.
@@ -168,5 +195,6 @@ def compute_coverage_from_bedgraph(
     # with stderr discarded and its non-zero status swallowed mid-pipeline, silently
     # truncated both sums to their chr1 prefix. Without -sorted the BED is loaded
     # into memory and the result is order-independent.
-    on_target_bases = int(_run(f"{source} | bedtools intersect -a - -b {targets_bed_sorted} | {sum_weighted}") or 0)
+    intersect = f"bedtools intersect -a - -b {shlex.quote(targets_bed_sorted)}"
+    on_target_bases = int(_run(f"{source} | {intersect} | {sum_weighted}") or 0)
     return OnTargetResult(total_bases, on_target_bases, genome_size, target_size)
