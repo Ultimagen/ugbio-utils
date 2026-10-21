@@ -50,11 +50,13 @@ Usage:
 # (MI/DS vs the pre-CS baseline) and cs_links.py (linkage vs the validated blob) first,
 # and note that only a raw `samtools view` diff sees the emitted aux order MI, DS, CS.
 #
-# Since that validation, output changed in four places (and --position-tolerance became whole-file only), all outside the default --use-umi path on
-# primary records: FF/RR families with --orientation-in-key get their own CS; CS links survive
-# --position-tolerance merges; sharded mode never pairs mates further apart than --pad; and a
-# secondary/supplementary record far from its pair (another contig, or beyond --pad) no longer takes
-# its pair's MI/DS/CS in whole-file mode (see _takes_family_tags).
+# Since that validation, output changed in five places (and --position-tolerance became whole-file
+# only). Four are outside the default --use-umi path on primary records: FF/RR families with
+# --orientation-in-key get their own CS; CS links survive --position-tolerance merges; sharded mode
+# never pairs mates further apart than --pad; and a secondary/supplementary record far from its pair
+# (another contig, or beyond --pad) no longer takes its pair's MI/DS/CS in whole-file mode (see
+# _takes_family_tags). The fifth does touch the default path: mates with equal starts are ordered by
+# end in _pair_key, so a dovetailed pair keys the same whichever mate is R1 and its strands share CS.
 
 import argparse
 import bisect
@@ -260,7 +262,9 @@ def _read_rec(read, use_umi: bool, umis: dict[str, str] | None = None) -> tuple:
 
 
 def _pair_key(r1: tuple, r2: tuple, use_umi: bool, orientation_in_key: bool = False) -> tuple:
-    left, right = (r1, r2) if r1[_START] <= r2[_START] else (r2, r1)
+    # Ties on start are broken by end, so a pair keys the same whichever mate is R1: the two strands of a
+    # dovetailed molecule swap R1 and R2, and must still share the positional part of the key for CS.
+    left, right = (r1, r2) if (r1[_START], r1[_END]) <= (r2[_START], r2[_END]) else (r2, r1)
     key: tuple = (left[_CHROM], left[_START], right[_END])
     if use_umi:
         # u5 is always on R1 and u3 on R2 by library design, regardless of strand
@@ -315,6 +319,7 @@ def collect_pair_keys(
     limit: int | None = None,
     orientations: dict[str, str] | None = None,
     orientation_in_key: bool = False,
+    unmatched: set[str] | None = None,
 ) -> tuple[dict[str, tuple | None], dict[tuple, bool]]:
     """
     Stream the coordinate-sorted file once, matching mates via a sliding buffer.
@@ -327,6 +332,7 @@ def collect_pair_keys(
       read_name -> dedup_key (or None for singletons / trans-chrom pairs), and
       dedup_key -> R1-is-the-rightmost-mate, one entry per cluster, for assign_cs.
       When `orientations` is given it is also filled, name -> pair orientation.
+      When `unmatched` is given it is filled with the names seen as a single primary record.
     """
     # pending: name -> first-seen rec (waiting for its mate)
     pending: dict[str, tuple] = {}
@@ -371,6 +377,8 @@ def collect_pair_keys(
     # reads still in pending had no mate in the file
     for name in pending:
         pair_keys[name] = None
+    if unmatched is not None:
+        unmatched.update(pending)
 
     logging.info("Pass 1 done: %d reads ingested, %d left without mate", n_seen, len(pending))
     return pair_keys, orient
@@ -661,15 +669,21 @@ def build_mi_map(
     return mi_map, ds_map, clusters
 
 
-def print_family_size_distribution(mi_map: dict[str, str], total_pairs: int = 0) -> None:
+def print_family_size_distribution(mi_map: dict[str, str], total_pairs: int = 0, n_unmatched: int = 0) -> None:
+    """
+    `total_pairs` counts every primary read name; `n_unmatched` of them were seen as a single
+    record (their mate absent or unmapped) and are size-1 families, the rest are pairs.
+    """
     # mi_map only contains reads in duplicate clusters; multiply by 2 for individual reads
     from collections import Counter
 
     family_sizes = Counter(n * 2 for n in Counter(mi_map.values()).values())
     # unique pairs (not in any duplicate cluster) → size-2 families
-    n_singleton_pairs = total_pairs - len(mi_map)
+    n_singleton_pairs = total_pairs - len(mi_map) - n_unmatched
     if n_singleton_pairs > 0:
         family_sizes[2] = family_sizes.get(2, 0) + n_singleton_pairs
+    if n_unmatched > 0:
+        family_sizes[1] = family_sizes.get(1, 0) + n_unmatched
 
     print_family_sizes(family_sizes)
 
@@ -977,7 +991,8 @@ def process_shard(job: tuple) -> dict:
             if start <= key[1] < end:
                 family_sizes[2 * len(names)] += 1
                 n_pairs += len(names)
-        family_sizes[2] += n_orphans
+        # n_orphans counts records, not pairs: each is a one-read family.
+        family_sizes[1] += n_orphans
 
         n_written = 0
         with pysam.AlignmentFile(out_path, "wb", header=bam.header) as out:
@@ -1189,7 +1204,7 @@ def print_family_sizes(family_sizes: dict[int, int]) -> None:
     print("family_size\tfamilies\treads\tpct_reads")
     for size in sorted(family_sizes):
         n_fam = family_sizes[size]
-        if not n_fam:  # sharded runs seed size 2 with the orphan count, which may be 0
+        if not n_fam:  # sharded runs seed size 1 with the orphan count, which may be 0
             continue
         n_reads = size * n_fam
         print(f"{size}\t{n_fam}\t{n_reads}\t{100 * n_reads / total_reads:.1f}%")
@@ -1223,8 +1238,9 @@ def main():
 
     logging.info("Pass 1 — scanning %s", args.input)
     orientations: dict[str, str] | None = {} if args.pair_orientation_tag else None
+    unmatched: set[str] = set()
     pair_keys, orient = collect_pair_keys(
-        args.input, args.use_umi, open_kwargs, args.limit, orientations, args.orientation_in_key
+        args.input, args.use_umi, open_kwargs, args.limit, orientations, args.orientation_in_key, unmatched
     )
     logging.info("Collected info for %d primary paired read names", len(pair_keys))
 
@@ -1267,7 +1283,7 @@ def main():
     pysam.index(args.output)
 
     logging.info("Done")
-    print_family_size_distribution(mi_map, total_pairs=len(pair_keys))
+    print_family_size_distribution(mi_map, total_pairs=len(pair_keys), n_unmatched=len(unmatched))
 
 
 if __name__ == "__main__":

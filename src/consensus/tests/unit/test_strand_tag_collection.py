@@ -93,6 +93,16 @@ def test_coverage_sums(bam_path):
     assert res["total_interval_bp"] == CHROM_LEN
 
 
+def test_capped_scan_does_not_report_coverage(bam_path):
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(
+        bam_path, [(CHROM, 0, CHROM_LEN)], reference=None, max_reads=1
+    )
+    per = res["per_category"]
+    assert res["n_reads_scanned"] == 1
+    assert per.loc[duplex_metrics.DUPLEX, "covered_bases"] == READ_LEN
+    assert per["coverage"].isna().all()
+
+
 def test_whole_chromosome_end_none(bam_path):
     # end=None means "to the end of the contig"; resolved from the header (CHROM_LEN).
     res = duplex_metrics.collect_family_metrics_from_strand_tags(bam_path, [(CHROM, 0, None)], reference=None)

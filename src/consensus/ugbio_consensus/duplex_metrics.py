@@ -308,6 +308,8 @@ def collect_family_metrics_from_strand_tags(
         Explicit ``.crai`` path (useful when reading from S3 with a local index).
     max_reads : int | None, optional
         Stop after this many primary reads (for quick sampling). ``None`` = all.
+        When the cap is reached, ``coverage`` is NaN: the scan saw only a prefix
+        of the reads, so it cannot be divided by the full interval length.
 
     Returns
     -------
@@ -372,6 +374,11 @@ def collect_family_metrics_from_strand_tags(
             n_reads_per_category[category] += 1
             size_sum_per_category[category] += size
 
+    # A capped scan saw only a prefix of the reads but total_bp spans every interval, so the
+    # ratio would understate coverage; report it as unknown instead.
+    capped = max_reads is not None and n_reads_scanned >= max_reads
+    if capped:
+        logger.info("Read cap of %d reached; coverage is not reported for a partial scan", max_reads)
     rows = {}
     for category in CATEGORIES:
         n_cat = n_reads_per_category[category]
@@ -380,7 +387,7 @@ def collect_family_metrics_from_strand_tags(
             "avg_family_size": size_sum_per_category[category] / n_cat if n_cat else np.nan,
             "median_family_size": _median_from_histogram(family_size_hist[category], n_cat),
             "covered_bases": covered_bases[category],
-            "coverage": covered_bases[category] / total_bp if total_bp else np.nan,
+            "coverage": covered_bases[category] / total_bp if total_bp and not capped else np.nan,
         }
     per_category = pd.DataFrame.from_dict(rows, orient="index")
     per_category.index.name = "category"
