@@ -2,6 +2,7 @@
 
 import pandas as pd
 import pytest
+from plotly.offline import get_plotlyjs
 from ugbio_consensus import consensus_report, duplex_metrics
 
 
@@ -129,3 +130,48 @@ def test_bed_intervals_on_chrom_none_keeps_every_contig(targets_bed):
         ("chr20", 500, 600),
     ]
     assert consensus_report.bed_intervals_on_chrom(targets_bed, consensus_report.DUPLEX_CHROM_ALL) == []
+
+
+def test_report_embeds_plotlyjs_once_without_cdn(metrics_df, tmp_path):
+    """The report is self-contained: plotly.js is inlined once and never fetched from a CDN."""
+    out = tmp_path / "report.html"
+    consensus_report.generate_report(metrics_df, str(out))
+    # Read without newline translation: the bundle contains literal carriage returns.
+    content = out.read_bytes().decode("utf-8")
+    plotlyjs = get_plotlyjs()
+    # Bundle header occurs once, and the full bundle is inlined verbatim at that point.
+    assert content.count(plotlyjs[:200]) == 1
+    start = content.index(plotlyjs[:200])
+    embedded_verbatim = content[start : start + len(plotlyjs)] == plotlyjs
+    assert embedded_verbatim
+    assert content.count("window.PlotlyConfig") == 1
+    # plotly.js itself mentions cdn.plot.ly (topojson default URL); nothing outside it may.
+    outside_bundle = content[:start] + content[start + len(plotlyjs) :]
+    assert "cdn.plot.ly" not in outside_bundle
+    assert " src=" not in outside_bundle
+
+
+def test_run_creates_output_parent_with_external_work_dir(metrics_df, tmp_path, monkeypatch):
+    """--work-dir elsewhere must not leave the (new) output directory uncreated for the sidecar CSVs."""
+    monkeypatch.setattr(consensus_report, "build_metrics_table", lambda *a, **k: metrics_df)
+    output = tmp_path / "new" / "reports" / "run.html"
+    consensus_report.run(
+        [
+            "consensus_report",
+            "--reference",
+            "/dev/null",
+            "--cram",
+            "s.cram",
+            "--sorter-stats-csv",
+            "s.csv",
+            "--sorter-stats-json",
+            "s.json",
+            "--work-dir",
+            str(tmp_path / "scratch"),
+            "--output",
+            str(output),
+        ]
+    )
+    assert output.exists()
+    assert (tmp_path / "new" / "reports" / "run_per_sample.csv").exists()
+    assert (tmp_path / "new" / "reports" / "run_manifest.csv").exists()

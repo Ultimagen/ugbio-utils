@@ -630,18 +630,22 @@ def _assemble_html(title: str, tables_html: list[str], figures: list[go.Figure])
     parts = [
         "<!DOCTYPE html><html><head><meta charset='utf-8'>",
         f"<title>{title}</title>",
-        "</head><body style='font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; "
-        "padding: 20px; background:#ffffff; color:#000000;'>",
+        (
+            "</head><body style='font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; "
+            "padding: 20px; background:#ffffff; color:#000000;'>"
+        ),
         f"<h1 style='font-size:34px;'>{title}</h1>",
-        "<p style='color:#000000'>Consensus tool (ReadFuserAlignSort) performance and duplex metrics. "
-        "Family size and duplex classification are derived from the per-read <code>nf:i</code> / "
-        "<code>nr:i</code> strand tags (forward / reverse read counts), on reads carrying the "
-        "<code>rn</code> consensus tag.</p>",
+        (
+            "<p style='color:#000000'>Consensus tool (ReadFuserAlignSort) performance and duplex metrics. "
+            "Family size and duplex classification are derived from the per-read <code>nf:i</code> / "
+            "<code>nr:i</code> strand tags (forward / reverse read counts), on reads carrying the "
+            "<code>rn</code> consensus tag.</p>"
+        ),
     ]
     parts.extend(tables_html)
     for i, fig in enumerate(figures):
-        include_plotlyjs = "cdn" if i == 0 else False
-        parts.append(fig.to_html(full_html=False, include_plotlyjs=include_plotlyjs))
+        # Embed plotly.js once (in the first figure) so the report renders offline.
+        parts.append(fig.to_html(full_html=False, include_plotlyjs=(i == 0)))
     parts.append("</body></html>")
     return "\n".join(parts)
 
@@ -823,6 +827,8 @@ def run(argv: list[str]) -> pd.DataFrame:
     )
 
     # Write the per-sample table as a sidecar CSV, plus the manifest, for provenance.
+    # The output's parent may not exist yet when --work-dir points elsewhere.
+    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     csv_path = os.path.splitext(args.output)[0] + "_per_sample.csv"
     metrics.to_csv(csv_path, index=False)
     pd.DataFrame([asdict(s) for s in samples]).to_csv(os.path.splitext(args.output)[0] + "_manifest.csv", index=False)
