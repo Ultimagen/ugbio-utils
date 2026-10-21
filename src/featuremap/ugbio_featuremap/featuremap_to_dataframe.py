@@ -122,6 +122,7 @@ COL_MI = "MI"
 COL_NF = "nf"
 COL_NR = "nr"
 COL_CS = "CS"
+COL_X_INDEL_CLASS = "X_INDEL_CLASS"  # "hmer"/"non_hmer" on indel rows; absent -> indels treated as hmer
 COL_RN = "RN"
 COL_DS = "DS"
 COL_CHROM = "CHROM"
@@ -1246,6 +1247,39 @@ def _stratified_downsample_by_variant_type(
         Path(f).unlink(missing_ok=True)
 
 
+def _write_per_class_counts(parquet_files: list[str], out_json: str) -> dict:
+    """Tally post-filter, PRE-downsample row counts per variant class and write them as JSON.
+
+    These are the raw-after-filter counts per class (snv / hmer_indel / non_hmer_indel) used as the
+    per-class error numerator for per-class SNVQ recalibration; they must be taken before downsampling
+    because the training downsample is class-stratified (indel balance + duplex priority). Lazy per-file
+    scans keep this memory-bounded. Class predicate mirrors compute_variant_type_column: indel iff X_IC in
+    {ins,del}; non-hmer iff X_INDEL_CLASS=="non_hmer"; else hmer; SNV otherwise.
+    """
+    schema = pl.scan_parquet(parquet_files[0]).collect_schema().names() if parquet_files else []
+    has_ic = COL_X_IC in schema
+    has_cls = COL_X_INDEL_CLASS in schema
+    total = n_indel = n_nonhmer = 0
+    for f in parquet_files:
+        lf = pl.scan_parquet(f)
+        total += lf.select(pl.len()).collect().item()
+        if has_ic:
+            indel = pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False)
+            n_indel += lf.filter(indel).select(pl.len()).collect().item()
+            if has_cls:
+                nh = indel & (pl.col(COL_X_INDEL_CLASS).cast(pl.Utf8).str.to_lowercase() == "non_hmer")
+                n_nonhmer += lf.filter(nh).select(pl.len()).collect().item()
+    counts = {
+        "snv": total - n_indel,
+        "hmer_indel": n_indel - n_nonhmer,
+        "non_hmer_indel": n_nonhmer,
+        "total": total,
+    }
+    Path(out_json).write_text(json.dumps(counts, indent=2))
+    log.info(f"Per-class pre-downsample counts -> {out_json}: {counts}")
+    return counts
+
+
 def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
     parquet_files: list[str],
     output_path: str,
@@ -1254,6 +1288,7 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
     indel_snv_balance_fraction: float | None = None,
     duplex_oversample_priority: list[str] | None = None,
     duplex_group_min_fraction: float | None = None,
+    per_class_counts_json: str | None = None,
 ) -> None:
     """
     Merge multiple Parquet files using Polars lazy evaluation for memory efficiency.
@@ -1275,6 +1310,9 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
         instead of the default uniform downsample. No-op if unset, if the X_IC column is
         absent, if there are no indel rows, or if the dataset fits within downsample_reads.
     """
+    if per_class_counts_json and parquet_files:
+        _write_per_class_counts(parquet_files, per_class_counts_json)
+
     # Duplex priority-preserve downsample: opt-in (duplex_oversample_priority set) and only when it can
     # change the result. Short-circuits to the paths below (byte-identical) when: no priority requested,
     # no downsample target, the CS molecule column is absent (non-duplex run), or the dataset already fits.
@@ -1697,6 +1735,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
     indel_snv_balance_fraction: float | None = None,
     duplex_oversample_priority: list[str] | None = None,
     duplex_group_min_fraction: float | None = None,
+    per_class_counts_json: str | None = None,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -1942,6 +1981,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
                 indel_snv_balance_fraction,
                 duplex_oversample_priority,
                 duplex_group_min_fraction,
+                per_class_counts_json,
             )
 
         final_row_count = pl.scan_parquet(out).select(pl.len()).collect().item()
@@ -2400,6 +2440,15 @@ def main(argv: list[str] | None = None) -> None:
             "lower tiers (e.g. SSC). No-op unless --duplex-oversample-priority is also set."
         ),
     )
+    parser.add_argument(
+        "--per-class-counts-json",
+        default=None,
+        help=(
+            "Write post-filter, PRE-downsample row counts per variant class (snv/hmer_indel/non_hmer_indel) "
+            "to this JSON. These raw-after-filter per-class counts are the error numerator for per-class SNVQ "
+            "recalibration (must precede the class-stratified training downsample)."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args(argv)
 
@@ -2443,6 +2492,7 @@ def main(argv: list[str] | None = None) -> None:
         indel_snv_balance_fraction=args.indel_snv_balance_fraction,
         duplex_oversample_priority=duplex_oversample_priority,
         duplex_group_min_fraction=args.duplex_group_min_fraction,
+        per_class_counts_json=args.per_class_counts_json,
     )
 
 
