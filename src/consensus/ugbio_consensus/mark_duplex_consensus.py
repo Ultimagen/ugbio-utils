@@ -17,6 +17,7 @@ read is replaced. Reads without ``CS`` are left alone.
 The input must be coordinate-sorted. The two orientations of a molecule start within one fragment length of
 each other, so the file is streamed with a window of ``--pad`` bp: a read is written once no later read can
 belong to its family. A family whose orientations lie further apart than ``--pad`` is not recognised as duplex.
+Unplaced reads (no reference position, at the end of the file) are written as they come and get no ``dx``.
 
 Usage:
     mark_duplex_consensus in.cram out.cram -T ref.fa
@@ -74,7 +75,14 @@ def mark_duplex(  # noqa: C901
 ) -> dict[str, int]:
     """Stream `input_path` to `output_path`, stamping `tag`. Returns read and family counters."""
     write_mode = "wc" if output_path.endswith(".cram") else "wb"
-    counters = {"reads": 0, "reads_with_cs": 0, "reads_dx1": 0, "cs_families": 0, "duplex_families": 0}
+    counters = {
+        "reads": 0,
+        "reads_with_cs": 0,
+        "reads_dx1": 0,
+        "cs_families": 0,
+        "duplex_families": 0,
+        "unplaced_reads": 0,
+    }
 
     # cs -> [orientation mask, reads still in the window]; dropped when its last read has been written
     state: dict[str, list[int]] = {}
@@ -100,6 +108,15 @@ def mark_duplex(  # noqa: C901
         with pysam.AlignmentFile(output_path, write_mode, header=bam.header, threads=threads, **write_kwargs) as out:
             for read in bam:
                 counters["reads"] += 1
+                if read.reference_id < 0:
+                    # Unplaced reads close the coordinate-sorted file and have no position to pair
+                    # orientations by: flush the window and write them unbuffered, without dx.
+                    while window:
+                        finish(*window.popleft(), out)
+                    _strip(read, tag)
+                    counters["unplaced_reads"] += 1
+                    out.write(read)
+                    continue
                 # written before this read is counted: a read further than pad behind it cannot be its partner
                 while window and (
                     window[0][0].reference_id != read.reference_id

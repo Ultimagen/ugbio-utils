@@ -49,6 +49,12 @@ Usage:
 # thing under warranty. If you do refactor it, re-run /data/Runs/BIOIN-3068/cmp_stream.py
 # (MI/DS vs the pre-CS baseline) and cs_links.py (linkage vs the validated blob) first,
 # and note that only a raw `samtools view` diff sees the emitted aux order MI, DS, CS.
+#
+# Since that validation, output changed in four places, all outside the default --use-umi path on
+# primary records: FF/RR families with --orientation-in-key get their own CS; CS links survive
+# --position-tolerance merges; sharded mode never pairs mates further apart than --pad; and a
+# secondary/supplementary record far from its pair (another contig, or beyond --pad) no longer takes
+# its pair's MI/DS/CS in whole-file mode (see _takes_family_tags).
 
 import argparse
 import bisect
@@ -390,7 +396,11 @@ def assign_mi(clusters: dict[tuple, list[str]]) -> tuple[dict[str, str], dict[st
     return mi_map, ds_map
 
 
-def assign_cs(clusters: dict[tuple, list[str]], orient: dict[tuple, bool]) -> dict[str, str]:
+def assign_cs(
+    clusters: dict[tuple, list[str]],
+    orient: dict[tuple, bool],
+    aliases: dict[tuple, tuple] | None = None,
+) -> dict[str, str]:
     """
     Link the two strands of one original duplex molecule with a shared CS tag.
 
@@ -449,19 +459,38 @@ def assign_cs(clusters: dict[tuple, list[str]], orient: dict[tuple, bool]) -> di
     orientation both strands share one key, CS would carry no information beyond MI, and no
     CS is written.
 
+    When the key carries the orientation, only F1R2 and F2R1 families are linked: an FF or RR
+    family cannot be one strand of a duplex molecule, so it keeps a CS of its own instead of
+    sharing one (and with it dx downstream) with the FR families at its position.
+
+    `aliases` (old key -> surviving key, from merge_duplex_partners) lets a tolerance-merged
+    cluster link through every key its members had before the merge; otherwise a strand whose
+    partner was merged under a neighbouring key would lose its CS link.
+
     Returns read_name -> CS, empty if the key carries nothing to link.
     """
+    if any(len(key) == POSITION_KEY_LEN for key in clusters):  # no UMI, no orientation: nothing to link
+        return {}
+
+    parent: dict[tuple, tuple] = {}
+
+    def find(x: tuple) -> tuple:
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for old, new in (aliases or {}).items():
+        if new in clusters:
+            ra, rb = find(_cs_link_key(new, orient)), find(_cs_link_key(old, orient))
+            if ra != rb:
+                parent[ra] = rb
+
     groups: dict[tuple, list[tuple[str, list[str]]]] = defaultdict(list)
     for key, names in clusters.items():
-        if len(key) == POSITION_KEY_LEN:  # no UMI, no orientation: nothing to link
-            return {}
-        if len(key) == POSITION_KEY_LEN + 1:  # no UMI, orientation last: link by position
-            groups[key[:POSITION_KEY_LEN]].append((min(names), names))
-            continue
-        umi = key[3:5]
-        if orient.get(key):  # F2R1: R1 was the rightmost mate, so undo the swap
-            umi = umi[::-1]
-        groups[key[:3] + umi].append((min(names), names))
+        link = _cs_link_key(key, orient)
+        groups[find(link) if parent else link].append((min(names), names))
 
     cs_map: dict[str, str] = {}
     for subclusters in groups.values():
@@ -470,6 +499,21 @@ def assign_cs(clusters: dict[tuple, list[str]], orient: dict[tuple, bool]) -> di
             for name in names:
                 cs_map[name] = cs
     return cs_map
+
+
+def _cs_link_key(key: tuple, orient: dict[tuple, bool]) -> tuple:
+    """The part of a dedup key that the two strands of one molecule share; see assign_cs."""
+    if len(key) == POSITION_KEY_LEN + 1:  # no UMI, orientation last: link by position
+        link, orientation = key[:POSITION_KEY_LEN], key[-1]
+    else:
+        umi = key[3:5]
+        if orient.get(key):  # F2R1: R1 was the rightmost mate, so undo the swap
+            umi = umi[::-1]
+        link = key[:3] + umi
+        orientation = key[UMI_KEY_LEN] if len(key) > UMI_KEY_LEN else None
+    if orientation in ("FF", "RR"):
+        link += (orientation,)
+    return link
 
 
 def _set_or_strip_cs(read, name: str, cs_map: dict[str, str] | None, strip_run_id: bool) -> None:
@@ -494,6 +538,7 @@ def merge_duplex_partners(
     orient: dict[tuple, bool],
     tolerance: int,
     cross_strand: bool,
+    aliases: dict[tuple, tuple] | None = None,
 ) -> int:
     """
     Merge clusters that are the same molecule but landed in separate exact-position clusters.
@@ -511,6 +556,8 @@ def merge_duplex_partners(
 
     Drifts chain transitively (union-find). Mutates `clusters`, keeping each merged group
     under its lowest key; `orient` is left as is, so a merged cluster keeps that key's value.
+    If `aliases` is given, every key merged away is recorded there as key -> surviving key,
+    so assign_cs can still link the strands through the keys the clusters had before merging.
     Returns the number of merged groups.
     """
     if tolerance <= 0 and not cross_strand:
@@ -539,7 +586,8 @@ def merge_duplex_partners(
     for group_keys in groups.values():
         by_left = sorted(group_keys, key=lambda k: k[1])
         for i, k1 in enumerate(by_left):
-            for k2 in by_left[i + 1 :]:
+            for j in range(i + 1, len(by_left)):
+                k2 = by_left[j]
                 if k2[1] - k1[1] > tolerance:
                     break  # sorted by left_start -- nothing further can qualify
                 if abs(k2[2] - k1[2]) <= tolerance:
@@ -560,6 +608,8 @@ def merge_duplex_partners(
         for key in members:
             if key != target:
                 clusters[target].extend(clusters.pop(key))
+                if aliases is not None:
+                    aliases[key] = target
     return n_merges
 
 
@@ -568,13 +618,15 @@ def build_mi_map(
     orient: dict[tuple, bool] | None = None,
     position_tolerance: int = 0,
     cross_strand: bool = False,
+    aliases: dict[tuple, tuple] | None = None,
 ) -> tuple[dict[str, str], dict[str, int], dict[tuple, list[str]]]:
     """
     Group read names by dedup key and assign MI values.
     Singletons (key is None) are left out of both maps and default to DS=1, no MI.
 
     If `orient` is given (i.e. --use-umi), nearby clusters are merged first when
-    `position_tolerance` > 0 and/or `cross_strand` is True -- see `merge_duplex_partners`.
+    `position_tolerance` > 0 and/or `cross_strand` is True -- see `merge_duplex_partners`,
+    which records the merged keys in `aliases` if it is given.
 
     Returns (mi_map, ds_map, clusters) where ds_map[name] = cluster size in pairs.
     """
@@ -584,7 +636,7 @@ def build_mi_map(
             clusters[key].append(name)
 
     if orient is not None:
-        n_merges = merge_duplex_partners(clusters, orient, position_tolerance, cross_strand)
+        n_merges = merge_duplex_partners(clusters, orient, position_tolerance, cross_strand, aliases)
         logging.info(
             "Merged %d cluster group(s) (tolerance=%d bp, cross_strand=%s)",
             n_merges,
@@ -647,7 +699,27 @@ def stats_from_mi_tags(bam_path: str, open_kwargs: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def write_with_mi(
+def _takes_family_tags(read, key: tuple | None, pad: int) -> bool:
+    """
+    Whether a record gets its pair's MI/DS/CS. Primary records always do. A secondary or supplementary
+    record does only if it lies on its pair's contig, the pair's fragment spans at most `pad`, and the
+    fragment lies within `pad` of the record's start. That is the condition under which a sharded run is
+    guaranteed to have seen the pair, so both execution modes tag non-primary records the same way.
+    """
+    if not (read.is_secondary or read.is_supplementary):
+        return True
+    if key is None or read.reference_name != key[0]:
+        return False
+    return key[2] - key[1] <= pad and key[1] >= read.reference_start - pad and key[2] <= read.reference_start + pad
+
+
+def _strip_family_tags(read) -> None:
+    if read.has_tag("MI") or read.has_tag("CS"):
+        read.tags = [(k, v) for k, v in read.tags if k not in ("MI", "CS")]
+    read.set_tag("DS", 1, value_type="i")
+
+
+def write_with_mi(  # noqa: PLR0913
     bam_path: str,
     output_path: str,
     mi_map: dict[str, str],
@@ -658,7 +730,10 @@ def write_with_mi(
     cs_map: dict[str, str] | None = None,
     po_tag: str | None = None,
     orientations: dict[str, str] | None = None,
+    pair_keys: dict[str, tuple | None] | None = None,
+    pad: int = MAX_MATE_DISTANCE,
 ) -> None:
+    """Pass 2 of whole-file mode. With `pair_keys`, non-primary records follow _takes_family_tags."""
     write_mode = "wc" if output_path.endswith(".cram") else "wb"
     n_written = 0
 
@@ -674,6 +749,10 @@ def write_with_mi(
                 name = read.query_name
                 if name.endswith(("/1", "/2")):
                     name = name[:-2]
+                if pair_keys is not None and not _takes_family_tags(read, pair_keys.get(name), pad):
+                    _strip_family_tags(read)
+                    out.write(read)
+                    continue
                 if name in mi_map:
                     mi = mi_map[name]
                     if strip_run_id and "-" in mi:
@@ -704,7 +783,9 @@ def write_with_mi(
 #
 # The one behavioural difference from whole-file mode: a pair whose mates are further
 # apart than `pad` is not paired up, so it becomes a singleton (DS=1, no MI) instead of
-# joining a cluster. That only changes the output if two such far-apart pairs share a
+# joining a cluster. This holds even when one padded window happens to contain both mates,
+# because the shard that emits the other mate may not, and the two mates of a pair must
+# never be tagged differently. That only changes the output if two such far-apart pairs share a
 # key, since a lone pair is a DS=1 singleton in whole-file mode too. Measured on
 # 606174-L15806-Z0229 against whole-file output over the same reads: at pad=20 kb, 4
 # clusters / 58 of 13,886,714 reads (0.0004%); at the pad=2 kb default with the panel
@@ -821,11 +902,21 @@ def process_shard(job: tuple) -> dict:
     orientations: dict[str, str] = {}
     pending: dict[str, tuple] = {}
     umis: dict[str, str] = {}
+    n_far = 0
+    nonprimary_names: set[str] = set()
 
     with pysam.AlignmentFile(bam_path, "r", **open_kwargs) as bam:
         length = bam.get_reference_length(chrom)
-        for read in bam.fetch(chrom, max(0, start - pad), min(end + pad, length)):
+        # The window has to reach `pad` before the first read this shard emits, which with --regions can
+        # start upstream of the shard. Fetch is start-sorted, so the first read at or after prev_end is it.
+        first_emitted = start
+        for read in bam.fetch(chrom, start, end):
+            if read.reference_start >= prev_end:
+                first_emitted = min(start, read.reference_start)
+                break
+        for read in bam.fetch(chrom, max(0, first_emitted - pad), min(end + pad, length)):
             if read.is_secondary or read.is_supplementary:
+                nonprimary_names.add(read.query_name.removesuffix("/1").removesuffix("/2"))
                 continue
             if not read.is_paired or read.is_unmapped:
                 continue
@@ -835,6 +926,11 @@ def process_shard(job: tuple) -> dict:
             rec = _read_rec(read, use_umi, umis)
             if name in pending:
                 mate = pending.pop(name)
+                if rec[_START] - mate[_START] > pad:
+                    # Mates further apart than pad stay unpaired even when this window holds both: the
+                    # shard that emits the other mate may not see this one, and both mates need the same tags.
+                    n_far += (start <= rec[_START] < end) + (start <= mate[_START] < end)
+                    continue
                 r1, r2 = (rec, mate) if rec[_IS_READ1] else (mate, rec)
                 key = _pair_key(r1, r2, use_umi, orientation_in_key)
                 clusters[key].append(name)
@@ -848,17 +944,26 @@ def process_shard(job: tuple) -> dict:
         # genuinely absent (unmapped/unpaired) or the pair spans more than `pad`.
         # Only those this shard owns are counted, or shards sharing a padded window
         # would report the same orphan twice.
-        n_orphans = sum(1 for rec in pending.values() if start <= rec[_START] < end)
+        n_orphans = n_far + sum(1 for rec in pending.values() if start <= rec[_START] < end)
         pending.clear()
 
+        # The pair key of every name with a non-primary record here, for _takes_family_tags. Taken before
+        # any merge, so it is the pair's own key, as in whole-file mode.
+        nonprimary_keys: dict[str, tuple] = {}
+        if nonprimary_names:
+            for key, names in clusters.items():
+                for n in names:
+                    if n in nonprimary_names:
+                        nonprimary_keys[n] = key
+        aliases: dict[tuple, tuple] = {}
         if use_umi:
-            merge_duplex_partners(clusters, orient, position_tolerance, cross_strand)
+            merge_duplex_partners(clusters, orient, position_tolerance, cross_strand, aliases)
 
         mi_map, ds_map = assign_mi(clusters)
         # Cross-strand partners share the positional part of the key, so both strands are
         # always inside the same padded window -- CS needs no cross-shard bookkeeping for
         # the same reason MI does not (see "Sharded execution").
-        cs_map = assign_cs(clusters, orient)
+        cs_map = assign_cs(clusters, orient, aliases)
 
         # Statistics count only the clusters this shard owns (left_start inside the
         # shard proper), for the same reason.
@@ -880,6 +985,11 @@ def process_shard(job: tuple) -> dict:
                 name = read.query_name
                 if name.endswith(("/1", "/2")):
                     name = name[:-2]
+                if not _takes_family_tags(read, nonprimary_keys.get(name), pad):
+                    _strip_family_tags(read)
+                    out.write(read)
+                    n_written += 1
+                    continue
                 if name in mi_map:
                     mi = mi_map[name]
                     if strip_run_id and "-" in mi:
@@ -1114,12 +1224,13 @@ def main():
     )
     logging.info("Collected info for %d primary paired read names", len(pair_keys))
 
+    aliases: dict[tuple, tuple] = {}
     mi_map, ds_map, clusters = build_mi_map(
-        pair_keys, orient if args.use_umi else None, args.position_tolerance, args.cross_strand
+        pair_keys, orient if args.use_umi else None, args.position_tolerance, args.cross_strand, aliases
     )
     logging.info("MI map built (%d entries)", len(mi_map))
 
-    cs_map = assign_cs(clusters, orient)
+    cs_map = assign_cs(clusters, orient, aliases)
     if cs_map:
         members: dict[str, set[str]] = defaultdict(set)
         for name, cs in cs_map.items():
@@ -1144,6 +1255,8 @@ def main():
         cs_map,
         args.pair_orientation_tag,
         orientations,
+        pair_keys,
+        args.pad,
     )
 
     logging.info("Indexing %s", args.output)

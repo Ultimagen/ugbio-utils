@@ -167,6 +167,28 @@ def test_unplaced_unmapped_reads_pass_through(tmp_path):
     out, counters = run(tmp_path, recs)
     assert dx(out) == {"a": 1, "b": 1, "un": None}
     assert counters["reads"] == 3
+    assert counters["unplaced_reads"] == 1
+
+
+def test_unplaced_reads_are_not_buffered_and_get_no_dx(tmp_path, monkeypatch):
+    recs = [
+        read("a", "chr1", 1000, cs="C1", po="F1R2"),
+        read("b", "chr1", 1000, cs="C1", po="F2R1"),
+        *[read(f"un{i}", None, 0, flag=4, cs="U", po=("F1R2", "F2R1")[i % 2], tags={"dx": 1}) for i in range(6)],
+    ]
+    peak = []
+    real_deque = mdc.deque
+
+    class TrackedDeque(real_deque):
+        def append(self, item):
+            super().append(item)
+            peak.append(len(self))
+
+    monkeypatch.setattr(mdc, "deque", TrackedDeque)
+    out, counters = run(tmp_path, recs)
+    assert dx(out) == {"a": 1, "b": 1, **{f"un{i}": None for i in range(6)}}
+    assert max(peak) == 2  # only the two placed reads were ever buffered
+    assert (counters["unplaced_reads"], counters["cs_families"], counters["duplex_families"]) == (6, 1, 1)
 
 
 def test_order_and_every_other_tag_are_kept_and_dx_is_an_integer(tmp_path):

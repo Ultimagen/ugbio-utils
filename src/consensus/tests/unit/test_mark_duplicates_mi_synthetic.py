@@ -1313,3 +1313,106 @@ def test_print_family_sizes_skips_empty_rows_and_survives_no_reads(capsys):
     assert capsys.readouterr().out == "family_size\tfamilies\treads\tpct_reads\n"
     mdmi.print_family_sizes({2: 0, 4: 1, 6: 1})
     assert capsys.readouterr().out.splitlines()[1:] == ["4\t1\t4\t40.0%", "6\t1\t6\t60.0%"]
+
+
+# --- review fixes: FF/RR links, CS through tolerance merges, far mates across shards ----------------
+
+
+@pytest.mark.parametrize("kind", ["FF", "RR"])
+def test_orientation_in_key_does_not_link_ff_or_rr_to_the_fr_families(tmp_path, kind):
+    """Same boundaries and UMIs: an FF/RR family cannot be a strand of the FR molecule, so it keeps its own CS."""
+    # R1 of an RR pair is reverse, so its UMIs normalise like an F2R1 pair's
+    u5, u3 = (UMI_A, UMI_B) if kind == "FF" else (UMI_B, UMI_A)
+    recs = flatten(
+        pair("fwd", "chr1", 1000, 1200, UMI_A, UMI_B, kind="F1R2"),
+        pair("rev", "chr1", 1000, 1200, UMI_B, UMI_A, kind="F2R1"),
+        pair("same", "chr1", 1000, 1200, u5, u3, kind=kind),
+    )
+    got = marked(run(tmp_path, recs, "--use-umi"))
+    assert got["fwd"]["CS"] == got["rev"]["CS"] == "fwd"
+    assert got["same"]["CS"] == "same"
+
+
+def test_tolerance_merge_keeps_the_cs_link_of_the_merged_away_strand(tmp_path):
+    """
+    F1R2 copies at (1000, 1250) and (1001, 1251) merge under the first key; the F2R1 partner sits at the
+    second. Its CS link must survive the merge.
+    """
+    recs = flatten(
+        pair("f1", "chr1", 1000, 1200, UMI_A, UMI_B, kind="F1R2"),
+        pair("f2", "chr1", 1001, 1201, UMI_A, UMI_B, kind="F1R2"),
+        pair("r", "chr1", 1001, 1201, UMI_B, UMI_A, kind="F2R1"),
+    )
+    got = marked(run(tmp_path, recs, "--use-umi", "--position-tolerance", "2"))
+    assert got["f1"]["MI"] == got["f2"]["MI"] == "f1"
+    assert got["r"]["MI"] is None
+    assert got["f1"]["CS"] == got["f2"]["CS"] == got["r"]["CS"] == "f1"
+
+
+@needs_samtools
+def test_mates_further_apart_than_pad_get_the_same_tags_in_adjacent_shards(tmp_path):
+    """The first shard's padded window holds both mates, the second's only the right ones."""
+    recs = flatten(
+        pair("a", "chr1", 5500, 11000, UMI_A, UMI_B),
+        pair("b", "chr1", 5500, 11000, UMI_A, UMI_B),
+    )
+    inp = build_bam(tmp_path / "in.bam", recs)
+    out = tmp_path / "out.bam"
+    cli(
+        inp,
+        "--use-umi",
+        "--pair-orientation-tag",
+        "po",
+        "--shard-size",
+        "10000",
+        "--pad",
+        "2000",
+        "--jobs",
+        "2",
+        out=out,
+    )
+    got = marked(out)  # asserts that the mates agree
+    assert got["a"] == got["b"] == {"MI": None, "DS": 1, "CS": None, "po": None}
+
+
+@needs_samtools
+def test_the_window_reaches_pad_before_a_read_that_enters_the_interval_from_upstream(tmp_path):
+    """
+    Reads have different lengths. The 300 bp R2s start 250 bp before the interval and overlap it, so
+    they are emitted; their 50 bp R1s start 450 bp further upstream, within the pad of the R2s, and end
+    before the interval start minus the pad.
+    """
+    recs = []
+    for name in ("a", "b"):
+        r1 = segment(name, "chr1", 2300, flag=1 | 64, tags={"u5": UMI_A})
+        r2 = segment(name, "chr1", 2750, flag=1 | 128 | 16, length=300, tags={"u3": UMI_B})
+        recs += [r1, r2]
+    inp = build_bam(tmp_path / "in.bam", recs)
+    bed = tmp_path / "t.bed"
+    bed.write_text("chr1\t3000\t4000\n")
+    out = tmp_path / "out.bam"
+    cli(inp, "--use-umi", "--regions", bed, "--pad", "500", "--jobs", "2", "--pair-orientation-tag", "po", out=out)
+    snap = snapshot(out)
+    assert [s[0] for s in snap] == ["a", "b"]
+    assert {(s[5], s[6], s[8]) for s in snap} == {("a", 2, "F1R2")}
+
+
+@needs_samtools
+def test_supplementary_records_get_the_same_tags_whole_file_and_sharded(tmp_path):
+    """
+    A supplementary record next to its duplicate pair takes the family tags; one on another contig, which a
+    shard cannot relate to its pair, gets none, in both execution modes.
+    """
+    recs = flatten(
+        pair("a", "chr1", 1000, 1200, UMI_A, UMI_B),
+        pair("b", "chr1", 1000, 1200, UMI_A, UMI_B),
+        segment("a", "chr1", 1100, flag=1 | 64 | 2048, tags={"u5": UMI_A}),
+        segment("b", "chr2", 5000, flag=1 | 64 | 2048, tags={"u5": UMI_A, "MI": "stale", "CS": "stale"}),
+    )
+    inp = build_bam(tmp_path / "in.bam", recs)
+    whole, sharded = tmp_path / "whole.bam", tmp_path / "sharded.bam"
+    cli(inp, "--use-umi", out=whole)
+    cli(inp, "--use-umi", "--shard-size", "3000", "--jobs", "2", out=sharded)
+    assert snapshot(sharded) == snapshot(whole)
+    supp = {(s[0], s[2]): s[5:8] for s in snapshot(whole) if s[1] & 2048}
+    assert supp == {("a", "chr1"): ("a", 2, "a"), ("b", "chr2"): (None, 1, None)}
