@@ -145,7 +145,7 @@ def test_duplicates_share_mi_ds_and_a_singleton_gets_neither_mi_nor_ds_above_one
         pair("lone", "chr1", 5000, 5200, UMI_A, UMI_B),
     )
     got = marked(run(tmp_path, recs))
-    assert {n: (got[n]["MI"], got[n]["DS"]) for n in "abc"} == {n: ("a", 3) for n in "abc"}
+    assert {n: (got[n]["MI"], got[n]["DS"]) for n in "abc"} == dict.fromkeys("abc", ("a", 3))
     assert (got["lone"]["MI"], got["lone"]["DS"]) == (None, 1)
 
 
