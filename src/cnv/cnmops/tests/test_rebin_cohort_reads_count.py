@@ -1,7 +1,6 @@
 """Tests for rebin_cohort_reads_count.R script.
 
-Note: These tests require R with cn.mops package installed.
-Tests will be skipped if R environment is not properly configured.
+Note: These tests require R with the cn.mops package installed.
 """
 
 import os
@@ -13,25 +12,6 @@ import pandas as pd
 import pytest
 
 SRC_FILE = "rebin_cohort_reads_count.R"
-
-
-def check_r_environment():
-    """Check if R and cn.mops are available."""
-    try:
-        result = subprocess.run(
-            ["Rscript", "-e", "suppressPackageStartupMessages(library(cn.mops))"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
-
-
-# Skip all tests if R environment is not available
-pytestmark = pytest.mark.skipif(not check_r_environment(), reason="R with cn.mops package not available")
 
 
 @pytest.fixture

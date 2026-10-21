@@ -27,6 +27,11 @@ RUN pip install ${OUT_DIR}/*.whl
 ##################################################################
 FROM ${BASE_IMAGE}
 
+# Bake the image tag in so generate_report can display it in the report.
+# Pass --build-arg IMAGE_TAG=<tag> from CI (docker-build-push.yml).
+ARG IMAGE_TAG=unknown
+ENV UGBIO_IMAGE_TAG=${IMAGE_TAG}
+
 RUN apt-get update && apt-get upgrade -y && apt-get install --no-install-recommends -y \
     openjdk-17-jre-headless `# for gatk` \
     && apt-get clean && \
@@ -53,5 +58,3 @@ ENV PATH="/opt/venv/bin:$PATH"
 USER ugbio
 
 WORKDIR /home/ugbio
-
-COPY --from=build ./src/mrd/ugbio_mrd/reports ./src/mrd/ugbio_mrd/reports

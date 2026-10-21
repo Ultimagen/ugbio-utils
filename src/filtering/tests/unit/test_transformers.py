@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 from ugbio_filtering.tprep_constants import VcfType
@@ -132,6 +133,12 @@ class TestTransformers:
                 "copynumber": [3],
                 "cnv_source": [("cn.mops",)],
                 "cipos": [(-100, 100)],
+                "cnv_dup_pairs": [0],
+                "cnv_del_pairs": [0],
+                "cnv_dup_pairs_frac": [0],
+                "cnv_del_pairs_frac": [0],
+                "dup_pairs_median_span": [0],
+                "del_pairs_median_span": [0],
             }
         )
         result = transformer.fit_transform(test_df)
@@ -172,9 +179,137 @@ class TestTransformers:
                 "copynumber": [3],
                 "cnv_source": [("cn.mops",)],
                 "cipos": [(-100, 101)],
+                "cnv_dup_pairs": [0],
+                "cnv_del_pairs": [0],
+                "cnv_dup_pairs_frac": [0],
+                "cnv_del_pairs_frac": [0],
+                "dup_pairs_median_span": [0],
+                "del_pairs_median_span": [0],
             }
         )
         result = transformer.fit_transform(test_df)
         # Check that copynumber column exists and has the max value (3)
         assert "cipos__cipos" in result.columns
         assert result["cipos__cipos"].iloc[0] == 200
+
+    def test_cnv_transformer_fills_all_nan_object_columns(self):
+        # Regression test: on a contig that has only cn.mops calls, the cnvpytor-only pytor*
+        # fields (and the conditional insert-size fields) are absent from every variant, so
+        # get_vcf_df yields all-NaN object-dtype columns. A bare numeric SimpleImputer used to
+        # silently pass these through, leaving NaNs that broke apply_model validation. The
+        # numeric_filler must coerce them to numeric and fill with 0.
+        transformer = get_transformer(VcfType.CNV)
+        object_all_nan = pd.Series([np.nan, np.nan], dtype=object)
+        test_df = pd.DataFrame(
+            {
+                "svtype": ["DEL", "DUP"],
+                "region_annotations": [(), ()],
+                "pytorq0": object_all_nan.copy(),
+                "pytorp2": object_all_nan.copy(),
+                "pytorrd": object_all_nan.copy(),
+                "pytorp1": object_all_nan.copy(),
+                "pytorp3": object_all_nan.copy(),
+                "gap_percentage": [0.01, 0.02],
+                "cnv_dup_reads": [10, 20],
+                "cnv_del_reads": [5, 6],
+                "cnv_dup_frac": [0.6, 0.7],
+                "cnv_del_frac": [0.3, 0.4],
+                "del_reads_median_insert_size": object_all_nan.copy(),
+                "dup_reads_median_insert_size": object_all_nan.copy(),
+                "jalign_dup_support": [8, 9],
+                "jalign_del_support": [4, 5],
+                "jalign_dup_support_strong": [6, 7],
+                "jalign_del_support_strong": [3, 4],
+                "svlen": [(1000,), (2000,)],
+                "cn": [2, 3],
+                "copynumber": [3, 4],
+                "cnv_source": [("cn.mops",), ("cn.mops",)],
+                "cipos": [(-100, 100), (-50, 50)],
+                "cnv_dup_pairs": [0, 0],
+                "cnv_del_pairs": [0, 0],
+                "cnv_dup_pairs_frac": [0, 0],
+                "cnv_del_pairs_frac": [0, 0],
+                "dup_pairs_median_span": [0, 0],
+                "del_pairs_median_span": [0, 0],
+            }
+        )
+        # sanity: these columns start as object dtype, as get_vcf_df would produce
+        assert test_df["pytorq0"].dtype == object
+        result = transformer.fit_transform(test_df)
+        assert result.isna().sum().sum() == 0
+        for col in [
+            "pytorq0__pytorq0",
+            "pytorp2__pytorp2",
+            "del_reads_median_insert_size__del_reads_median_insert_size",
+        ]:
+            assert col in result.columns
+            assert (result[col] == 0).all()
+
+    @staticmethod
+    def _cnv_df():
+        """One-row CNV dataframe with every CNV feature, including the read pair fields."""
+        return pd.DataFrame(
+            {
+                "svtype": ["DEL"],
+                "pytorq0": [0.1],
+                "pytorp2": [0.2],
+                "pytorrd": [0.3],
+                "pytorp1": [0.4],
+                "pytorp3": [0.5],
+                "gap_percentage": [0.01],
+                "cnv_dup_reads": [10],
+                "cnv_del_reads": [5],
+                "cnv_dup_frac": [0.6],
+                "cnv_del_frac": [0.3],
+                "del_reads_median_insert_size": [100.0],
+                "dup_reads_median_insert_size": [200.0],
+                "jalign_dup_support": [8],
+                "jalign_del_support": [4],
+                "jalign_dup_support_strong": [6],
+                "jalign_del_support_strong": [3],
+                "svlen": [(1000,)],
+                "cn": [2],
+                "copynumber": [3],
+                "cnv_source": [("cn.mops",)],
+                "cipos": [(-100, 100)],
+                "cnv_dup_pairs": [0],
+                "cnv_del_pairs": [7],
+                "cnv_dup_pairs_frac": [0.0],
+                "cnv_del_pairs_frac": [0.07],
+                "dup_pairs_median_span": [None],
+                "del_pairs_median_span": [1450.0],
+            }
+        )
+
+    def test_cnv_transformer_uses_pair_fields(self):
+        result = get_transformer(VcfType.CNV).fit_transform(self._cnv_df())
+        assert result["cnv_del_pairs__cnv_del_pairs"].iloc[0] == 7
+        assert result["del_pairs_median_span__del_pairs_median_span"].iloc[0] == 1450.0
+        assert result["dup_pairs_median_span__dup_pairs_median_span"].iloc[0] == 0
+
+    def test_cnv_transformer_requires_pair_fields(self):
+        # VCFs annotated before the pair fields existed are not compatible with the CNV model
+        with pytest.raises(ValueError):
+            get_transformer(VcfType.CNV).fit_transform(self._cnv_df().drop(columns=["cnv_del_pairs"]))
+
+    def test_cnv_transformer_does_not_require_training_only_columns(self):
+        # Training data carries a label column that the VCFs filtered later do not have
+        transformer = get_transformer(VcfType.CNV).fit(self._cnv_df().assign(label=[1]))
+        result = transformer.transform(self._cnv_df())
+        assert len(result) == 1
+
+    def test_cnv_transformer_fills_missing_jalign_fields(self):
+        # run_jalign keeps CNVs whose jump alignment failed, with JALIGN_* missing
+        jalign_fields = [
+            "jalign_dup_support",
+            "jalign_del_support",
+            "jalign_dup_support_strong",
+            "jalign_del_support_strong",
+        ]
+        test_df = pd.concat([self._cnv_df(), self._cnv_df()], ignore_index=True)
+        test_df.loc[1, jalign_fields] = np.nan
+        result = get_transformer(VcfType.CNV).fit_transform(test_df)
+        assert result.isna().sum().sum() == 0
+        for field in jalign_fields:
+            assert result[f"{field}__{field}"].iloc[1] == 0
+        assert result["jalign_dup_support__jalign_dup_support"].iloc[0] == 8

@@ -135,7 +135,7 @@ def test_enum_column_is_categorical(tmp_path: Path, input_featuremap: Path) -> N
     col = featuremap_dataframe["X_PREV1"]
     assert isinstance(col.dtype, pl.Enum)
 
-    cats = set(col.cat.get_categories())
+    cats = set(col.dtype.categories)
     expected_iupac_codes = {"", "A", "B", "C", "D", "G", "H", "K", "M", "N", "R", "S", "T", "V", "W", "Y"}
     assert cats == expected_iupac_codes
 
@@ -168,7 +168,7 @@ def test_ref_alt_defaults(tmp_path: Path, input_featuremap: Path):
     featuremap_dataframe = pl.read_parquet(out)
 
     # REF includes IUPAC ambiguity codes
-    assert set(featuremap_dataframe["REF"].cat.get_categories()) == {
+    assert set(featuremap_dataframe["REF"].dtype.categories) == {
         "",
         "A",
         "C",
@@ -188,7 +188,7 @@ def test_ref_alt_defaults(tmp_path: Path, input_featuremap: Path):
     }
 
     # ALT includes just the four bases (+"")
-    assert set(featuremap_dataframe["ALT"].cat.get_categories()) == {
+    assert set(featuremap_dataframe["ALT"].dtype.categories) == {
         "",
         "A",
         "C",
@@ -215,7 +215,7 @@ def test_cast_column_categorical():
     meta = {"type": "String", "cat": ["A", "B"]}
     featuremap_dataframe_2 = featuremap_dataframe.with_columns(_cast_expr("x", meta))
     assert isinstance(featuremap_dataframe_2["x"].dtype, pl.Enum)
-    assert set(featuremap_dataframe_2["x"].cat.get_categories()) == {"", "A", "B"}
+    assert set(featuremap_dataframe_2["x"].dtype.categories) == {"", "A", "B"}
     assert featuremap_dataframe_2["x"].null_count() == 0
 
 
@@ -833,8 +833,8 @@ def test_x_alt_categories(tmp_path: Path, input_featuremap: Path) -> None:
     # Only run the assertion when the column exists in the file
     if X_ALT in frame.columns:
         assert isinstance(frame[X_ALT].dtype, pl.Enum), "X_ALT should be Enum"
-        assert set(frame[X_ALT].cat.get_categories()) == set(
-            frame[ALT].cat.get_categories()
+        assert set(frame[X_ALT].dtype.categories) == set(
+            frame[ALT].dtype.categories
         ), "X_ALT categories must match ALT categories"
 
 

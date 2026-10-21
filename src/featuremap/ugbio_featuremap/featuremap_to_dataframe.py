@@ -1556,7 +1556,7 @@ def _join_multi_sample_frames(frames: dict[str, pl.DataFrame], job_cfg: VCFJobCo
     # Join remaining frames, dropping duplicate columns
     for frame in frame_list[1:]:
         frame_dropped = frame.drop([col for col in cols_to_drop if col in frame.columns])
-        final_frame = final_frame.join(frame_dropped, on=join_keys, how="outer", coalesce=True)
+        final_frame = final_frame.join(frame_dropped, on=join_keys, how="full", coalesce=True)
 
     return final_frame
 

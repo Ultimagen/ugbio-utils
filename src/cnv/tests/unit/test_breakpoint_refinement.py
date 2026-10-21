@@ -6,6 +6,7 @@ import shutil
 
 import pysam
 import pytest
+from ugbio_cnv.analyze_cnv_breakpoint_reads import PAIR_READ_GROUP
 from ugbio_cnv.breakpoint_refinement import (
     BamRefinementResult,
     estimate_refined_breakpoints,
@@ -153,6 +154,48 @@ def test_extract_reads_windowed_multi_bam(temp_bam_with_rg_tags, tmp_path):
     assert len(left1) == 4
     assert len(right0) == 3
     assert len(right1) == 3
+
+
+def _write_discordant_pair_bam(bam_path, read_group):
+    """Write both mates of one discordant DEL pair, each with an incidental soft clip, under `read_group`."""
+    header = {
+        "HD": {"VN": "1.0"},
+        "SQ": [{"SN": "chr1", "LN": 10000000}],
+        "RG": [{"ID": "DEL"}, {"ID": "DUP"}, {"ID": PAIR_READ_GROUP}],
+    }
+    with pysam.AlignmentFile(str(bam_path), "wb", header=header) as bam:
+        for is_read1, start, cigar in ((True, 999900, "90M10S"), (False, 1002950, "10S90M")):
+            read = pysam.AlignedSegment()
+            read.query_name = "pair001"
+            read.reference_id = 0
+            read.reference_start = start
+            read.query_sequence = "A" * 100
+            read.cigarstring = cigar
+            read.is_paired = True
+            read.is_read1 = is_read1
+            read.is_read2 = not is_read1
+            read.set_tag("RG", read_group)
+            bam.write(read)
+    pysam.index(str(bam_path))
+
+
+def test_extract_reads_windowed_ignores_the_pair_read_group(tmp_path):
+    """Discordant pair mates written under PAIR never reach DEL breakpoint refinement.
+
+    Under RG=DEL the same two mates would be selected in both windows and, having different flags,
+    matched by match_reads - so their incidental soft clips would be read as breakpoints.
+    """
+    windows = {"cnv_chrom": "chr1", "cnv_start": 1000000, "cnv_end": 1003000, "cnv_type": "DEL", "cushion": 2500}
+
+    as_del = tmp_path / "as_del.bam"
+    _write_discordant_pair_bam(as_del, "DEL")
+    left, right = extract_reads_windowed(bam_files=[str(as_del)], **windows)[0]
+    assert len(left) == 1
+    assert len(right) == 1
+
+    as_pair = tmp_path / "as_pair.bam"
+    _write_discordant_pair_bam(as_pair, PAIR_READ_GROUP)
+    assert extract_reads_windowed(bam_files=[str(as_pair)], **windows)[0] == ([], [])
 
 
 def test_estimate_refined_breakpoints_median_calculation():

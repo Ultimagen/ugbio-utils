@@ -476,6 +476,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                             f"Realigned reads: {read_count} - Time: {cycle_time:.2f}s"
                         )
                     else:
+                        # Keep the CNV with JALIGN_* missing, so a jalign failure doesn't
+                        # silently remove it from downstream calls
+                        out_vcf.write(rec)
                         failed_count += 1
                         logger.error(f"Error processing {chrom}:{start}-{end}: {error_msg}")
 
@@ -485,8 +488,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
 
         # Clean up temporary BAM files
         for temp_bam_file in temp_bam_files:
-            if temp_bam_file and temp_bam_file.exists():
-                temp_bam_file.unlink()
+            if temp_bam_file:
+                temp_bam_file.unlink(missing_ok=True)
 
         logger.info(f"Cleaned up {len(temp_bam_files)} temporary BAM files")
 

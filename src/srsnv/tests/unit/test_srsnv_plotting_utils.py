@@ -466,3 +466,51 @@ def test_calc_run_info_table_numerical_validation(test_resources_calc_run_info, 
         # Basic checks on structure
         assert isinstance(quality_summary, pd.Series), "run_quality_summary_table should be a Series"
         assert len(quality_summary) > 0, "run_quality_summary_table should not be empty"
+
+
+def test_plot_logit_histograms_writes_legacy_and_mixed_start_keys(
+    test_resources_calc_run_info, real_models_calc_run_info
+):
+    """plot_logit_histograms should write both the legacy (both-ends) and the new mixed-start h5 keys.
+
+    The report displays the mixed-start version (mixed = start ppmSeq tag is MIXED), while the legacy
+    both-ends histogram is retained under the original ``logit_histogram`` key for backward compatibility.
+    """
+    featuremap_df, metadata, _ = test_resources_calc_run_info
+
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        temp_metadata_file = os.path.join(temp_output_dir, "test_metadata.json")
+        with open(temp_metadata_file, "w") as f:
+            json.dump(metadata, f)
+
+        categorical_features = [f for f in metadata["features"] if f["type"] == "c"]
+        numerical_features = [f for f in metadata["features"] if f["type"] != "c"]
+
+        params = {
+            "workdir": temp_output_dir,
+            "data_name": "test_run",
+            "categorical_features_names": [f["name"] for f in categorical_features],
+            "categorical_features_dict": {f["name"]: list(f["values"].keys()) for f in categorical_features},
+            "numerical_features": [f["name"] for f in numerical_features],
+            "fp_regions_bed_file": 1,
+            "num_CV_folds": len(real_models_calc_run_info),
+        }
+
+        report = SRSNVReport(
+            models=real_models_calc_run_info,
+            data_df=featuremap_df.copy(),
+            params=params,
+            out_path=temp_output_dir,
+            srsnv_metadata=temp_metadata_file,
+            base_name="test_",
+            raise_exceptions=True,
+        )
+
+        report.plot_logit_histograms(output_filename=os.path.join(temp_output_dir, "logit_histogram"))
+
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        with pd.HDFStore(h5_file, "r") as store:
+            assert "/logit_histogram" in store.keys(), "legacy logit_histogram key should be retained"
+            assert (
+                "/logit_histogram_mixed_start" in store.keys()
+            ), "new logit_histogram_mixed_start key should be written for display"

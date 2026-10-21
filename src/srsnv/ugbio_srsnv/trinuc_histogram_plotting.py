@@ -884,6 +884,7 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
     *,
     collapsed=False,
     include_quality: bool = False,
+    is_mixed_col: str = "is_mixed",
 ):
     """Calculate and plot trinuc histogram, optionally with quality panels.
 
@@ -915,6 +916,9 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
         "fwd_only": using only forward-strand reads.
     include_quality : bool
         Whether to include quality panels
+    is_mixed_col : str
+        Column used to split the quality panels into mixed/non-mixed reads
+        (e.g. "is_mixed" for both-ends mixed, or "is_mixed_start" for start-tag mixed).
 
     Returns
     -------
@@ -937,6 +941,7 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
         collapsed=collapsed,
         motif_orientation=motif_orientation,
         include_quality=include_quality,
+        is_mixed_col=is_mixed_col,
     )
 
     if collapsed and (order != "reverse"):
