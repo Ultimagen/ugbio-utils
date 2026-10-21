@@ -617,6 +617,7 @@ def recalibrate_snvq_per_class(
     lut_mask: np.ndarray | None = None,
     caps_by_class: dict | None = None,
     smoothing: str = "counting",
+    min_lut_rows: int = 100,
     **recal_kwargs,
 ) -> tuple[np.ndarray, dict]:
     """Build a separate MQUAL->SNVQ LUT per variant class and return per-row SNVQ + the LUT dict.
@@ -637,6 +638,9 @@ def recalibrate_snvq_per_class(
         Optional ``{class: SNVQ_ceiling}`` applied when ``smoothing="monotone"``.
     smoothing : str
         ``"counting"`` (raw) or ``"monotone"`` (cumulative-max + optional cap).
+    min_lut_rows : int
+        Minimum TP and minimum FP rows (within ``lut_mask``) a class needs to get its own LUT; sparser
+        classes are skipped (NaN -> caller's global fallback) rather than fitting a degenerate table.
 
     Returns
     -------
@@ -656,6 +660,17 @@ def recalibrate_snvq_per_class(
         if not m.any():
             continue
         sub_lut_mask = (lut_mask & m)[m] if lut_mask is not None else None
+        sub_labels = labels[m][sub_lut_mask] if sub_lut_mask is not None else labels[m]
+        n_tp, n_fp = int(sub_labels.sum()), int((~sub_labels).sum())
+        if min(n_tp, n_fp) < min_lut_rows:
+            logger.warning(
+                "recalibrate_snvq_per_class: class %s has %d TP / %d FP LUT rows (< %d); using global LUT",
+                cls,
+                n_tp,
+                n_fp,
+                min_lut_rows,
+            )
+            continue
         _snvq, x_lut, y_lut = recalibrate_snvq(
             mqual[m], labels[m], snvq_prefactor_override=pref, lut_mask=sub_lut_mask, **recal_kwargs
         )

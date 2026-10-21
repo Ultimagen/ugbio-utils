@@ -133,3 +133,14 @@ class TestIntervalCounters:
         fa, il, _n = tiny_ref
         # ACACAC = unit "AC" x3 -> 1 STR locus (>=2 copies)
         assert count_str_loci_in_interval_list(il, fa, min_unit=2, max_unit=6, min_copies=2) == 1
+
+    def test_sparse_class_falls_back(self):
+        mqual, label = _synth(n=8000)
+        cls = np.array(["snv"] * len(mqual))
+        cls[:30] = "non_hmer_indel"  # 30 TP rows, 0 FP -> below min_lut_rows
+        snvq, luts = recalibrate_snvq_per_class(
+            mqual, label, cls, prefactor_by_class={"snv": 1e-3, "non_hmer_indel": 1e-3}
+        )
+        assert "non_hmer_indel" not in luts
+        assert np.isnan(snvq[:30]).all()  # caller falls back to the global LUT
+        assert not np.isnan(snvq[30:]).any()
