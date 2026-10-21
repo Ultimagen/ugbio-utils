@@ -49,7 +49,7 @@ def parse_args(argv=None):
     parser.add_argument("--po-tag", default="po", help="Tag holding the pair orientation (default po)")
     parser.add_argument("--cs-tag", default="CS", help="Tag shared by the two strands of a molecule (default CS)")
     parser.add_argument("--buckets", type=int, default=64, help="Temporary files to spread the reads over (default 64)")
-    parser.add_argument("--tmp-dir", help="Directory for the temporary files (default: system temp)")
+    parser.add_argument("--tmp-dir", help="Directory for the temporary files (default: system temp); needs about the input size")
     parser.add_argument("--threads", type=int, default=1, help="htslib compression threads (default 1)")
     parser.add_argument("--counters", help="Write one 'name<TAB>count' line per outcome to this file")
     parser.add_argument("--verbose", "-v", action="store_true")
@@ -94,7 +94,7 @@ def pair_reads(input_path: str, output_path: str, *, po_tag="po", cs_tag="CS", b
         paths = [os.path.join(tmp, f"bucket{i}.bam") for i in range(buckets)]
         with pysam.AlignmentFile(input_path, "r", check_sq=False, threads=threads) as bam:
             header = bam.header
-            files = [pysam.AlignmentFile(p, "wbu", header=header) for p in paths]
+            files = [pysam.AlignmentFile(p, "wb", header=header, format_options=[b"level=1"]) for p in paths]
             try:
                 for read in bam:
                     counters["reads"] += 1
