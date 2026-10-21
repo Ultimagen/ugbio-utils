@@ -16,8 +16,31 @@ Given:
 
 $$\text{ctDNA VAF} = \frac{T}{N} = \frac{K/P}{N}$$
 
-**Detection p-value:** `P(X ≥ K | Binom(N × P, p_err))`
-where `N × P` (= `corrected_coverage`) is the effective Binomial trial count and `p_err` is the background error rate estimated from synthetic controls via Jeffreys prior.
+A true signal read is observed as a supporting read only with probability P (non-supporting reads have no SNVQ), so
+
+$$K \sim \mathrm{Binom}(N,\; P \cdot f)$$
+
+where f is the true VAF. All statistics below use the raw coverage N as the Binomial trial count and P as a known scale factor; no "corrected coverage" is needed.
+
+**Background rate:** `p_err = (k_db / P) / N_db`, the VAF-scale background estimated from the synthetic (db\_control) signatures (`k_db` supporting reads over `N_db` raw coverage). When no background read is observed a Jeffreys prior is used: `p_err = (0.5 / P) / (N_db + 1)`.
+
+**Detection p-value:** `P(X ≥ K | Binom(N, P × p_err))`
+
+### Confidence interval on the ctDNA VAF
+
+The report shows a two-sided confidence interval (default 95%, `--ci-level`) on the ctDNA VAF. It is the exact Clopper-Pearson interval on K out of N, divided by P:
+
+$$\left[\frac{B^{-1}(\tfrac{\alpha_{ci}}{2};\, K,\, N-K+1)}{P},\;\; \frac{B^{-1}(1-\tfrac{\alpha_{ci}}{2};\, K+1,\, N-K)}{P}\right]$$
+
+where $B^{-1}$ is the Beta quantile function and $\alpha_{ci} = 1 - \text{ci\_level}$. For $K = 0$ the lower bound is 0 and the upper bound is $(1-(\alpha_{ci}/2)^{1/N})/P$ (about $3.7/(N \cdot P)$ at 95%). The upper bound is capped at 1.
+
+Notes:
+- It is an interval on the **total** VAF (background included, not background-subtracted) and does not use `p_err`.
+- P is treated as known: its estimation error is not part of the interval.
+- Reads are assumed independent (Binomial); overdispersion (e.g. multi-read loci, uneven clonality) would make the true interval wider.
+- The detection call is a one-sided test at `alpha` (default 0.01), so it is not exactly equivalent to the two-sided 95% interval excluding `p_err`.
+
+The interval is plotted on the patient marker in the *Patient vs. controls* figure and written to `detection_result.json` as `matched_ctdna_vaf_ci_low`, `matched_ctdna_vaf_ci_high` and `ci_level`.
 
 ### Personal LOD
 
@@ -27,13 +50,13 @@ The **personal Limit of Detection (LOD)** is the minimum tumor fraction (TF) at 
 
 1. **Detection threshold** `n_th`: the smallest read count where the null hypothesis is rejected at FPR = 5%:
 
-$$n_{th} = \min\{k : P(X \geq k \mid \mathrm{Binom}(N,\, p_{err})) < 0.05\}$$
+$$n_{th} = \min\{k : P(X \geq k \mid \mathrm{Binom}(N,\, P\, p_{err})) < 0.05\}$$
 
 2. **LOD** at configurable target recall (default 95%) and FPR (default 5%): the smallest TF such that a true positive sample crosses the threshold at the target recall rate:
 
-$$\mathrm{LOD} = \min\{\mathrm{TF} : P(X \geq n_{th} \mid \mathrm{Binom}(N,\, p_{err} + \mathrm{TF})) \geq 0.95\}$$
+$$\mathrm{LOD} = \min\{\mathrm{TF} : P(X \geq n_{th} \mid \mathrm{Binom}(N,\, P\,(p_{err} + \mathrm{TF}))) \geq 0.95\}$$
 
-where $N_{\text{eff}} = N \times P = \text{signature\_size} \times \text{mean\_coverage} \times \text{SNVQ\_recall}$.
+where $N = \text{signature\_size} \times \text{mean\_coverage}$ and $P$ is the SNVQ recall.
 
 The LOD decreases (improves) with larger signature size, higher coverage, or lower noise rate. It is `None` when no threshold satisfies the FPR constraint (e.g., signature too small or coverage too low).
 
