@@ -580,34 +580,6 @@ def test_cs_reads_orientation_from_the_flag_for_dovetailed_pairs(tmp_path):
     assert (got["fwd"]["po"], got["rev"]["po"]) == ("F1R2", "F2R1")
 
 
-def _equal_start_strand(name, u5, u3, *, r1_reverse):
-    """One strand of a molecule whose mates both start at 1000: forward 1000-1050, reverse 1000-1060."""
-    r1_len, r2_len = (60, 50) if r1_reverse else (50, 60)
-    r1 = segment(name, "chr1", 1000, flag=1 | 64 | (16 if r1_reverse else 0), length=r1_len, tags={"u5": u5})
-    r2 = segment(name, "chr1", 1000, flag=1 | 128 | (0 if r1_reverse else 16), length=r2_len, tags={"u3": u3})
-    return [r1, r2]
-
-
-def test_equal_start_strands_share_cs_whichever_mate_is_r1(tmp_path):
-    """The two strands swap R1 and R2; with equal starts the key must not depend on which is R1."""
-    recs = flatten(
-        _equal_start_strand("fwd", UMI_A, UMI_B, r1_reverse=False),
-        _equal_start_strand("rev", UMI_B, UMI_A, r1_reverse=True),
-    )
-    got = marked(run(tmp_path, recs, "--use-umi", "--pair-orientation-tag", "po"))
-    assert (got["fwd"]["po"], got["rev"]["po"]) == ("F1R2", "F2R1")
-    assert got["fwd"]["CS"] == got["rev"]["CS"] == "fwd"
-
-
-def test_pair_key_is_independent_of_mate_identity_on_equal_starts():
-    a = ("chr1", 100, 150, True, False, "A", "")
-    b = ("chr1", 100, 160, False, True, "", "B")
-    swapped_a = ("chr1", 100, 150, False, False, "", "B")
-    swapped_b = ("chr1", 100, 160, True, True, "A", "")
-    assert mdmi._pair_key(a, b, use_umi=False) == mdmi._pair_key(swapped_b, swapped_a, use_umi=False)
-    assert mdmi._pair_key(a, b, use_umi=False) == ("chr1", 100, 160)
-
-
 def test_cs_is_not_set_for_reads_that_never_paired(tmp_path):
     recs = flatten(segment("solo", "chr1", 1000, flag=0), pair("p1", "chr1", 2000, 2200, UMI_A, UMI_B))
     got = marked(run(tmp_path, recs, "--use-umi"))

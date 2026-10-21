@@ -50,13 +50,12 @@ Usage:
 # (MI/DS vs the pre-CS baseline) and cs_links.py (linkage vs the validated blob) first,
 # and note that only a raw `samtools view` diff sees the emitted aux order MI, DS, CS.
 #
-# Since that validation, output changed in five places (and --position-tolerance became whole-file
-# only). Four are outside the default --use-umi path on primary records: FF/RR families with
+# Since that validation, output changed in four places (and --position-tolerance became whole-file
+# only), all outside the default --use-umi path on primary records: FF/RR families with
 # --orientation-in-key get their own CS; CS links survive --position-tolerance merges; sharded mode
 # never pairs mates further apart than --pad; and a secondary/supplementary record far from its pair
 # (another contig, or beyond --pad) no longer takes its pair's MI/DS/CS in whole-file mode (see
-# _takes_family_tags). The fifth does touch the default path: mates with equal starts are ordered by
-# end in _pair_key, so a dovetailed pair keys the same whichever mate is R1 and its strands share CS.
+# _takes_family_tags).
 
 import argparse
 import bisect
@@ -262,9 +261,7 @@ def _read_rec(read, use_umi: bool, umis: dict[str, str] | None = None) -> tuple:
 
 
 def _pair_key(r1: tuple, r2: tuple, use_umi: bool, orientation_in_key: bool = False) -> tuple:
-    # Ties on start are broken by end, so a pair keys the same whichever mate is R1: the two strands of a
-    # dovetailed molecule swap R1 and R2, and must still share the positional part of the key for CS.
-    left, right = (r1, r2) if (r1[_START], r1[_END]) <= (r2[_START], r2[_END]) else (r2, r1)
+    left, right = (r1, r2) if r1[_START] <= r2[_START] else (r2, r1)
     key: tuple = (left[_CHROM], left[_START], right[_END])
     if use_umi:
         # u5 is always on R1 and u3 on R2 by library design, regardless of strand
