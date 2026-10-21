@@ -49,7 +49,9 @@ def parse_args(argv=None):
     parser.add_argument("--po-tag", default="po", help="Tag holding the pair orientation (default po)")
     parser.add_argument("--cs-tag", default="CS", help="Tag shared by the two strands of a molecule (default CS)")
     parser.add_argument("--buckets", type=int, default=64, help="Temporary files to spread the reads over (default 64)")
-    parser.add_argument("--tmp-dir", help="Directory for the temporary files (default: system temp); needs about the input size")
+    parser.add_argument(
+        "--tmp-dir", help="Directory for the temporary files (default: system temp); needs about the input size"
+    )
     parser.add_argument("--threads", type=int, default=1, help="htslib compression threads (default 1)")
     parser.add_argument("--counters", help="Write one 'name<TAB>count' line per outcome to this file")
     parser.add_argument("--verbose", "-v", action="store_true")

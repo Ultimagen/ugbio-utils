@@ -9,9 +9,7 @@ import pysam
 import pytest
 from ugbio_consensus import pair_consensus_reads as pcr
 
-HEADER = pysam.AlignmentHeader.from_dict(
-    {"HD": {"VN": "1.6"}, "RG": [{"ID": "Z1", "SM": "s", "tp": "reference"}]}
-)
+HEADER = pysam.AlignmentHeader.from_dict({"HD": {"VN": "1.6"}, "RG": [{"ID": "Z1", "SM": "s", "tp": "reference"}]})
 FWD_SEQ = "AACCGGTTAC"
 REV_SEQ = "GGGATTTCCA"
 FWD_QUAL = "ABCDEFGHIJ"

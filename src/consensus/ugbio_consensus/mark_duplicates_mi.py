@@ -12,7 +12,8 @@ With --use-umi a second tag, CS, links the two strands of one original duplex mo
 which the UMI part of the key necessarily splits into two MI families. See assign_cs().
 
 --orientation-in-key (on by default with --use-umi, off with --cross-strand or --no-orientation-in-key)
-adds the pair orientation (F1R2, F2R1, FF, RR) to the key, for libraries whose u5 and u3 can be equal. A molecule keys as (A, B) on one strand and (B, A) on the other, which
+adds the pair orientation (F1R2, F2R1, FF, RR) to the key, for libraries whose u5 and u3 can be equal.
+A molecule keys as (A, B) on one strand and (B, A) on the other, which
 is what keeps the strands apart; with A == B both strands key as (A, A) and, without the
 orientation, land in one MI family. CS still links them. See _pair_key().
 

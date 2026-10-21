@@ -394,7 +394,9 @@ def _symmetric(tmp_path, *args):
 
 def test_symmetric_umi_puts_both_orientations_in_one_family_without_orientation_in_key(tmp_path):
     got = _symmetric(tmp_path, "--no-orientation-in-key")
-    assert {n: (g["MI"], g["DS"]) for n, g in got.items()} == dict.fromkeys(("fwd1", "fwd2", "rev1", "rev2"), ("fwd1", 4))
+    assert {n: (g["MI"], g["DS"]) for n, g in got.items()} == dict.fromkeys(
+        ("fwd1", "fwd2", "rev1", "rev2"), ("fwd1", 4)
+    )
 
 
 def test_orientation_in_key_is_on_by_default_with_umi(tmp_path):
@@ -449,7 +451,9 @@ def test_tolerance_never_merges_across_orientations_with_orientation_in_key(tmp_
         pair("fwd", "chr1", 1000, 1200, UMI_A, UMI_A, kind="F1R2"),
         pair("rev", "chr1", 1000, 1201, UMI_A, UMI_A, kind="F2R1"),
     )
-    merged = marked(run(tmp_path, recs, "--use-umi", "--position-tolerance", "2", "--no-orientation-in-key", name="plain.bam"))
+    merged = marked(
+        run(tmp_path, recs, "--use-umi", "--position-tolerance", "2", "--no-orientation-in-key", name="plain.bam")
+    )
     assert (merged["fwd"]["DS"], merged["rev"]["DS"]) == (2, 2)
     split = marked(
         run(tmp_path, recs, "--use-umi", "--position-tolerance", "2", "--orientation-in-key", name="orient.bam")

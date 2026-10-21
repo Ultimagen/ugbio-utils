@@ -11,7 +11,8 @@ strands, so a CS family is duplex when its consensus reads include *both* F1R2 a
 UMI (u3 == u5) put both orientations into one MI upstream. ``dx`` looks at ``po`` and cannot be fooled that way.
 
 Every read of a duplex CS family gets ``dx=1``, whichever of its reads it is, so a downstream filter needs
-no second look at the partner. Reads of any other CS family get no ``dx``, and a ``dx`` that was already on a read is replaced. Reads without ``CS`` are left alone.
+no second look at the partner. Reads of any other CS family get no ``dx``, and a ``dx`` that was already on a
+read is replaced. Reads without ``CS`` are left alone.
 
 The input must be coordinate-sorted. The two orientations of a molecule start within one fragment length of
 each other, so the file is streamed with a window of ``--pad`` bp: a read is written once no later read can
@@ -34,7 +35,9 @@ _BOTH = 3
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="Tag consensus reads of duplex (both-orientation) CS families with dx=1")
+    parser = argparse.ArgumentParser(
+        description="Tag consensus reads of duplex (both-orientation) CS families with dx=1"
+    )
     parser.add_argument("input", help="Coordinate-sorted BAM/CRAM with CS and po tags")
     parser.add_argument("output", help="Output BAM/CRAM")
     parser.add_argument("--reference", "-T", help="Reference FASTA (required for CRAM I/O)")
@@ -58,7 +61,7 @@ def _strip(read, tag: str) -> None:
         read.tags = [(k, v) for k, v in read.tags if k != tag]
 
 
-def mark_duplex(
+def mark_duplex(  # noqa: C901
     input_path: str,
     output_path: str,
     open_kwargs: dict,
@@ -99,7 +102,8 @@ def mark_duplex(
                 counters["reads"] += 1
                 # written before this read is counted: a read further than pad behind it cannot be its partner
                 while window and (
-                    window[0][0].reference_id != read.reference_id or window[0][0].reference_start < read.reference_start - pad
+                    window[0][0].reference_id != read.reference_id
+                    or window[0][0].reference_start < read.reference_start - pad
                 ):
                     finish(*window.popleft(), out)
                 cs = None
