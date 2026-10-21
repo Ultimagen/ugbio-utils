@@ -977,23 +977,16 @@ def dataset_bam(tmp_path_factory):
     return build_bam(tmp_path_factory.mktemp("dataset") / "in.bam", random_dataset())
 
 
+# --position-tolerance is whole-file only (see test_position_tolerance_is_refused_in_sharded_mode)
 OPTION_SETS = [
     pytest.param((), id="plain"),
     pytest.param(("--use-umi",), id="umi"),
-    pytest.param(("--use-umi", "--position-tolerance", "2"), id="umi-tol2"),
     pytest.param(("--use-umi", "--cross-strand"), id="umi-cross"),
-    pytest.param(("--use-umi", "--cross-strand", "--position-tolerance", "3"), id="umi-cross-tol3"),
     pytest.param(("--use-umi", "--pair-orientation-tag", "po"), id="umi-po"),
     pytest.param(("--use-umi", "--orientation-in-key"), id="umi-orient"),
     pytest.param(("--orientation-in-key",), id="orient-no-umi"),
-    pytest.param(
-        ("--use-umi", "--orientation-in-key", "--position-tolerance", "2", "--pair-orientation-tag", "po"),
-        id="umi-orient-tol2-po",
-    ),
-    pytest.param(
-        ("--use-umi", "--cross-strand", "--position-tolerance", "2", "--pair-orientation-tag", "po", "--strip-run-id"),
-        id="everything",
-    ),
+    pytest.param(("--use-umi", "--orientation-in-key", "--pair-orientation-tag", "po"), id="umi-orient-po"),
+    pytest.param(("--use-umi", "--cross-strand", "--pair-orientation-tag", "po", "--strip-run-id"), id="everything"),
 ]
 
 
@@ -1228,15 +1221,26 @@ def test_a_cluster_straddling_a_split_boundary_agrees_on_mi(tmp_path):
     assert {v["MI"] for v in marked(sharded).values()} == {"p0"}
 
 
+@pytest.mark.parametrize("sharding", [("--jobs", "2"), ("--shard-size", "3000"), ("--regions", "t.bed")])
+def test_position_tolerance_is_refused_in_sharded_mode(tmp_path, sharding):
+    """A tolerance-merged family has no bounded extent, so shards could tag the mates of one pair differently."""
+    inp = build_bam(tmp_path / "in.bam", pair("p", "chr1", 1000, 1200, UMI_A, UMI_B))
+    (tmp_path / "t.bed").write_text("chr1\t0\t5000\n")
+    sharding = tuple(str(tmp_path / a) if a.endswith(".bed") else a for a in sharding)
+    result = cli(inp, "--use-umi", "--position-tolerance", "1", *sharding, out=tmp_path / "out.bam", check=False)
+    assert result.returncode != 0
+    assert "--position-tolerance needs whole-file mode" in result.stderr
+
+
 @needs_samtools
 def test_cross_strand_merge_survives_a_shard_boundary(tmp_path):
-    """A tolerance-merged duplex pair whose two strands start either side of a shard edge."""
+    """An exact cross-strand duplex pair whose molecule straddles a shard edge."""
     recs = flatten(
         pair("fwd", "chr1", 2995, 3195, UMI_A, UMI_B, kind="F1R2"),
-        pair("rev", "chr1", 3000, 3196, UMI_B, UMI_A, kind="F2R1"),
+        pair("rev", "chr1", 2995, 3195, UMI_B, UMI_A, kind="F2R1"),
     )
     inp = build_bam(tmp_path / "in.bam", recs)
-    args = ("--use-umi", "--cross-strand", "--position-tolerance", "5", "--pair-orientation-tag", "po")
+    args = ("--use-umi", "--cross-strand", "--pair-orientation-tag", "po")
     whole, sharded = tmp_path / "whole.bam", tmp_path / "sharded.bam"
     cli(inp, *args, out=whole)
     cli(inp, *args, "--shard-size", "3000", "--jobs", "2", out=sharded)
@@ -1270,13 +1274,11 @@ def test_sharded_without_unplaced_reads_omits_the_unplaced_block(tmp_path):
 @pytest.mark.parametrize("jobs", [1, 2, 4])
 def test_result_does_not_depend_on_the_number_of_jobs(tmp_path, dataset_bam, jobs):
     ref, out = tmp_path / "ref.bam", tmp_path / "out.bam"
-    cli(dataset_bam, "--use-umi", "--cross-strand", "--position-tolerance", "2", out=ref)
+    cli(dataset_bam, "--use-umi", "--cross-strand", out=ref)
     cli(
         dataset_bam,
         "--use-umi",
         "--cross-strand",
-        "--position-tolerance",
-        "2",
         "--shard-size",
         "5000",
         "--jobs",

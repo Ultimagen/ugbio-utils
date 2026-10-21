@@ -50,7 +50,7 @@ Usage:
 # (MI/DS vs the pre-CS baseline) and cs_links.py (linkage vs the validated blob) first,
 # and note that only a raw `samtools view` diff sees the emitted aux order MI, DS, CS.
 #
-# Since that validation, output changed in four places, all outside the default --use-umi path on
+# Since that validation, output changed in four places (and --position-tolerance became whole-file only), all outside the default --use-umi path on
 # primary records: FF/RR families with --orientation-in-key get their own CS; CS links survive
 # --position-tolerance merges; sharded mode never pairs mates further apart than --pad; and a
 # secondary/supplementary record far from its pair (another contig, or beyond --pad) no longer takes
@@ -230,6 +230,10 @@ def parse_args():
         parser.error("--orientation-in-key and --cross-strand contradict each other")
     if args.orientation_in_key is None:
         args.orientation_in_key = args.use_umi and not args.cross_strand
+    if args.position_tolerance > 0 and (args.jobs > 1 or args.shard_size or args.regions):
+        # Tolerance merges chain transitively, so a merged family has no bounded extent and two shards can
+        # see different parts of it, which would tag the two mates of one pair differently.
+        parser.error("--position-tolerance needs whole-file mode; drop --jobs, --shard-size and --regions")
     return args
 
 

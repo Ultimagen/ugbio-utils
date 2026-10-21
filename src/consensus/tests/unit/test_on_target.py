@@ -131,7 +131,9 @@ def test_sorted_bed_merges_overlapping_targets(tmp_path):
     raw = tmp_path / "overlap.bed"
     raw.write_text(_TARGETS_OVERLAPPING, encoding="utf-8")
     out = sorted_bed(str(raw), str(tmp_path / "overlap.sorted.bed"))
-    assert open(out, encoding="utf-8").read().split("\n")[:-1] == ["chr1\t0\t100"]
+    with open(out, encoding="utf-8") as fh:
+        lines = fh.read().split("\n")[:-1]
+    assert lines == ["chr1\t0\t100"]
 
 
 def test_overlapping_targets_not_double_counted(tmp_path):
