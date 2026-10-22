@@ -51,7 +51,7 @@ def run(tmp_path, records, **kwargs):
 
 def test_f1r2_pair_is_r1_forward_and_r2_reverse_complemented(tmp_path):
     got, counters = run(tmp_path, strand_pair("p1x", po="F1R2"), buckets=4)
-    assert [r.query_name for r in got] == ["p1x", "p1x"]
+    assert [r.query_name for r in got] == ["p1x2", "p1x2"]
     r1, r2 = got
     assert (r1.flag, r2.flag) == (77, 141)
     assert r1.query_sequence == FWD_SEQ
@@ -111,8 +111,23 @@ def test_stems_that_extend_one_another_are_not_mixed_up(tmp_path):
     """Stem 'x1' (reads x10, x11) is not stem 'x' (reads x0, x1)."""
     recs = strand_pair("x") + strand_pair("x1")
     got, counters = run(tmp_path, recs, buckets=1)
-    assert sorted(r.query_name for r in got) == ["x", "x", "x1", "x1"]
+    assert sorted(r.query_name for r in got) == ["x12", "x12", "x2", "x2"]
     assert counters["paired"] == 2
+
+
+def test_a_pair_never_takes_the_name_of_another_molecules_unpaired_read(tmp_path):
+    """
+    Read 'x1' (stem 'x', partner missing) stays unpaired; reads 'x10'/'x11' pair under stem 'x1'.
+    Named '<stem>', the pair would share the name 'x1' with the unrelated unpaired read, and the CRAM
+    writer behind demux/sorter links mates by name, which made sorter abort.
+    """
+    lone = read("x1", REV_SEQ, REV_QUAL, cs="LONE", po="F2R1")
+    got, counters = run(tmp_path, [lone, *strand_pair("x1", cs="PAIR")], buckets=1)
+    names = {r.get_tag("CS"): set() for r in got}
+    for r in got:
+        names[r.get_tag("CS")].add(r.query_name)
+    assert names == {"LONE": {"x1"}, "PAIR": {"x12"}}
+    assert (counters["paired"], counters["no_partner"]) == (1, 1)
 
 
 def test_the_two_mates_come_out_adjacent_whatever_the_input_order_or_bucket_count(tmp_path):

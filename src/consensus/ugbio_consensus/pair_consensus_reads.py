@@ -8,7 +8,7 @@ unaligned, in reference orientation, with the name ``<stem><digit>`` and with th
 Aligned alone, one of the two can land with a low MAPQ in a repeat that the other would have resolved.
 
 For every stem that has both digits and a ``po`` of F1R2 or F2R1, this writes the two reads as an
-unaligned pair, adjacent and named ``<stem>``:
+unaligned pair, adjacent and named ``<stem>2``:
 
 * R1 is the forward read for F1R2 and the reverse read for F2R1; flags 77 (R1) and 141 (R2).
 * The reverse read is reverse-complemented (quality reversed), because a mate is given to the aligner as
@@ -16,6 +16,12 @@ unaligned pair, adjacent and named ``<stem>``:
 
 Everything else is written unchanged: reads with no partner, a ``po`` other than F1R2/F2R1, or partners
 that disagree on ``po`` or ``CS``.
+
+Why ``<stem>2`` and not ``<stem>``: names are numeric, so a stem can equal the full name of another
+molecule's unpaired read (stem ``x1`` of reads ``x10``/``x11`` is the name of read ``x1`` of stem ``x``).
+The CRAM writer behind demux/sorter links mates by name within a slice, so such a collision attached an
+unrelated unpaired read to the pair, and sorter aborted on the result ("invalid mapq value"). Unpaired
+reads end in 0 or 1 and pairs in 2, so the names never collide, and they stay numeric for the bead index.
 
 The aligner then sets the strand and pair flags itself, so ``SetConsensusStrandByMajority`` must not run
 on this output.
@@ -38,6 +44,7 @@ import pysam
 
 R1_FLAG = 1 | 4 | 8 | 64
 R2_FLAG = 1 | 4 | 8 | 128
+PAIR_SUFFIX = "2"  # unpaired strand reads end in 0 or 1; see the module docstring
 _ORIENTATIONS = ("F1R2", "F2R1")
 _COMPLEMENT = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
@@ -69,7 +76,7 @@ def _make_pair(forward, reverse, po: str):
     reverse.query_sequence = seq.translate(_COMPLEMENT)[::-1]
     reverse.query_qualities = qual[::-1]
     r1, r2 = (forward, reverse) if po == "F1R2" else (reverse, forward)
-    r1.query_name = r2.query_name = stem
+    r1.query_name = r2.query_name = stem + PAIR_SUFFIX
     r1.flag, r2.flag = R1_FLAG, R2_FLAG
     return r1, r2
 
