@@ -1981,7 +1981,7 @@ class TestWeightedMajorityVoting:
 
 
 class TestCopyNumberAggregation:
-    """Tests for SVLEN-weighted majority voting of INFO/CopyNumber and FORMAT/CN (BIOIN-2748)."""
+    """Tests for SVLEN-weighted majority voting of INFO/CopyNumber and FORMAT/CN."""
 
     @staticmethod
     def _make_record(header, svtype="DEL", svlen=1000):
@@ -2043,6 +2043,16 @@ class TestCopyNumberAggregation:
 
         combine_cnv_vcf_utils._aggregate_weighted_majority(record, update_df, "CopyNumber", [None, float("nan")])
         assert "CopyNumber" not in record.info
+
+    def test_copy_number_tie_goes_to_highest_qual(self, cnv_vcf_header):
+        """Same interval reported twice with different CN: the higher-QUAL record's value wins, in either order."""
+        for order in (slice(None), slice(None, None, -1)):
+            record = self._make_record(cnv_vcf_header)
+            update_df = pd.DataFrame(
+                {"svlen": [(3000,), (3000,)], "svtype": ["DEL", "DEL"], "qual": [44.5, 56.6], "cn": [1.0, 0.0]}
+            ).iloc[order]
+            combine_cnv_vcf_utils._aggregate_format_fields(record, update_df, cnv_vcf_header)
+            assert record.samples["test_sample"]["CN"] == 0.0
 
     def test_format_cn_aggregated(self, cnv_vcf_header):
         """FORMAT/CN is voted like INFO/CopyNumber instead of keeping the template record's value."""

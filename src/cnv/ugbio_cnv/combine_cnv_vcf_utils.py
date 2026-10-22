@@ -1139,33 +1139,41 @@ def _weighted_majority_value(
 
     Returns
     -------
-    The winning value, or None if no record has a valid value
+    The winning value, or None if no record has a valid value. For fields other than SVTYPE, ties in
+    total SVLEN (e.g. a caller reporting the same interval twice with different values) go to the value
+    of the highest-QUAL record.
     """
     # Collect SVLEN values from update_records
     # Note: update_records now includes collapsed record's original SVLEN
     # (added in _aggregate_collapsed_vcf), so don't add record.info["SVLEN"] again
     lengths = list(update_records["svlen"].apply(lambda x: x[0]))
+    # QUAL breaks copy-number ties only; SVTYPE ties keep their existing (first-seen) resolution
+    use_qual = field != "SVTYPE" and "qual" in update_records.columns
+    quals = list(update_records["qual"]) if use_qual else [None] * len(values)
     voters = [True] * len(values)
     if svtype is not None and field != "SVTYPE" and "svtype" in update_records.columns:
         voters = list(update_records["svtype"] == svtype)
 
     # Filter out None values
-    valid_pairs = [
-        (v, abs(length))
-        for v, length, vote in zip(values, lengths, voters, strict=True)
+    valid_triples = [
+        (v, abs(length), q)
+        for v, length, q, vote in zip(values, lengths, quals, voters, strict=True)
         if vote and v is not None and not pd.isna(v)
     ]
 
-    if not valid_pairs:
+    if not valid_triples:
         return None
 
-    # Group by field value and sum absolute SVLENs
+    # Group by field value: sum absolute SVLENs, keep the best QUAL for tie-breaking
     value_weights = defaultdict(int)
-    for value, length in valid_pairs:
+    value_best_qual = defaultdict(lambda: float("-inf"))
+    for value, length, qual in valid_triples:
         value_weights[value] += length
+        if qual is not None and not pd.isna(qual):
+            value_best_qual[value] = max(value_best_qual[value], float(qual))
 
-    # Select value with highest total SVLEN
-    return max(value_weights.items(), key=lambda x: x[1])[0]
+    # Select value with highest total SVLEN, then highest QUAL
+    return max(value_weights, key=lambda v: (value_weights[v], value_best_qual[v]))
 
 
 def _aggregate_weighted_majority(
