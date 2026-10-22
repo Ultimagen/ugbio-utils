@@ -37,7 +37,7 @@ def test_ppmseq_qc_analysis_runs(tmp_path, subsampled_sam, adapter_version):
     h5 = tmp_path / f"ppmseq_sr_tag_{adapter_version}.ppmSeq.applicationQC.h5"
     assert h5.exists()
     with pd.HDFStore(h5, "r") as store:
-        assert "/keys_to_convert" not in store.keys()
+        assert "/keys_to_convert" in store.keys()
     json_out = tmp_path / f"ppmseq_sr_tag_{adapter_version}.ppmSeq.applicationQC.json"
     assert not json_out.exists()
 

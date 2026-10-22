@@ -901,6 +901,15 @@ def collect_statistics(
     if not output_filename.endswith(".h5"):
         output_filename += ".h5"
     with pd.HDFStore(output_filename, "w") as store:
+        keys_to_convert = [
+            "stats_shortlist",
+            "mixed_reads_stats",
+            "sorter_stats",
+            "strand_ratio_category_counts",
+            "strand_ratio_category_norm",
+            "strand_ratio_category_concordance",
+            "strand_ratio_category_consensus",
+        ]
         store["stats_shortlist"] = df_stats_shortlist
         store["mixed_reads_stats"] = df_mixed_reads_stats
         store["sorter_stats"] = sorter_stats
@@ -912,6 +921,10 @@ def collect_statistics(
         if trimmer_failure_codes_csv:
             store["trimmer_failure_codes"] = df_trimmer_failure_codes
             store["failure_codes_metrics"] = df_failure_codes_metrics
+            keys_to_convert += ["trimmer_failure_codes", "failure_codes_metrics"]
+        # Papyrus application-QC ingestion (DataEngineering) reads keys_to_convert to choose
+        # which tables in this HDF5 to load.
+        store["keys_to_convert"] = pd.Series(keys_to_convert)
 
 
 def add_strand_ratios_and_categories_to_featuremap(
