@@ -310,9 +310,8 @@ def test_dx_marked_single_strand_reads_are_duplex(tmp_path):
             out.write(r)
     pysam.index(str(path))
 
-    per = duplex_metrics.collect_family_metrics_from_strand_tags(
-        str(path), [(CHROM, 0, CHROM_LEN)], reference=None
-    )["per_category"]
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(str(path), [(CHROM, 0, CHROM_LEN)], reference=None)
+    per = res["per_category"]
     assert per.loc[duplex_metrics.DUPLEX, "n_reads"] == 3
     assert per.loc[duplex_metrics.DUPLEX, "avg_family_size"] == pytest.approx((3 + 1 + 4) / 3)
     assert per.loc[duplex_metrics.SINGLE_STRAND, "n_reads"] == 2
