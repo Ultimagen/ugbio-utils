@@ -62,7 +62,7 @@ import polars as pl
 from ugbio_core.logger import logger as log
 from ugbio_core.vcf_utils import get_vcf_sample_names
 
-from ugbio_featuremap.featuremap_utils import FeatureMapFields
+from ugbio_featuremap.featuremap_utils import CELL_HMER_INDEL, CELL_SEP, FeatureMapFields, cell_key_expr
 from ugbio_featuremap.filter_dataframe import (
     FIELD_GNOMAD_AF,
     FIELD_ID,
@@ -107,6 +107,7 @@ MAX_DEBUG_FILES_TO_SHOW = 3  # Number of file paths to show in debug logs
 # small/sparse-file behavior is unchanged.
 TARGET_RECORDS_PER_WINDOW = 300_000  # aim for ~300k VCF records per parallel window
 MIN_WINDOW_BP = 250_000  # never go below 250 kbp windows (avoids pathological window explosion)
+COL_X_HMER_RUN = "X_HMER_RUN"  # length of the reference homopolymer run an hmer indel changes
 COL_X_IC = "X_IC"  # Indel-class column emitted by snvfind: "ins"/"del" for hmer-indels, null for SNVs
 
 # Duplex / consensus per-read tags used to classify a read's molecule type for the duplex oversampling of the
@@ -1275,12 +1276,93 @@ def _write_per_class_counts(parquet_files: list[str], out_json: str) -> dict:
         "non_hmer_indel": n_nonhmer,
         "total": total,
     }
+    # Per hmer run-length bin (cell keys "hmer_indel|<bin>", from X_HMER_RUN): the per-bin error numerators.
+    if has_ic and COL_X_HMER_RUN in schema:
+        cell = cell_key_expr(schema).alias("_cell")
+        per_cell: dict[str, int] = {}
+        for f in parquet_files:
+            for key, n in pl.scan_parquet(f).select(cell).group_by("_cell").len().collect().iter_rows():
+                if key.startswith(CELL_HMER_INDEL + CELL_SEP):
+                    per_cell[key] = per_cell.get(key, 0) + int(n)
+        counts.update(dict(sorted(per_cell.items())))
     Path(out_json).write_text(json.dumps(counts, indent=2))
     log.info(f"Per-class pre-downsample counts -> {out_json}: {counts}")
     return counts
 
 
-def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
+SAMPLE_WEIGHT_COL = "sample_weight"
+_STRATUM_COL = "_sampling_stratum"
+_CC_BUCKET_MAX = 4  # cs_alt_count strata: 1, 2, 3, 4+
+
+
+def _annotate_sampling_strata(parquet_files: list[str], *, use_duplex_group: bool, use_count: bool) -> dict[str, int]:
+    """Tag every pre-downsample row with its sampling stratum (in place) and return the stratum counts.
+
+    The stratum is everything the downsampler conditions on: the recalibration cell (variant class + hmer
+    run-length bin, which also covers the indel/SNV balance) and — when the duplex priority ladder runs — the
+    molecule-level ``duplex_group`` and, for the ``cs_alt_count`` modes, the per-(CS + variant) ALT-match count
+    bucket. It must be computed BEFORE downsampling: ``duplex_group`` and the count are molecule-level windows
+    that change once reads are dropped. Within a stratum every sampler is random (count ties are broken by a
+    random tiebreak), so ``n_pre / n_post`` per stratum is an exact importance weight (finer strata stay unbiased).
+    """
+    counts: dict[str, int] = {}
+    for f in parquet_files:
+        part = pl.read_parquet(f)
+        parts = [cell_key_expr(part.columns)]
+        if use_duplex_group:
+            part = _add_duplex_group_column(part)
+            parts.append(pl.col(DUPLEX_GROUP_COL))
+        if use_count:
+            mol_keys = [
+                c
+                for c in (COL_CHROM, COL_POS, "REF", "ALT", COL_X_IC, "X_IL", "X_INDEL_SEQ", COL_CS)
+                if c in part.columns
+            ]
+            cc = pl.len().over(mol_keys) if (COL_CS in part.columns and mol_keys) else pl.lit(1)
+            parts.append(pl.min_horizontal(cc, pl.lit(_CC_BUCKET_MAX)).cast(pl.Utf8))
+        part = part.with_columns(pl.concat_str(parts, separator="/").alias(_STRATUM_COL))
+        if use_duplex_group:
+            part = part.drop(DUPLEX_GROUP_COL)
+        for key, n in part.group_by(_STRATUM_COL).len().iter_rows():
+            counts[key] = counts.get(key, 0) + int(n)
+        part.write_parquet(f)
+    return counts
+
+
+def _attach_sample_weight(output_path: str, pre_counts: dict[str, int]) -> None:
+    """Replace the stratum tag in the downsampled output with ``sample_weight = n_pre / n_post`` per stratum."""
+    post = pl.scan_parquet(output_path).group_by(_STRATUM_COL).len().collect()
+    weights = post.with_columns(
+        (pl.col(_STRATUM_COL).replace_strict(pre_counts, return_dtype=pl.Float64) / pl.col("len").cast(pl.Float64))
+        .cast(pl.Float32)
+        .alias(SAMPLE_WEIGHT_COL)
+    ).drop("len")
+    log.info(
+        "Sampling weights per stratum (n_pre/n_post): "
+        + ", ".join(f"{k}={w:.3g}" for k, w in sorted(weights.iter_rows()))
+    )
+    # Strata the downsample dropped entirely (e.g. a low-priority tier without a floor) cannot be re-weighted:
+    # recalibration simply has no rows for them. Report the lost pre-downsample mass so the gap is visible.
+    kept = set(weights[_STRATUM_COL].to_list())
+    lost = {k: n for k, n in pre_counts.items() if k not in kept}
+    if lost:
+        n_lost, n_total = sum(lost.values()), sum(pre_counts.values())
+        log.warning(
+            f"Downsample dropped {len(lost)} sampling strata entirely ({n_lost}/{n_total} = "
+            f"{n_lost / n_total:.2%} of pre-downsample rows; not representable by sample_weight): "
+            + ", ".join(f"{k}={n}" for k, n in sorted(lost.items(), key=lambda kv: -kv[1])[:20])
+        )
+    tmp = output_path + ".w.parquet"
+    (
+        pl.scan_parquet(output_path)
+        .join(weights.lazy(), on=_STRATUM_COL, how="left")
+        .drop(_STRATUM_COL)
+        .sink_parquet(tmp)
+    )
+    shutil.move(tmp, output_path)
+
+
+def _merge_parquet_files_lazy(  # noqa: PLR0913
     parquet_files: list[str],
     output_path: str,
     downsample_reads: int | None = None,
@@ -1290,8 +1372,50 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
     duplex_group_min_fraction: float | None = None,
     per_class_counts_json: str | None = None,
 ) -> None:
+    """Merge part-files (optionally downsampling) and record what the downsample kept.
+
+    ``per_class_counts_json``: pre-downsample per-class / per-hmer-bin row counts (recalibration numerators).
+    When the downsample actually drops rows, the output gets a per-row ``sample_weight`` (pre/post count of the
+    row's sampling stratum) so recalibration can undo the oversampling (duplex priority, indel/SNV balance,
+    cs_alt_count). Sampling itself is unchanged: the stratum tag is an extra column and every sampler selects
+    rows by seed, independent of the column set. See :func:`_merge_parquet_files_dispatch` for the strategies.
     """
-    Merge multiple Parquet files using Polars lazy evaluation for memory efficiency.
+    if per_class_counts_json and parquet_files:
+        _write_per_class_counts(parquet_files, per_class_counts_json)
+
+    pre_counts = None
+    if downsample_reads is not None and parquet_files:
+        total_rows = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
+        if total_rows > downsample_reads:
+            schema_names = pl.scan_parquet(parquet_files[0]).collect_schema().names()
+            use_dg = bool(duplex_oversample_priority) and COL_CS in schema_names
+            use_cc = use_dg and DUPLEX_PRIORITY_CS_ALT_COUNT in (duplex_oversample_priority or [])
+            pre_counts = _annotate_sampling_strata(parquet_files, use_duplex_group=use_dg, use_count=use_cc)
+
+    _merge_parquet_files_dispatch(
+        parquet_files,
+        output_path,
+        downsample_reads,
+        downsample_seed,
+        indel_snv_balance_fraction,
+        duplex_oversample_priority,
+        duplex_group_min_fraction,
+    )
+    if pre_counts is not None:
+        _attach_sample_weight(output_path, pre_counts)
+
+
+def _merge_parquet_files_dispatch(  # noqa: PLR0912, PLR0915, C901
+    parquet_files: list[str],
+    output_path: str,
+    downsample_reads: int | None = None,
+    downsample_seed: int | None = None,
+    indel_snv_balance_fraction: float | None = None,
+    duplex_oversample_priority: list[str] | None = None,
+    duplex_group_min_fraction: float | None = None,
+) -> None:
+    """
+    Merge multiple Parquet files using Polars lazy evaluation for memory efficiency (downsample dispatch).
 
     Parameters
     ----------
@@ -1310,9 +1434,6 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, PLR0915, C901
         instead of the default uniform downsample. No-op if unset, if the X_IC column is
         absent, if there are no indel rows, or if the dataset fits within downsample_reads.
     """
-    if per_class_counts_json and parquet_files:
-        _write_per_class_counts(parquet_files, per_class_counts_json)
-
     # Duplex priority-preserve downsample: opt-in (duplex_oversample_priority set) and only when it can
     # change the result. Short-circuits to the paths below (byte-identical) when: no priority requested,
     # no downsample target, the CS molecule column is absent (non-duplex run), or the dataset already fits.

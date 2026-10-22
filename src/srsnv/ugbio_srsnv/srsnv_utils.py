@@ -441,6 +441,17 @@ def _probability_rescaling(
     return p_rescaled_snvq
 
 
+def weighted_survival(values: np.ndarray, weights: np.ndarray, x: np.ndarray) -> np.ndarray:
+    """Weighted survival ``S(x) = sum(w[v >= x]) / sum(w)`` evaluated on grid *x* (vectorized)."""
+    values = np.asarray(values, dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    if values.size == 0:
+        return np.full(np.shape(x), np.nan)
+    order = np.argsort(values, kind="stable")
+    v, cw = values[order], np.concatenate([[0.0], np.cumsum(weights[order])])
+    return 1.0 - cw[np.searchsorted(v, np.asarray(x, dtype=float), side="left")] / cw[-1]
+
+
 def recalibrate_snvq(  # noqa: PLR0915
     mqual: np.ndarray,
     labels: np.ndarray,
@@ -479,6 +490,10 @@ def recalibrate_snvq(  # noqa: PLR0915
         Maximum Phred score for clipping.
     eps : float
         Small epsilon for numerical stability.
+    sample_weight : np.ndarray | None
+        Optional per-row importance weight (same length as *mqual*), e.g. the data-prep ``sample_weight`` that
+        undoes training-set oversampling. The TP/FP survival curves become weighted survival curves; the LUT
+        grid (FP MQUAL cutoff quantile) stays unweighted. *None* -> unweighted (unchanged behavior).
 
     Returns
     -------
@@ -494,6 +509,7 @@ def recalibrate_snvq(  # noqa: PLR0915
     # supplied directly and the stats-based prefactor computation is skipped (pos/neg/raw/coverage/n_bases
     # become optional). Everything else — the survival curves and the LUT — is identical.
     snvq_prefactor_override = kwargs.get("snvq_prefactor_override")
+    sample_weight = kwargs.get("sample_weight")
     lut_mask = kwargs.get("lut_mask")
     prior_train_error = kwargs.get("prior_train_error")
     fp_mqual_cutoff_quantile = kwargs.get("fp_mqual_cutoff_quantile", 1 - 1e-6)
@@ -576,8 +592,17 @@ def recalibrate_snvq(  # noqa: PLR0915
     mqual_t = lut_df.loc[lut_df["label"], "MQUAL"]
     mqual_f = lut_df.loc[~lut_df["label"], "MQUAL"]
 
-    tpr = np.array([(mqual_t >= m_).mean() for m_ in x_lut])
-    fpr = np.array([(mqual_f >= m_).mean() for m_ in x_lut])
+    if sample_weight is None:
+        tpr = np.array([(mqual_t >= m_).mean() for m_ in x_lut])
+        fpr = np.array([(mqual_f >= m_).mean() for m_ in x_lut])
+    else:
+        w = np.asarray(sample_weight, dtype=float)
+        w = w[lut_mask] if lut_mask is not None else w
+        lab = lut_df["label"].to_numpy().astype(bool)
+        mq = lut_df["MQUAL"].to_numpy()
+        tpr = weighted_survival(mq[lab], w[lab], x_lut)
+        fpr = weighted_survival(mq[~lab], w[~lab], x_lut)
+        logger.info("recalibrate_snvq: weighted survival (sum w TP=%.4g, FP=%.4g)", w[lab].sum(), w[~lab].sum())
 
     y_lut = -10 * np.log10(np.clip(snvq_prefactor * (fpr / tpr), eps, 1))
 
@@ -618,6 +643,7 @@ def recalibrate_snvq_per_class(
     caps_by_class: dict | None = None,
     smoothing: str = "counting",
     min_lut_rows: int = 100,
+    sample_weight: np.ndarray | None = None,
     **recal_kwargs,
 ) -> tuple[np.ndarray, dict]:
     """Build a separate MQUAL->SNVQ LUT per variant class and return per-row SNVQ + the LUT dict.
@@ -640,7 +666,11 @@ def recalibrate_snvq_per_class(
         ``"counting"`` (raw) or ``"monotone"`` (cumulative-max + optional cap).
     min_lut_rows : int
         Minimum TP and minimum FP rows (within ``lut_mask``) a class needs to get its own LUT; sparser
-        classes are skipped (NaN -> caller's global fallback) rather than fitting a degenerate table.
+        classes are skipped (NaN -> caller's global fallback) rather than fitting a degenerate table. Counted
+        on unweighted rows (support, not mass).
+    sample_weight : np.ndarray | None
+        Optional per-row importance weights (parallel to *mqual*); each class's survival curves are weighted
+        with its own slice (see :func:`recalibrate_snvq`).
 
     Returns
     -------
@@ -672,7 +702,12 @@ def recalibrate_snvq_per_class(
             )
             continue
         _snvq, x_lut, y_lut = recalibrate_snvq(
-            mqual[m], labels[m], snvq_prefactor_override=pref, lut_mask=sub_lut_mask, **recal_kwargs
+            mqual[m],
+            labels[m],
+            snvq_prefactor_override=pref,
+            lut_mask=sub_lut_mask,
+            sample_weight=None if sample_weight is None else np.asarray(sample_weight, dtype=float)[m],
+            **recal_kwargs,
         )
         if smoothing == "monotone":
             x_lut, y_lut = smooth_lut_monotone(x_lut, y_lut, cap=(caps_by_class or {}).get(cls))
