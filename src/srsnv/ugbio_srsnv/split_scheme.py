@@ -246,7 +246,7 @@ def _pe_duplex_groups(data_df: pd.DataFrame) -> pd.Categorical:
 
     Reads the per-row ``pe_duplex_group`` column assigned by
     :func:`~ugbio_srsnv.srsnv_utils.add_duplex_columns_to_featuremap_df` from the DNN per-image
-    CS-family stats (``DS``/``mate_present`` + ``cs_n_crossing``). Singletons were mapped to a label
+    CS-family stats (``dx``/``mate_present`` + ``cs_n_crossing``). Singletons were mapped to a label
     outside ``PE_DUPLEX_GROUPS`` and are dropped here (not displayed).
     """
     return _ordered(data_df[PE_DUPLEX_GROUP], PE_DUPLEX_GROUPS)

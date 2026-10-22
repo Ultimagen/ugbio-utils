@@ -1,9 +1,9 @@
 """Unit tests for duplex oversampling in featuremap_to_dataframe (PE→SE unpaired duplex data).
 
 Covers:
-- _add_duplex_group_column: DS-based classification into duplex_pe_full / duplex / ssc / singleton, keyed on
-  CS (never MI, which is per-strand on this data). DS==2 = full PE duplex (coverage-based, tags the molecule
-  even when only one strand flagged); DS!=2 + both strands flag = duplex; one strand = ssc; no consensus =
+- _add_duplex_group_column: dx-based classification into duplex_pe_full / duplex / ssc / singleton, keyed on
+  CS (never MI, which is per-strand on this data). dx==1 = full PE duplex (coverage-based, tags the molecule
+  even when only one strand flagged); no dx + both strands flag = duplex; one strand = ssc; no consensus =
   singleton.
 - _priority_preserve_downsample: fills the budget top-down by tier (higher tiers kept whole, only the
   boundary tier subsampled).
@@ -27,7 +27,7 @@ from ugbio_featuremap.featuremap_to_dataframe import (
 )
 
 
-def _row(chrom, pos, ref, alt, cs, nf, nr, ds=None, x_ic=None):
+def _row(chrom, pos, ref, alt, cs, nf, nr, dx=None, x_ic=None, po=None):
     return {
         "CHROM": chrom,
         "POS": pos,
@@ -36,31 +36,32 @@ def _row(chrom, pos, ref, alt, cs, nf, nr, ds=None, x_ic=None):
         "CS": cs,
         "nf": nf,
         "nr": nr,
-        "DS": ds,
+        "dx": dx,
+        "po": po,
         "X_IC": x_ic,
     }
 
 
 def test_duplex_group_classification():
     rows = [
-        # duplex_pe_full: DS==2 marks a full PE duplex molecule even though only the fwd strand flags here
+        # duplex_pe_full: dx==1 marks a full PE duplex molecule even though only the fwd strand flags here
         # (the mate strand matched ref and emitted no row) — the cs11291171337-style informative case.
-        _row("chr1", 100, "C", "T", "cs_full1", 3, 0, ds=2),
-        # duplex_pe_full: DS==2 with both strands flagging
-        _row("chr1", 110, "C", "T", "cs_full2", 3, 0, ds=2),
-        _row("chr1", 110, "C", "T", "cs_full2", 0, 3, ds=2),
-        # duplex: DS not 2 (null) but this CS flags the variant on BOTH strands (chr5-style)
-        _row("chr1", 200, "C", "T", "cs_dup", 2, 0, ds=None),
-        _row("chr1", 200, "C", "T", "cs_dup", 0, 2, ds=None),
-        # ssc: DS not 2, single-strand consensus
-        _row("chr1", 300, "C", "T", "cs_ssc", 4, 0, ds=0),
+        _row("chr1", 100, "C", "T", "cs_full1", 3, 0, dx=1),
+        # duplex_pe_full: dx==1 with both strands flagging
+        _row("chr1", 110, "C", "T", "cs_full2", 3, 0, dx=1),
+        _row("chr1", 110, "C", "T", "cs_full2", 0, 3, dx=1),
+        # duplex: no dx but this CS flags the variant on BOTH strands (chr5-style)
+        _row("chr1", 200, "C", "T", "cs_dup", 2, 0, dx=None),
+        _row("chr1", 200, "C", "T", "cs_dup", 0, 2, dx=None),
+        # ssc: no dx, single-strand consensus
+        _row("chr1", 300, "C", "T", "cs_ssc", 4, 0, dx=None),
         # singleton: no consensus family
-        _row("chr1", 400, "C", "T", "cs_sing", 0, 0, ds=None),
-        # duplex_pe_full on an indel (one strand flags) — DS==2 still wins
-        _row("chr1", 500, "C", "CA", "cs_full3", 3, 0, ds=2, x_ic="ins"),
+        _row("chr1", 400, "C", "T", "cs_sing", 0, 0, dx=None),
+        # duplex_pe_full on an indel (one strand flags) — dx==1 still wins
+        _row("chr1", 500, "C", "CA", "cs_full3", 3, 0, dx=1, x_ic="ins"),
         # same CS as cs_dup but a DIFFERENT variant/pos with only one strand -> ssc (the CS+variant key keeps
         # the two loci separate, so it is not promoted to duplex by the other locus).
-        _row("chr1", 600, "C", "T", "cs_dup", 5, 0, ds=None),
+        _row("chr1", 600, "C", "T", "cs_dup", 5, 0, dx=None),
     ]
     frame = pl.DataFrame(rows)
     g = _add_duplex_group_column(frame)[DUPLEX_GROUP_COL].to_list()
@@ -76,8 +77,8 @@ def test_duplex_group_classification():
 
 
 def test_ds_full_takes_precedence_over_single_strand():
-    # A DS==2 read with only one strand flagging is still duplex_pe_full (coverage, not flagging).
-    frame = pl.DataFrame([_row("chr1", 100, "C", "T", "m", 7, 0, ds=2)])
+    # A dx==1 read with only one strand flagging is still duplex_pe_full (coverage, not flagging).
+    frame = pl.DataFrame([_row("chr1", 100, "C", "T", "m", 7, 0, dx=1)])
     assert _add_duplex_group_column(frame)[DUPLEX_GROUP_COL].to_list() == [DUPLEX_GROUP_DUPLEX_PE_FULL]
 
 
@@ -94,14 +95,14 @@ def test_priority_preserve_keeps_higher_tiers(tmp_path):
     # 10 duplex_pe_full, 10 duplex (5 molecules x 2 strands), 100 ssc; budget 25.
     rows = []
     for j in range(10):
-        rows.append(_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, ds=2))  # duplex_pe_full
+        rows.append(_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, dx=1))  # duplex_pe_full
     for j in range(5):
         rows += [
-            _row("chr1", 2000 + j, "C", "T", f"d{j}", 3, 0, ds=None),
-            _row("chr1", 2000 + j, "C", "T", f"d{j}", 0, 3, ds=None),
+            _row("chr1", 2000 + j, "C", "T", f"d{j}", 3, 0, dx=None),
+            _row("chr1", 2000 + j, "C", "T", f"d{j}", 0, 3, dx=None),
         ]  # duplex (both strands flag)
     for j in range(100):
-        rows.append(_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, ds=None))  # ssc
+        rows.append(_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, dx=None))  # ssc
     files = _write_parts(tmp_path, [rows])
     out = str(tmp_path / "out.parquet")
     _priority_preserve_downsample(
@@ -122,9 +123,9 @@ def test_priority_preserve_keeps_higher_tiers(tmp_path):
 
 
 def test_priority_preserve_drops_ssc_when_duplex_overflows(tmp_path):
-    # full (30) alone exceeds budget 20 -> full is the boundary, duplex+ssc dropped; all kept are DS==2.
-    rows = [_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, ds=2) for j in range(30)]
-    rows += [_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, ds=None) for j in range(50)]  # ssc
+    # full (30) alone exceeds budget 20 -> full is the boundary, duplex+ssc dropped; all kept are dx==1.
+    rows = [_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, dx=1) for j in range(30)]
+    rows += [_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, dx=None) for j in range(50)]  # ssc
     files = _write_parts(tmp_path, [rows])
     out = str(tmp_path / "out.parquet")
     _priority_preserve_downsample(
@@ -137,14 +138,14 @@ def test_priority_preserve_drops_ssc_when_duplex_overflows(tmp_path):
     )
     res = pl.read_parquet(out)
     assert res.height == 20
-    assert res.filter(pl.col("DS") == 2).height == 20  # only full-duplex reads survived
+    assert res.filter(pl.col("dx") == 1).height == 20  # only full-duplex reads survived
 
 
 def test_priority_preserve_min_group_fraction_floors_ssc(tmp_path):
     # Same overflow scenario as above (full alone > budget), but a 10% per-group floor must rescue SSC:
     # budget 20, floor = round(0.10*20) = 2 -> ssc gets 2 (not 0), full gets the remaining 18.
-    rows = [_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, ds=2) for j in range(90)]
-    rows += [_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, ds=None) for j in range(50)]  # ssc
+    rows = [_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, dx=1) for j in range(90)]
+    rows += [_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, dx=None) for j in range(50)]  # ssc
     files = _write_parts(tmp_path, [rows])
     out = str(tmp_path / "out.parquet")
     _priority_preserve_downsample(
@@ -158,15 +159,15 @@ def test_priority_preserve_min_group_fraction_floors_ssc(tmp_path):
     )
     res = pl.read_parquet(out)
     assert res.height == 20
-    full = res.filter(pl.col("DS") == 2).height
+    full = res.filter(pl.col("dx") == 1).height
     ssc = res.height - full
     assert ssc == 2  # floor honored (was 0 without the floor)
     assert full == 18  # top tier takes only the surplus after the floor
 
 
 def test_balanced_sample_keeps_indel_fraction():
-    rows = [_row("chr1", 100 + j, "C", "CA", f"i{j}", 3, 0, ds=2, x_ic="ins") for j in range(20)]
-    rows += [_row("chr1", 500 + j, "C", "T", f"s{j}", 3, 0, ds=2) for j in range(80)]
+    rows = [_row("chr1", 100 + j, "C", "CA", f"i{j}", 3, 0, dx=1, x_ic="ins") for j in range(20)]
+    rows += [_row("chr1", 500 + j, "C", "T", f"s{j}", 3, 0, dx=1) for j in range(80)]
     frame = pl.DataFrame(rows)
     sampled = _balanced_sample(frame, n=20, indel_snv_balance_fraction=0.5, seed=1)
     assert sampled.height == 20
@@ -187,7 +188,7 @@ def test_merge_gate_noop_without_cs_column(tmp_path):
 
 
 def test_merge_gate_noop_when_priority_unset(tmp_path):
-    rows = [_row("chr1", j, "C", "T", f"m{j}", 3, 0, ds=2) for j in range(100)]
+    rows = [_row("chr1", j, "C", "T", f"m{j}", 3, 0, dx=1) for j in range(100)]
     files = _write_parts(tmp_path, [rows])
     out = str(tmp_path / "out.parquet")
     _merge_parquet_files_lazy(files, out, downsample_reads=30, downsample_seed=1, duplex_oversample_priority=None)
@@ -201,9 +202,9 @@ def test_cs_alt_count_prefers_high_count_molecules(tmp_path):
     # 100 singleton errors: distinct CS, concordance_count == 1 each. Budget 15, no floor.
     rows = []
     for k in range(10):
-        rows.append(_row("chr1", 500, "C", "T", "cs_hi", 3 if k % 2 == 0 else 0, 0 if k % 2 == 0 else 3, ds=None))
+        rows.append(_row("chr1", 500, "C", "T", "cs_hi", 3 if k % 2 == 0 else 0, 0 if k % 2 == 0 else 3, dx=None))
     for j in range(100):
-        rows.append(_row("chr2", 1000 + j, "C", "T", f"cs_s{j}", 0, 0, ds=None))  # singleton, count 1
+        rows.append(_row("chr2", 1000 + j, "C", "T", f"cs_s{j}", 0, 0, dx=None))  # singleton, count 1
     for i, r in enumerate(rows):  # unique per-read id so identical consensus rows stay distinct
         r["RN"] = f"r{i}"
     files = _write_parts(tmp_path, [rows])
@@ -229,10 +230,10 @@ def test_tier_ladder_with_within_group_count_priority(tmp_path):
     # One ssc tier only (so it is the boundary): "hi" molecule = 10 one-strand reads (count 10); five "mid"
     # molecules = 2 reads each (count 2); twenty "lo" molecules = 1 read each (count 1). Budget 15 -> the whole
     # count-10 molecule is kept first, then count-2 reads; count-1 singletons of the tier are dropped.
-    rows = [_row("chr1", 500, "C", "T", "hi", 3, 0, ds=None) for _ in range(10)]
+    rows = [_row("chr1", 500, "C", "T", "hi", 3, 0, dx=None) for _ in range(10)]
     for j in range(5):
-        rows += [_row("chr1", 600 + j, "C", "T", f"mid{j}", 3, 0, ds=None) for _ in range(2)]
-    rows += [_row("chr1", 800 + j, "C", "T", f"lo{j}", 3, 0, ds=None) for j in range(20)]
+        rows += [_row("chr1", 600 + j, "C", "T", f"mid{j}", 3, 0, dx=None) for _ in range(2)]
+    rows += [_row("chr1", 800 + j, "C", "T", f"lo{j}", 3, 0, dx=None) for j in range(20)]
     for i, r in enumerate(rows):  # unique per-read id so identical consensus rows stay distinct
         r["RN"] = f"r{i}"
     files = _write_parts(tmp_path, [rows])
@@ -256,10 +257,10 @@ def test_within_group_count_priority_preserves_indel_snv_balance(tmp_path):
     # indel/SNV stratum. One ssc tier: snv has a count-10 molecule + 40 singletons; indel (ins) has a count-10
     # molecule + 40 singletons. Budget 20, balance 0.5 -> 10 indel + 10 snv, and each side keeps its count-10
     # molecule whole (concordant-first within type).
-    rows = [_row("chr1", 500, "C", "T", "snv_hi", 3, 0, ds=None) for _ in range(10)]
-    rows += [_row("chr1", 1000 + j, "C", "T", f"snv_lo{j}", 3, 0, ds=None) for j in range(40)]
-    rows += [_row("chr1", 600, "C", "CA", "ind_hi", 3, 0, ds=None, x_ic="ins") for _ in range(10)]
-    rows += [_row("chr1", 2000 + j, "C", "CA", f"ind_lo{j}", 3, 0, ds=None, x_ic="ins") for j in range(40)]
+    rows = [_row("chr1", 500, "C", "T", "snv_hi", 3, 0, dx=None) for _ in range(10)]
+    rows += [_row("chr1", 1000 + j, "C", "T", f"snv_lo{j}", 3, 0, dx=None) for j in range(40)]
+    rows += [_row("chr1", 600, "C", "CA", "ind_hi", 3, 0, dx=None, x_ic="ins") for _ in range(10)]
+    rows += [_row("chr1", 2000 + j, "C", "CA", f"ind_lo{j}", 3, 0, dx=None, x_ic="ins") for j in range(40)]
     for i, r in enumerate(rows):
         r["RN"] = f"r{i}"
     files = _write_parts(tmp_path, [rows])
@@ -283,13 +284,13 @@ def test_within_group_count_priority_preserves_indel_snv_balance(tmp_path):
 def test_within_group_count_priority_keeps_tier_order_and_floor(tmp_path):
     # Count priority must not flood the duplex tiers: the tier ladder + floor still govern the mix. Budget 20,
     # floor 0.1 -> ssc floor = 2. duplex_pe_full (10) kept whole, duplex (10) kept whole, ssc is the boundary.
-    rows = [_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, ds=2) for j in range(10)]  # duplex_pe_full
+    rows = [_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, dx=1) for j in range(10)]  # duplex_pe_full
     for j in range(5):
         rows += [
-            _row("chr1", 2000 + j, "C", "T", f"d{j}", 3, 0, ds=None),
-            _row("chr1", 2000 + j, "C", "T", f"d{j}", 0, 3, ds=None),
+            _row("chr1", 2000 + j, "C", "T", f"d{j}", 3, 0, dx=None),
+            _row("chr1", 2000 + j, "C", "T", f"d{j}", 0, 3, dx=None),
         ]  # duplex
-    rows += [_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, ds=None) for j in range(100)]  # ssc
+    rows += [_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, dx=None) for j in range(100)]  # ssc
     for i, r in enumerate(rows):
         r["RN"] = f"r{i}"
     files = _write_parts(tmp_path, [rows])
@@ -320,9 +321,9 @@ def test_within_group_count_priority_keeps_tier_order_and_floor(tmp_path):
 def test_cs_alt_count_floor_keeps_low_count_class(tmp_path):
     # One concordant molecule with count 20 (duplex); 50 singletons (count 1). Budget 15.
     rows = [
-        _row("chr1", 500, "C", "T", "cs_hi", 3 if k % 2 == 0 else 0, 0 if k % 2 == 0 else 3, ds=None) for k in range(20)
+        _row("chr1", 500, "C", "T", "cs_hi", 3 if k % 2 == 0 else 0, 0 if k % 2 == 0 else 3, dx=None) for k in range(20)
     ]
-    rows += [_row("chr2", 1000 + j, "C", "T", f"cs_s{j}", 0, 0, ds=None) for j in range(50)]
+    rows += [_row("chr2", 1000 + j, "C", "T", f"cs_s{j}", 0, 0, dx=None) for j in range(50)]
     files = _write_parts(tmp_path, [rows])
 
     # Without a floor: pure count fill keeps 15 of the count-20 reads; singletons starved to 0.
@@ -354,3 +355,32 @@ def test_cs_alt_count_floor_keeps_low_count_class(tmp_path):
     c1 = dict(r1.group_by(DUPLEX_GROUP_COL).len().iter_rows())
     assert r1.height == 15
     assert c1.get(DUPLEX_GROUP_SINGLETON, 0) >= 3
+
+
+def test_paired_po_strand_not_nf_nr():
+    """Paired consensus data: the two mates of ONE strand have opposite nf/nr (alignment orientation) but the same
+    po -> single-strand (ssc), not duplex. Both po orientations flagging (no dx) -> duplex; dx==1 -> duplex_pe_full."""
+    rows = [
+        # simplex pair: R1 (nr>0) + R2 (nf>0), same strand F2R1 -> ssc (nf/nr alone would wrongly say duplex)
+        _row("chr1", 100, "C", "T", "cs_simplex", 0, 2, dx=None, po="F2R1"),
+        _row("chr1", 100, "C", "T", "cs_simplex", 2, 0, dx=None, po="F2R1"),
+        # both strands (F1R2 + F2R1) flag the variant, no dx -> duplex
+        _row("chr1", 200, "C", "T", "cs_both", 2, 0, dx=None, po="F1R2"),
+        _row("chr1", 200, "C", "T", "cs_both", 0, 2, dx=None, po="F2R1"),
+        # dx marks the molecule duplex even with one strand flagging
+        _row("chr1", 300, "C", "T", "cs_dx", 2, 0, dx=1, po="F1R2"),
+    ]
+    g = _add_duplex_group_column(pl.DataFrame(rows))[DUPLEX_GROUP_COL].to_list()
+    assert g == [
+        DUPLEX_GROUP_SSC,
+        DUPLEX_GROUP_SSC,
+        DUPLEX_GROUP_DUPLEX,
+        DUPLEX_GROUP_DUPLEX,
+        DUPLEX_GROUP_DUPLEX_PE_FULL,
+    ]
+
+
+def test_ds_is_ignored():
+    """DS (family size on the new CRAMs) must not drive the duplex classification."""
+    frame = pl.DataFrame([{**_row("chr1", 100, "C", "T", "m", 3, 0, dx=None, po="F1R2"), "DS": 2}])
+    assert _add_duplex_group_column(frame)[DUPLEX_GROUP_COL].to_list() == [DUPLEX_GROUP_SSC]

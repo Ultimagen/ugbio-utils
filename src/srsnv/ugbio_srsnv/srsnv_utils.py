@@ -82,9 +82,9 @@ RS = "rs"  # reverse-strand read count (consensus data)
 IS_CONSENSUS = "is_consensus"  # read is a consensus read (fs >= 1 and rs >= 1)
 NF = "nf"  # per-read forward-strand consensus count (duplex path); raw singleton has nf==0 & nr==0
 NR = "nr"  # per-read reverse-strand consensus count (duplex path)
-DS = "DS"  # PE-duplex per-read tag: DS==2 marks a FULL paired-end duplex molecule (both strands + both PE
-# ends present). Coverage-based (from consensus/mark-dup), so it marks a duplex molecule even when only one
-# strand flagged the variant here -- unlike "both strands appear in the featuremap", which misses ~90%.
+DX = "dx"  # PE-duplex per-read tag: dx==1 marks a DUPLEX molecule (both strands present); absent otherwise.
+# Coverage-based (set by the consensus on every read of the molecule), so it marks a duplex molecule even when
+# only one strand flagged the variant here -- unlike "both strands appear in the featuremap", which misses ~90%.
 
 # Duplex per-molecule data: one prediction row is a MOLECULE built from two consensus reads
 # (opposite strands, same molecular id MI). ``mate_present`` = 1 when the molecule had a real
@@ -126,16 +126,16 @@ CS_N_SUPPORTING = "cs_n_supporting"  # crossing reads carrying the ALT at focus
 CS_N_PE_PAIRS = "cs_n_pe_pairs"  # complete (fwd,rev) pairs present, 0..2
 CS_N_CAND = "cs_n_cand"  # consensus candidates in the subject read's PE slot (multi-consensus; 1 if single)
 CS_SEC_SUPPORT = "cs_sec_support"  # support (nf+nr) of the top dropped consensus candidate (0=none)
-# PE-duplex display groups: simplex-SE / simplex-PE / duplex-SE / duplex-PE, driven by DS
+# PE-duplex display groups: simplex-SE / simplex-PE / duplex-SE / duplex-PE, driven by dx
 # (mate_present) + cs_n_crossing. Every molecule is displayed (a single-read family, cs_family_size==1,
 # is a valid simplex-SE observation). Ordered by ascending support (simplex/single-strand before
-# duplex; within each, one PE end before both). "simplex" = a single-strand consensus (DS != 2);
-# "duplex" = both strands (DS == 2).
+# duplex; within each, one PE end before both). "simplex" = a single-strand consensus (no dx);
+# "duplex" = both strands (dx == 1).
 PE_DUPLEX_GROUP = "pe_duplex_group"
-PE_DUPLEX_GROUP_SIMPLEX_SE = "simplex SE"  # single strand (DS != 2), 1 read crosses (one PE end)
-PE_DUPLEX_GROUP_SIMPLEX_PE = "simplex PE"  # single strand (DS != 2), 2 reads cross (both PE ends)
-PE_DUPLEX_GROUP_SE = "duplex SE"  # full duplex (DS==2), 2 reads cross the variant (one PE end)
-PE_DUPLEX_GROUP_PE = "duplex PE"  # full duplex (DS==2), 4 reads cross the variant (both PE ends)
+PE_DUPLEX_GROUP_SIMPLEX_SE = "simplex SE"  # single strand (no dx), 1 read crosses (one PE end)
+PE_DUPLEX_GROUP_SIMPLEX_PE = "simplex PE"  # single strand (no dx), 2 reads cross (both PE ends)
+PE_DUPLEX_GROUP_SE = "duplex SE"  # duplex (dx==1), 2 reads cross the variant (one PE end)
+PE_DUPLEX_GROUP_PE = "duplex PE"  # duplex (dx==1), 4 reads cross the variant (both PE ends)
 PE_DUPLEX_GROUPS = [PE_DUPLEX_GROUP_SIMPLEX_SE, PE_DUPLEX_GROUP_SIMPLEX_PE, PE_DUPLEX_GROUP_SE, PE_DUPLEX_GROUP_PE]
 
 # Mixed groups (2), reproducing the historical binary ppmSeq labels/order.
@@ -263,14 +263,14 @@ def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
         return data_df
 
     # PE-consensus run (identified by the CS family tag). CS only says the reads are PE consensus; it does
-    # NOT by itself mean duplex. A molecule is a FULL paired-end duplex (both strands + both PE ends present)
-    # iff DS==2 -- the coverage-based consensus/mark-dup tag. Because it is coverage-based, DS==2 marks a
-    # duplex molecule even when only ONE strand flagged the variant here (the informative case), which the
-    # old "both strands appear in the featuremap" heuristic missed (~90% of duplex molecules).
-    if DS in data_df.columns:
-        data_df[MATE_PRESENT] = pd.to_numeric(data_df[DS], errors="coerce").eq(2)  # noqa: PLR2004
+    # NOT by itself mean duplex. A molecule is duplex (both strands present) iff dx==1 -- the coverage-based
+    # consensus tag. Because it is coverage-based, dx marks a duplex molecule even when only ONE strand
+    # flagged the variant here (the informative case), which the old "both strands appear in the featuremap"
+    # heuristic missed (~90% of duplex molecules). A read without dx is not duplex.
+    if DX in data_df.columns:
+        data_df[MATE_PRESENT] = pd.to_numeric(data_df[DX], errors="coerce").eq(1)
     else:
-        logger.warning("PE-consensus featuremap has no DS tag; cannot identify full duplex -> mate_present=False")
+        logger.warning("PE-consensus featuremap has no dx tag; cannot identify duplex -> mate_present=False")
         data_df[MATE_PRESENT] = False
     _assign_pe_duplex_group(data_df)
     return data_df
@@ -279,13 +279,13 @@ def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
 def _assign_pe_duplex_group(data_df: pd.DataFrame) -> None:
     """Assign the ``pe_duplex_group`` column (simplex SE / simplex PE / duplex SE / duplex PE) in
     place, when the DNN per-image CS-family stats are present (paired-end duplex data). "simplex" is a
-    single-strand consensus (DS != 2); "duplex" has both strands (DS == 2).
+    single-strand consensus (no dx); "duplex" has both strands (dx == 1).
 
     Grouping (every molecule is displayed; a single-read family is a valid simplex-SE observation):
 
-    - not ``mate_present`` (DS != 2), ``cs_n_crossing <= 1`` -> simplex SE (single strand, one PE end;
+    - not ``mate_present`` (no dx), ``cs_n_crossing <= 1`` -> simplex SE (single strand, one PE end;
       includes ``cs_family_size == 1``, a single read crossing the variant).
-    - not ``mate_present`` (DS != 2), ``cs_n_crossing >= 2`` -> simplex PE (single strand, both PE ends).
+    - not ``mate_present`` (no dx), ``cs_n_crossing >= 2`` -> simplex PE (single strand, both PE ends).
     - ``mate_present`` and ``cs_n_crossing <= 2``            -> duplex SE (both strands of one PE end).
     - ``mate_present`` and ``cs_n_crossing >= 3``            -> duplex PE (both PE ends cover the variant).
 

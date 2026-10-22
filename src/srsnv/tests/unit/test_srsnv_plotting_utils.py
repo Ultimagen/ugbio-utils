@@ -718,7 +718,7 @@ def test_pe_duplex_logit_histograms_run(consensus_resources, real_models_calc_ru
     base_df, metadata = consensus_resources
     pe_df = base_df.copy()
     rng = np.random.default_rng(5)
-    pe_df["DS"] = rng.choice([1, 2], len(pe_df))  # 2 == full duplex; else single-strand (simplex)
+    pe_df["dx"] = rng.choice([np.nan, 1.0], len(pe_df))  # 1 == duplex; else single-strand (simplex)
     pe_df["cs_family_size"] = rng.integers(2, 5, len(pe_df))  # >=2 so none drop out as singletons
     pe_df["cs_n_crossing"] = rng.integers(1, 5, len(pe_df))
     pe_df["cs_n_supporting"] = rng.integers(0, 3, len(pe_df))
@@ -1123,13 +1123,13 @@ def test_hmer_indel_section_skipped_for_snv_only(consensus_resources, real_model
 
 
 def _add_pe_duplex_columns(df, seed=11):
-    """Add the DNN per-image CS-family stats (+ nf/nr/DS/CS) so the report detects the pe-duplex scheme."""
+    """Add the DNN per-image CS-family stats (+ nf/nr/dx/CS) so the report detects the pe-duplex scheme."""
     rng = np.random.default_rng(seed)
     n = len(df)
     df = df.copy()  # noqa: PD901
     df["nf"] = rng.integers(0, 4, n)
     df["nr"] = rng.integers(0, 4, n)
-    df["DS"] = rng.choice([0, 2], n)
+    df["dx"] = rng.choice([np.nan, 1.0], n)
     df["CS"] = [f"cs{i}" for i in range(n)]
     df["cs_family_size"] = rng.integers(1, 5, n)
     df["cs_n_crossing"] = rng.integers(1, 5, n)
@@ -1187,7 +1187,7 @@ def test_run_info_table_has_cs_family_stats(consensus_resources, real_models_cal
 def _augment_pe_indel_df(base_df):
     """Add variant_type + indel/CS columns to a base featuremap for the hmer-run / concordance tests.
 
-    All rows are made duplex-PE (DS==2, cs_n_crossing>=3) so they fall in the PE groups; concordance is
+    All rows are made duplex-PE (dx==1, cs_n_crossing>=3) so they fall in the PE groups; concordance is
     set per row (cs_n_supporting == cs_n_crossing -> concordant, else non-concordant). variant_type is
     cycled snv / hmer_indel / non_hmer_indel, hmer rows spread across the X_HMER_RUN bins.
     """
@@ -1200,7 +1200,7 @@ def _augment_pe_indel_df(base_df):
     df["X_IC"] = [("ins" if i % 2 else "del") for i in range(n)]
     _xic_map = {"hmer_indel": "hmer", "non_hmer_indel": "non_hmer"}
     df["X_INDEL_CLASS"] = [_xic_map.get(vt, ".") for vt in df["variant_type"]]
-    df["DS"] = 2  # full duplex
+    df["dx"] = 1  # duplex
     df["cs_family_size"] = 4
     df["cs_n_crossing"] = 4  # >=3 -> duplex PE
     df["cs_n_supporting"] = [4 if i % 2 == 0 else 2 for i in range(n)]  # ==4 concordant, ==2 non-concordant

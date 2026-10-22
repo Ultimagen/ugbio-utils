@@ -3,7 +3,7 @@
 The downsample oversamples on purpose (duplex priority ladder + floor, indel/SNV balance, cs_alt_count). Each kept
 row gets ``sample_weight = n_pre / n_post`` of its sampling stratum, so recalibration can undo the oversampling.
 Invariant tested on every path: for every stratum — and therefore for any coarser grouping such as the variant
-cell or the DS group — the weights of the kept rows sum exactly to the pre-downsample row count.
+cell or the dx (duplex) group — the weights of the kept rows sum exactly to the pre-downsample row count.
 """
 
 import json
@@ -23,12 +23,12 @@ from ugbio_featuremap.featuremap_utils import cell_key_expr
 
 
 def _frame(n_mol=3000, seed=0):
-    """Molecules with 1-3 reads; mix of DS==2 / not, SNV / hmer (several run lengths) / non-hmer indels."""
+    """Molecules with 1-3 reads; mix of dx==1 / not, SNV / hmer (several run lengths) / non-hmer indels."""
     rng = np.random.default_rng(seed)
     rows = []
     for m in range(n_mol):
         kind = rng.choice(["snv", "hmer", "non_hmer"], p=[0.6, 0.3, 0.1])
-        ds = 2 if rng.random() < 0.3 else int(rng.choice([0, 1]))
+        dx = 1 if rng.random() < 0.3 else None
         run = int(rng.choice([1, 2, 3, 5, 8, 12]))
         for r in range(int(rng.integers(1, 4))):
             rows.append(
@@ -41,7 +41,7 @@ def _frame(n_mol=3000, seed=0):
                     "RN": f"r{m}_{r}",
                     "nf": int(rng.integers(0, 3)),
                     "nr": int(rng.integers(0, 3)),
-                    "DS": ds,
+                    "dx": dx,
                     "X_IC": None if kind == "snv" else "ins",
                     "X_INDEL_CLASS": None if kind == "snv" else kind,
                     "X_HMER_RUN": run if kind == "hmer" else None,
@@ -71,7 +71,7 @@ def _assert_weights_restore(pre: pl.DataFrame, out: pl.DataFrame, by: str, rtol:
 def _with_keys(frame):
     return frame.with_columns(
         cell_key_expr(frame.columns).alias("_cell"),
-        (pl.col("DS") == 2).alias("_dup"),
+        (pl.col("dx") == 1).fill_null(value=False).alias("_dup"),
     )
 
 
@@ -132,9 +132,9 @@ def test_weights_restore_pre_downsample_counts(tmp_path, case):
     else:
         assert "cs_alt_count" in case  # only the count modes drop whole strata here (deterministic by count)
     if "priority" in case and lost == 0:
-        _assert_weights_restore(pre, post, "_dup")  # DS==2 <=> duplex_pe_full, a stratum component
+        _assert_weights_restore(pre, post, "_dup")  # dx==1 <=> duplex_pe_full, a stratum component
     elif not kwargs.get("duplex_oversample_priority"):
-        # DS is not a sampling key on these paths: weighted DS share is only statistically restored.
+        # DS is not a sampling key on these paths: weighted duplex share is only statistically restored.
         _assert_weights_restore(pre, post, "_dup", rtol=0.08)
 
 

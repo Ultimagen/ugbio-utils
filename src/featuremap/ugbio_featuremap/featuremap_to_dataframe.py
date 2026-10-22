@@ -111,31 +111,33 @@ COL_X_HMER_RUN = "X_HMER_RUN"  # length of the reference homopolymer run an hmer
 COL_X_IC = "X_IC"  # Indel-class column emitted by snvfind: "ins"/"del" for hmer-indels, null for SNVs
 
 # Duplex / consensus per-read tags used to classify a read's molecule type for the duplex oversampling of the
-# training set. IMPORTANT (ramp_ppmseq_duplex_pe): this data is native paired-end duplex that was unpaired into
-# single-end reads (UnpairAndRenameByStrand), so:
-#   * CS = the molecule id, shared across BOTH strands and BOTH PE ends -> the ONLY correct molecule key.
-#   * nf/nr = fwd/rev consensus family sizes -> the strand (nf>0 fwd, nr>0 rev).
-#   * MI is PER-STRAND (fwd/rev get different MIs), so it must NOT be used to pair the two strands.
-#   * DS == 2 marks a FULL paired-end duplex molecule (both strands AND both PE ends present -> 4 consensus
-#     reads); verified on the CRAM. It is coverage-based, so it tags a full-duplex molecule even when only one
-#     strand flagged the variant here (the informative case). DS is otherwise null / not 2.
+# training set (ramp_ppmseq_duplex_pe consensus CRAMs, paired-end):
+#   * CS = the molecule id, shared across BOTH strands and BOTH mates -> the ONLY correct molecule key.
+#   * dx:i:1 marks a DUPLEX molecule (both strands present); absent (null) otherwise. It is coverage-based (set on
+#     every read of the molecule), so it tags a duplex molecule even when only one strand flagged the variant
+#     here (the informative case). This is the only duplex marker used (DS is not used for classification).
+#   * po = the molecular strand as pair orientation (F1R2 / F2R1); the two strands of a duplex have opposite po.
+#   * nf/nr = consensus family sizes keyed by alignment orientation; on paired data the two mates of ONE strand
+#     have opposite nf/nr, so nf/nr is NOT the molecular strand (only a fallback when po is absent).
+#   * MI is per-strand, so it must NOT be used to pair the two strands.
 COL_MI = "MI"
 COL_NF = "nf"
 COL_NR = "nr"
 COL_CS = "CS"
+COL_DX = "dx"
+COL_PO = "po"
 COL_X_INDEL_CLASS = "X_INDEL_CLASS"  # "hmer"/"non_hmer" on indel rows; absent -> indels treated as hmer
 COL_RN = "RN"
-COL_DS = "DS"
 COL_CHROM = "CHROM"
 COL_POS = "POS"
 
-# duplex_group categories (see _add_duplex_group_column). "full" = coverage (DS==2, from the CRAM/consensus);
-# "both strands flag" is observed agreement in the featuremap (keyed on CS):
-#   duplex_pe_full – DS==2: full paired-end duplex molecule (both strands + both PE ends present)
-#   duplex         – DS!=2 but this CS flags the variant on both strands (both strands seen, not a full PE mol.)
+# duplex_group categories (see _add_duplex_group_column). "full" = coverage (dx==1, from the consensus CRAM);
+# "both strands flag" is observed agreement in the featuremap (keyed on CS + variant):
+#   duplex_pe_full – dx==1: duplex molecule (both strands present)
+#   duplex         – no dx but this molecule flags the variant on both strands (both po orientations)
 #   ssc            – single-strand consensus (only one strand flags)
 #   singleton      – no consensus family (nf==0 and nr==0)
-# Only reads that SHOW the variant appear in the featuremap, so a DS!=2 molecule whose mate strand matched
+# Only reads that SHOW the variant appear in the featuremap, so a non-dx molecule whose other strand matched
 # reference (emitted no row) is not distinguishable from ssc here — that finer split needs the CRAM/tensor.
 DUPLEX_GROUP_COL = "duplex_group"
 DUPLEX_GROUP_DUPLEX_PE_FULL = "duplex_pe_full"
@@ -847,33 +849,41 @@ def _add_duplex_group_column(frame: pl.DataFrame) -> pl.DataFrame:
     """Annotate each read row with its molecule ``duplex_group`` (see the DUPLEX_GROUP_* constants).
 
     Classification (per read):
-      * ``duplex_pe_full`` – ``DS == 2``: a full paired-end duplex molecule (both strands + both PE ends
-                             present). DS is coverage-based, so this tags the molecule even when only one strand
-                             flagged the variant here.
-      * ``duplex``         – ``DS != 2`` but this molecule (keyed on ``CS``) flags the variant on BOTH strands
-                             (a nf>0 row and a nr>0 row) — both strands observed, but not a full-PE molecule.
-      * ``ssc``            – single-strand consensus (only one strand flags; nf>0 xor nr>0 for the molecule).
+      * ``duplex_pe_full`` – ``dx == 1``: a duplex molecule (both strands present). dx is coverage-based, so this
+                             tags the molecule even when only one strand flagged the variant here.
+      * ``duplex``         – no dx but this molecule (keyed on ``CS`` + variant) flags the variant on BOTH strands:
+                             both ``po`` orientations (F1R2 and F2R1) among its rows; without a ``po`` column, a
+                             nf>0 row and a nr>0 row (legacy unpaired-by-strand data only — on paired data nf/nr
+                             is alignment orientation, so the two mates of one strand would look like two strands).
+      * ``ssc``            – single-strand consensus (only one strand flags).
       * ``singleton``      – no consensus family (nf==0 and nr==0).
 
-    The "both strands flag" test is keyed on ``CS`` (never ``MI`` — MI is per-strand on this unpaired PE data,
-    so it can never see both strands). Only reads that SHOW the variant appear in the featuremap, so a DS!=2
-    molecule whose mate strand matched reference (emitted no row) is indistinguishable from ssc here; the finer
-    coverage split needs the CRAM/tensor. Molecules never span regions, so this is safe per part-file.
+    Keyed on ``CS`` (never ``MI`` — MI is per-strand). Only reads that SHOW the variant appear in the featuremap, so a
+    non-dx molecule whose other strand matched reference (emitted no row) is indistinguishable from ssc here.
+    Molecules never span regions, so this is safe per part-file.
     """
     has_nf = COL_NF in frame.columns
     has_nr = COL_NR in frame.columns
     nf = pl.col(COL_NF).cast(pl.Int64, strict=False).fill_null(0) if has_nf else pl.lit(0)
     nr = pl.col(COL_NR).cast(pl.Int64, strict=False).fill_null(0) if has_nr else pl.lit(0)
-    ds_full = (
-        (pl.col(COL_DS).cast(pl.Int64, strict=False) == 2).fill_null(value=False)  # noqa: PLR2004
-        if COL_DS in frame.columns
+    dx_full = (
+        (pl.col(COL_DX).cast(pl.Int64, strict=False) == 1).fill_null(value=False)
+        if COL_DX in frame.columns
         else pl.lit(value=False)
     )
+    # Molecular strand: po per read when present; reads without po (legacy unpaired-by-strand data) use nf/nr.
+    if COL_PO in frame.columns:
+        po = pl.col(COL_PO).cast(pl.Utf8)
+        has_po = po.is_in(["F1R2", "F2R1"]).fill_null(value=False)
+        strand_a = pl.when(has_po).then(po == "F1R2").otherwise(nf > 0)
+        strand_b = pl.when(has_po).then(po == "F2R1").otherwise(nr > 0)
+    else:
+        strand_a, strand_b = nf > 0, nr > 0
     frame = frame.with_columns(
-        (nf > 0).alias("_is_fwd"),
-        (nr > 0).alias("_is_rev"),
+        strand_a.alias("_is_fwd"),
+        strand_b.alias("_is_rev"),
         ((nf > 0) | (nr > 0)).alias("_is_consensus"),
-        ds_full.alias("_ds_full"),
+        dx_full.alias("_ds_full"),
     )
     # Molecule key: CS + the variant descriptors (indel descriptors keep an ins and a del at the same anchor
     # from being treated as the same variant). CS spans both strands + both ends; if CS is absent, fall back to

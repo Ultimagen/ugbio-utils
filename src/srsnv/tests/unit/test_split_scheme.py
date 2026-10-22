@@ -23,10 +23,10 @@ from ugbio_srsnv.split_scheme import (
     resolve_scheme_and_add_columns,
 )
 from ugbio_srsnv.srsnv_utils import (
-    DS,
     DUPLEX_MOL_PAIRED,
     DUPLEX_MOL_SINGLE_STRAND,
     DUPLEX_MOL_SINGLETON,
+    DX,
     FS,
     IS_CONSENSUS,
     IS_MIXED,
@@ -103,16 +103,17 @@ class TestResolveScheme:
         data_df = pd.DataFrame({NF: [3, 0, 2, 0], NR: [5, 4, 0, 0], "st": ["MIXED"] * 4, "et": ["MIXED"] * 4})
         assert resolve_scheme(data_df) is DUPLEX_SCHEME
 
-    def test_pe_duplex_mate_present_from_ds(self):
-        # PE-consensus run (has CS + nf/nr). CS only identifies PE consensus; a molecule is a FULL
-        # paired-end duplex iff DS==2 (coverage-based). mate_present is derived from DS, NOT from whether
-        # both strands happen to appear in the featuremap. No duplex_concordant column is produced.
+    def test_pe_duplex_mate_present_from_dx(self):
+        # PE-consensus run (has CS + nf/nr). CS only identifies PE consensus; a molecule is duplex iff dx==1
+        # (coverage-based; dx absent -> not duplex). mate_present is derived from dx, NOT from whether both
+        # strands happen to appear in the featuremap, and NOT from DS. No duplex_concordant column is produced.
         data_df = pd.DataFrame(
             {
                 "CS": ["X", "X", "Y", "Z", "Z"],
                 NF: [3, 0, 2, 1, 0],
                 NR: [0, 5, 0, 0, 1],
-                DS: [2, 2, None, 2, 0],  # X full duplex (DS=2); Y not; Z: one DS=2 row + one non-duplex row
+                DX: [1, 1, None, 1, None],  # X duplex (dx=1); Y not; Z: one dx=1 row + one non-duplex row
+                "DS": [4, 4, 2, 2, 2],  # family size on the paired CRAMs: must be ignored
                 "st": ["MIXED"] * 5,
                 "et": ["MIXED"] * 5,
             }
