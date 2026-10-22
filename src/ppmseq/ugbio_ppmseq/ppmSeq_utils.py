@@ -1199,7 +1199,7 @@ _SR_TITLE_FONTSIZE = 28
 _SR_AXIS_LABEL_FONTSIZE = 20
 
 # Vertical lines at the sr thresholds used by the Solaris-2 --compare cascade (MIXED band edges).
-_SR_THRESHOLD_LINES = (0.2, 0.8)
+_SR_THRESHOLD_LINES = (0.25, 0.75)
 
 # Colors for sr-by-et facets; one per end-tag category so the per-category panels read at a glance.
 _SR_CATEGORY_COLORS = {
@@ -1238,7 +1238,7 @@ def plot_sr_histogram(
     """
     Plot the overall strand-ratio histogram across all reads. Bins are 0.01 wide and the
     y-axis is a percentage of total reads. Reads with sr outside [0, 1] are clipped to the
-    edge bins so they remain visible. Two dashed guide lines at 0.2 and 0.8 mark the
+    edge bins so they remain visible. Two dashed guide lines at 0.25 and 0.75 mark the
     thresholds used by the Solaris-2 ``--compare`` cascade.
 
     Parameters
