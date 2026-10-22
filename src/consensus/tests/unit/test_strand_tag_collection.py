@@ -289,3 +289,31 @@ def test_mi_fallback_ignores_reads_between_intervals(tmp_path):
     path = _write_bam(tmp_path, lambda hdr: [_make_read(hdr, "gap", 300, None, mi=9)])
     res = duplex_metrics.collect_family_metrics_from_mi_tags(path, [(CHROM, 0, 200), (CHROM, 600, 700)], None)
     assert res["n_families"] == 0
+
+
+def test_dx_marked_single_strand_reads_are_duplex(tmp_path):
+    """Reads split by strand carry one strand each; ``dx=1`` is what makes the family duplex."""
+    header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": CHROM, "LN": CHROM_LEN}]}
+    path = tmp_path / "dx.bam"
+    hdr = pysam.AlignmentHeader.from_dict(header)
+    dx = [("dx", 1, "i")]
+    reads = [
+        _make_read(hdr, "dx_fwd", 100, (3, 0), extra_tags=dx),
+        _make_read(hdr, "dx_rev", 120, (0, 1), reverse=True, extra_tags=dx),
+        _make_read(hdr, "ss", 140, (4, 0)),
+        _make_read(hdr, "dx0", 160, (2, 0), extra_tags=[("dx", 0, "i")]),
+        _make_read(hdr, "both", 180, (2, 2)),
+        _make_read(hdr, "single1", 200, None),
+    ]
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for r in reads:
+            out.write(r)
+    pysam.index(str(path))
+
+    per = duplex_metrics.collect_family_metrics_from_strand_tags(
+        str(path), [(CHROM, 0, CHROM_LEN)], reference=None
+    )["per_category"]
+    assert per.loc[duplex_metrics.DUPLEX, "n_reads"] == 3
+    assert per.loc[duplex_metrics.DUPLEX, "avg_family_size"] == pytest.approx((3 + 1 + 4) / 3)
+    assert per.loc[duplex_metrics.SINGLE_STRAND, "n_reads"] == 2
+    assert per.loc[duplex_metrics.SINGLETON, "n_reads"] == 1

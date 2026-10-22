@@ -12,7 +12,8 @@ Per sample the report covers:
 * **Duplex family metrics** - average MI-family size and covered depth for
   *both-strands duplex* families and for *single-strand duplicate* families,
   measured directly from the consensus reads' ``nf:i``/``nr:i`` strand tags
-  (forward / reverse read counts) - see :mod:`ugbio_consensus.duplex_metrics`.
+  (forward / reverse read counts) and the ``dx:i:1`` duplex mark - see
+  :mod:`ugbio_consensus.duplex_metrics`.
 * **On-target metrics (optional)** - when a ``--targets`` BED is supplied
   (e.g. an exome capture BED), on-target rate and on-target mean coverage from
   the local coverage bedGraph; otherwise genome-wide coverage only.
@@ -639,7 +640,8 @@ def _assemble_html(title: str, tables_html: list[str], figures: list[go.Figure])
             "<p style='color:#000000'>Consensus tool (ReadFuserAlignSort) performance and duplex metrics. "
             "Family size and duplex classification are derived from the per-read <code>nf:i</code> / "
             "<code>nr:i</code> strand tags (forward / reverse read counts), on reads carrying the "
-            "<code>rn</code> consensus tag.</p>"
+            "<code>rn</code> consensus tag. A read with <code>dx:i:1</code> (its CS family has both pair "
+            "orientations) counts as duplex even when its own strand counts show one strand only.</p>"
         ),
     ]
     parts.extend(tables_html)

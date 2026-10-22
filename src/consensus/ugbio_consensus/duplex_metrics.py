@@ -14,6 +14,9 @@ without re-grouping reads by their ``MI`` (molecular identifier) tag:
 
 * **both-strands duplex** - both counts > 0 (the molecule was observed on both
   strands); family size = ``nf + nr``.
+* **both-strands duplex, marked** - ``dx:i:1`` (written by ``mark_duplex_consensus``): the read's
+  CS family has consensus reads of both pair orientations, though this read has one strand only
+  (the case when reads are split by strand before the consensus); family size = ``nf + nr``.
 * **single-strand duplicate** - exactly one count is 0; family size = the
   non-zero count.
 * **singleton / pass-through** - no ``rn`` tag (a read the consensus step passed
@@ -58,6 +61,10 @@ CATEGORIES = (DUPLEX, SINGLE_STRAND, SINGLETON)
 CONSENSUS_TAG = "rn"
 N_FORWARD_TAG = "nf"
 N_REVERSE_TAG = "nr"
+# Written by mark_duplex_consensus on every consensus read of a CS family that has both pair
+# orientations. When the reads were split by strand before the consensus, no single read has
+# both nf and nr, so this tag is the only way to see a duplex family.
+DUPLEX_TAG = "dx"
 
 
 def is_consensus_read(read: pysam.AlignedSegment) -> bool:
@@ -233,7 +240,9 @@ def _classify_read(read: pysam.AlignedSegment) -> tuple[str, int] | None:
 
     A read without the ``rn`` consensus tag is a pass-through singleton. A
     consensus read whose strand counts cannot be parsed yields ``None``
-    (malformed, excluded from the family statistics).
+    (malformed, excluded from the family statistics). A consensus read with
+    ``dx=1`` is duplex even when its own ``nf``/``nr`` show one strand only:
+    its partner orientation is another read of the same CS family.
     """
     strands = parse_strand_tags(read)
     if strands is None:
@@ -241,7 +250,20 @@ def _classify_read(read: pysam.AlignedSegment) -> tuple[str, int] | None:
             return None  # consensus read with malformed strand counts
         return SINGLETON, 1
     n_fwd, n_rev = strands
-    return classify_family(n_fwd, n_rev), max(n_fwd + n_rev, 1)
+    size = max(n_fwd + n_rev, 1)
+    if _is_marked_duplex(read):
+        return DUPLEX, size
+    return classify_family(n_fwd, n_rev), size
+
+
+def _is_marked_duplex(read: pysam.AlignedSegment) -> bool:
+    """Return whether the read carries ``dx:i:1`` (see :data:`DUPLEX_TAG`)."""
+    if not read.has_tag(DUPLEX_TAG):
+        return False
+    try:
+        return int(read.get_tag(DUPLEX_TAG)) == 1
+    except (TypeError, ValueError):
+        return False
 
 
 def _resolve_scan_intervals(
