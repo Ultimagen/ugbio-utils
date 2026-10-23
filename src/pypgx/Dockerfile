@@ -1,4 +1,5 @@
-FROM python:3.11-slim-bookworm AS build
+# Pinned by digest: patched Python (CVE-2026-6100 fixed in 3.11.16) and a fresh build cache key
+FROM python:3.11.17-slim-bookworm@sha256:f06d01d4ba3f8ad5af45a3ec87df19c1d317d8e8961edc0fabda61811af6f7cf AS build
 
 ARG PYPGX_BRANCH=0.27.0
 
@@ -23,11 +24,12 @@ RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
     rm -rf /opt/pypgx
 
 ##################################################################
-FROM python:3.11-slim-bookworm
+FROM python:3.11.17-slim-bookworm@sha256:f06d01d4ba3f8ad5af45a3ec87df19c1d317d8e8961edc0fabda61811af6f7cf
 
 ARG PYPGX_BUNDLE_BRANCH=0.27.0
 
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install --no-install-recommends -y default-jre-headless git wget unzip bcftools && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
