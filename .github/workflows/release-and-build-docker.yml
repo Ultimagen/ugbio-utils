@@ -58,7 +58,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  version:
     runs-on: ubuntu-latest
     outputs:
       new_version: ${{ steps.bump-semver.outputs.new_version }}
@@ -86,12 +86,43 @@ jobs:
         with:
           length: 7
 
+  # The docker image is built and scanned before the git tag is pushed,
+  # so a release blocked by the CVE gate leaves no tag and no GitHub Release behind
+  build-docker:
+    needs: [version]
+    uses: ./.github/workflows/docker-build-push.yml
+    secrets: inherit
+    with:
+      git-repo: ${{ github.repository }}
+      git-ref: ${{ github.sha }}
+      docker-image: ${{ inputs.docker-image }}
+      docker-file: ${{ inputs.docker-file }}
+      docker-tag: ${{ needs.version.outputs.docker_tag }}
+      docker-context: ${{ inputs.docker-context }}
+      docker-target: ${{ inputs.docker-target }}
+      docker-build-args: ${{ inputs.docker-build-args }}
+      artifact-name: ${{ inputs.artifact-name }}
+      base-branch: ${{ inputs.base-branch }}
+      project-version: ${{ needs.version.outputs.new_version }}
+      runner: ${{ inputs.runner }}
+      # TODO(BIOIN-3152): switch to 'block' once all images in BIOIN-3141 are fixed
+      cve-policy: warn
+
+  release:
+    needs: [version, build-docker]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
       - name: Create and push tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ steps.bump-semver.outputs.new_version }}
-          git push origin ${{ steps.bump-semver.outputs.new_version }}
+          git tag ${{ needs.version.outputs.new_version }} ${{ github.sha }}
+          git push origin ${{ needs.version.outputs.new_version }}
 
       - name: Create GitHub Release
         if: ${{ inputs.create-release }}
@@ -99,33 +130,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
         with:
-          tag_name: ${{ steps.bump-semver.outputs.new_version }}
-          release_name: Release ${{ steps.bump-semver.outputs.new_version }}
+          tag_name: ${{ needs.version.outputs.new_version }}
+          release_name: Release ${{ needs.version.outputs.new_version }}
           draft: false
           prerelease: false
 
       - name: Update action summary
         run: |
-          VERSION=${{ steps.bump-semver.outputs.new_version }}
+          VERSION=${{ needs.version.outputs.new_version }}
           REPO=${{ github.repository }}
           echo "### Release" >> ${GITHUB_STEP_SUMMARY}
           echo "- **Version:** ${VERSION}" >> ${GITHUB_STEP_SUMMARY}
           echo "- **Tag:** [${VERSION}](https://github.com/${REPO}/releases/tag/${VERSION})" >> ${GITHUB_STEP_SUMMARY}
-
-  build-docker:
-    needs: [release]
-    uses: ./.github/workflows/docker-build-push.yml
-    secrets: inherit
-    with:
-      git-repo: ${{ github.repository }}
-      git-ref: ${{ needs.release.outputs.new_version }}
-      docker-image: ${{ inputs.docker-image }}
-      docker-file: ${{ inputs.docker-file }}
-      docker-tag: ${{ needs.release.outputs.docker_tag }}
-      docker-context: ${{ inputs.docker-context }}
-      docker-target: ${{ inputs.docker-target }}
-      docker-build-args: ${{ inputs.docker-build-args }}
-      artifact-name: ${{ inputs.artifact-name }}
-      base-branch: ${{ inputs.base-branch }}
-      project-version: ${{ needs.release.outputs.new_version }}
-      runner: ${{ inputs.runner }}

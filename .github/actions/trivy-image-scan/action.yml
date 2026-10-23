@@ -1,5 +1,5 @@
 name: "Trivy Image Scan"
-description: "Scan Docker image for vulnerabilities and secrets, generate summary, and upload findings"
+description: "Scan Docker image for vulnerabilities and secrets, generate summary, upload findings and apply the CVE gate"
 
 inputs:
   image-ref:
@@ -11,14 +11,30 @@ inputs:
   image-tag:
     description: "Docker image tag (for summary display)"
     required: true
-  ignore-unfixed:
-    description: "Ignore unfixed vulnerabilities (default: true)"
+  policy:
+    description: "CVE policy: 'warn' flags findings only, 'block' fails on CRITICAL with a fix or CRITICAL in language packages (default: warn)"
     required: false
-    default: "true"
+    default: "warn"
+  ignore-unfixed:
+    description: "Ignore unfixed vulnerabilities (default: false, so EOL libraries such as log4j 1.x are reported)"
+    required: false
+    default: "false"
+  trivy-version:
+    description: "Trivy version to run (default: v0.70.0)"
+    required: false
+    default: "v0.70.0"
   artifact-retention-days:
     description: "Number of days to retain scan artifacts (default: 30)"
     required: false
     default: "30"
+
+outputs:
+  blocked:
+    description: "'true' if policy=block and blocking findings were found"
+    value: ${{ steps.gate.outputs.blocked }}
+  blocking-count:
+    description: "Number of blocking findings"
+    value: ${{ steps.gate.outputs.blocking-count }}
 
 runs:
   using: "composite"
@@ -26,10 +42,11 @@ runs:
     - name: Run Trivy to scan built image
       id: trivy-image
       continue-on-error: true
-      uses: aquasecurity/trivy-action@0.35.0
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       with:
         scan-type: 'image'
         image-ref: ${{ inputs.image-ref }}
+        version: ${{ inputs.trivy-version }}
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
         scanners: 'vuln,secret'
@@ -56,7 +73,8 @@ runs:
         path: trivy-results.json
         retention-days: ${{ inputs.artifact-retention-days }}
 
-    - name: Generate Trivy summary
+    - name: Generate Trivy summary and apply CVE gate
+      id: gate
       if: always()
       shell: bash
       run: |
@@ -64,4 +82,5 @@ runs:
           --results-file trivy-results.json \
           --image-name "${{ inputs.image-name }}" \
           --image-tag "${{ inputs.image-tag }}" \
+          --policy "${{ inputs.policy }}" \
           --github-step-summary "$GITHUB_STEP_SUMMARY"
