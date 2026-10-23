@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # Patch GATK fat JAR to fix bundled dependency CVEs:
-#   - CVE-2026-42581, CVE-2026-42584: netty 4.1.118 -> 4.1.135
+#   - CVE-2026-42581, CVE-2026-42584, CVE-2026-75595: netty 4.1.118 -> 4.1.139
 #   - CVE-2024-51504: zookeeper 3.9.2 -> 3.9.5
 
-NETTY_VERSION="4.1.135.Final"
+NETTY_VERSION="4.1.139.Final"
 ZOOKEEPER_VERSION="3.9.5"
 MAVEN_BASE="https://repo1.maven.org/maven2"
 
