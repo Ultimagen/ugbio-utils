@@ -1,10 +1,19 @@
 name: "Trivy Image Scan"
-description: "Scan Docker image for vulnerabilities and secrets, generate summary, upload findings and apply the CVE gate"
+description: "Scan a Docker image (or the repository file system) for vulnerabilities and secrets, generate summary, upload findings and apply the CVE gate"
 
 inputs:
+  scan-type:
+    description: "'image' scans image-ref, 'fs' scans the checked-out repository at scan-ref (default: image)"
+    required: false
+    default: "image"
   image-ref:
-    description: "Docker image reference (registry/image:tag)"
-    required: true
+    description: "Docker image reference (registry/image:tag), used when scan-type=image"
+    required: false
+    default: ""
+  scan-ref:
+    description: "Path to scan when scan-type=fs (default: .)"
+    required: false
+    default: "."
   image-name:
     description: "Docker image name (for summary display)"
     required: true
@@ -39,20 +48,21 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Run Trivy to scan built image
+    - name: Run Trivy scan
       id: trivy-image
       continue-on-error: true
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       with:
-        scan-type: 'image'
+        scan-type: ${{ inputs.scan-type }}
         image-ref: ${{ inputs.image-ref }}
+        scan-ref: ${{ inputs.scan-ref }}
         version: ${{ inputs.trivy-version }}
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
         scanners: 'vuln,secret'
         ignore-unfixed: ${{ inputs.ignore-unfixed }}
         format: 'json'
-        output: 'trivy-results.json'
+        output: 'trivy-${{ inputs.scan-type }}-results.json'
         exit-code: '0'
 
     - name: Prepare artifact name
@@ -62,7 +72,7 @@ runs:
       run: |
         # Sanitize artifact name by replacing invalid characters (/, :, etc.) with hyphens
         SANITIZED_NAME=$(echo "${{ inputs.image-name }}-${{ inputs.image-tag }}" | sed 's/[\/:]/-/g')
-        echo "name=trivy-image-findings-${SANITIZED_NAME}" >> $GITHUB_OUTPUT
+        echo "name=trivy-${{ inputs.scan-type }}-findings-${SANITIZED_NAME}" >> $GITHUB_OUTPUT
 
     - name: Upload Trivy image scan artifact
       if: always()
@@ -70,7 +80,7 @@ runs:
       uses: actions/upload-artifact@v4
       with:
         name: ${{ steps.artifact-name.outputs.name }}
-        path: trivy-results.json
+        path: trivy-${{ inputs.scan-type }}-results.json
         retention-days: ${{ inputs.artifact-retention-days }}
 
     - name: Generate Trivy summary and apply CVE gate
@@ -79,7 +89,8 @@ runs:
       shell: bash
       run: |
         python3 ${{ github.action_path }}/trivy_json_to_summary.py \
-          --results-file trivy-results.json \
+          --results-file trivy-${{ inputs.scan-type }}-results.json \
+          --scan-type "${{ inputs.scan-type }}" \
           --image-name "${{ inputs.image-name }}" \
           --image-tag "${{ inputs.image-tag }}" \
           --policy "${{ inputs.policy }}" \

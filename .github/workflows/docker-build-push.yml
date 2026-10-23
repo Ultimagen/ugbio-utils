@@ -98,24 +98,27 @@ jobs:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
 
+      # Repository scans follow the same cve-policy as the image scan:
+      # warn only reports findings, block fails on CRITICAL
       - name: Run Trivy to scan Dockerfiles
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'config'
           scan-ref: './'
           format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
-
+          exit-code: ${{ inputs.cve-policy == 'block' && '1' || '0' }}
+          severity: ${{ inputs.cve-policy == 'block' && 'CRITICAL' || 'CRITICAL,HIGH' }}
 
       - name: Run Trivy to scan fs
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@main
         with:
-          scan-type: 'fs'
+          scan-type: fs
           scan-ref: '.'
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
+          image-name: ${{ inputs.docker-image }}
+          image-tag: "source"
+          ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
+          policy: ${{ inputs.cve-policy }}
+          artifact-retention-days: "30"
 
       - uses: actions/checkout@v4 # deep check out for docker build
         if: ${{ inputs.git-repo != 'Ultimagen/ugbio-utils' }}
@@ -230,6 +233,7 @@ jobs:
         id: trivy-gate
         uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@main
         with:
+          scan-type: image
           image-ref: ${{ env.STAGING_REF }}
           image-name: "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}"
           image-tag: "${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}"
