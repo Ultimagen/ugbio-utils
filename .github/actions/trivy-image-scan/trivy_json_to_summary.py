@@ -5,7 +5,8 @@ Parse Trivy JSON output, generate a GitHub Actions summary and apply the CVE gat
 Gate policy:
   - Blocking finding: a CRITICAL vulnerability that is either in a language package
     (jar, pip, npm, ...) or in an OS package with a published fix.
-    Unfixed CRITICAL OS vulnerabilities, all HIGH vulnerabilities and secrets are flagged only.
+    Unfixed CRITICAL OS vulnerabilities and all HIGH vulnerabilities are flagged only.
+    Secret findings are not reported here; they are only in the uploaded JSON artifact.
   - policy=warn:  every finding is reported as a warning annotation, exit code 0.
   - policy=block: blocking findings are reported as error annotations and the script
     exits with code 1. A missing results file also blocks (the image could not be verified).
@@ -24,17 +25,14 @@ MAX_DISPLAYED_CVES = 50
 
 def parse_trivy_json(json_path: Path) -> dict:
     """
-    Parse Trivy JSON format and extract vulnerability information and the number of secret findings.
-
-    Secret findings are only counted: their details (rule, file, line) stay in the uploaded JSON
-    artifact and are never written to the job log or summary.
+    Parse Trivy JSON format and extract vulnerability information.
 
     Trivy JSON structure:
     {
       "Results": [
         {
           "Target": "image_name",
-          "Class": "os-pkgs" | "lang-pkgs" | "secret",
+          "Class": "os-pkgs" | "lang-pkgs",
           "Vulnerabilities": [
             {
               "VulnerabilityID": "CVE-2026-12345",
@@ -45,8 +43,7 @@ def parse_trivy_json(json_path: Path) -> dict:
               "Severity": "CRITICAL",
               "Title": "..."
             }
-          ],
-          "Secrets": [{"RuleID": "...", "Severity": "...", "StartLine": 1}]
+          ]
         }
       ]
     }
@@ -55,7 +52,6 @@ def parse_trivy_json(json_path: Path) -> dict:
         data = json.load(f)
 
     findings = []
-    secret_count = 0
     counts = defaultdict(int)
 
     # Trivy JSON has a "Results" array with vulnerability lists
@@ -78,16 +74,14 @@ def parse_trivy_json(json_path: Path) -> dict:
                     "blocking": severity == "CRITICAL" and (is_lang_pkg or bool(fixed)),
                 }
             )
-        secret_count += len(result.get("Secrets") or [])
 
-    return {"counts": dict(counts), "findings": findings, "secret_count": secret_count}
+    return {"counts": dict(counts), "findings": findings}
 
 
 def generate_summary(image_name: str, image_tag: str, data: dict, policy: str, scan_type: str = "image") -> str:
     """Generate ECR-style markdown summary."""
     counts = data["counts"]
     findings = data["findings"]
-    secret_count = data["secret_count"]
     blocking = [f for f in findings if f["blocking"]]
 
     lines = [
@@ -100,7 +94,7 @@ def generate_summary(image_name: str, image_tag: str, data: dict, policy: str, s
     ]
 
     total = sum(counts.values())
-    if total == 0 and secret_count == 0:
+    if total == 0:
         lines.append("✅ No vulnerabilities found.")
         return "\n".join(lines)
 
@@ -112,7 +106,6 @@ def generate_summary(image_name: str, image_tag: str, data: dict, policy: str, s
             f"| CRITICAL | {counts.get('CRITICAL', 0)} |",
             f"| HIGH | {counts.get('HIGH', 0)} |",
             f"| Blocking | {len(blocking)} |",
-            f"| Secrets | {secret_count} |",
             "",
         ]
     )
@@ -154,9 +147,6 @@ def generate_summary(image_name: str, image_tag: str, data: dict, policy: str, s
 
         lines.extend(["", "</details>", ""])
 
-    if secret_count:
-        lines.extend([f"> {secret_count} potential secret(s) found (flagged only); see the JSON artifact.", ""])
-
     lines.append("_Full scan results (JSON format) attached as workflow artifact._")
     return "\n".join(lines)
 
@@ -174,11 +164,11 @@ def emit_annotations(image: str, data: dict, policy: str) -> None:
         )
 
     counts = data["counts"]
-    if findings or data["secret_count"]:
+    if findings:
         print(
             f"::warning title=Trivy findings in {image}::"
             f"CRITICAL={counts.get('CRITICAL', 0)} HIGH={counts.get('HIGH', 0)} "
-            f"blocking={len(blocking)} secrets={data['secret_count']} (see job summary)"
+            f"blocking={len(blocking)} (see job summary)"
         )
 
 
@@ -218,7 +208,7 @@ def main():
     if not results_path.exists():
         level = "error" if args.policy == "block" else "warning"
         print(f"::{level}::Trivy results file not found: {results_path}")
-        write_outputs({"counts": {}, "findings": [], "secret_count": 0}, blocked=args.policy == "block")
+        write_outputs({"counts": {}, "findings": []}, blocked=args.policy == "block")
         if args.policy == "block":
             raise SystemExit(1)
         return
