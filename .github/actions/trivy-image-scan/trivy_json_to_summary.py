@@ -78,7 +78,7 @@ def parse_trivy_json(json_path: Path) -> dict:
     return {"counts": dict(counts), "findings": findings}
 
 
-def generate_summary(image_name: str, image_tag: str, data: dict, policy: str, scan_type: str = "image") -> str:
+def generate_summary(image_name: str, image_tag: str, data: dict, policy: str) -> str:
     """Generate ECR-style markdown summary."""
     counts = data["counts"]
     findings = data["findings"]
@@ -87,7 +87,7 @@ def generate_summary(image_name: str, image_tag: str, data: dict, policy: str, s
     lines = [
         "",
         "---",
-        "### Trivy Image Scan Results" if scan_type == "image" else "### Trivy Repository (fs) Scan Results",
+        "### Trivy Image Scan Results",
         f"**Image:** `{image_name}:{image_tag}`",
         f"**CVE policy:** `{policy}` (blocks on CRITICAL with a fix, or CRITICAL in language packages)",
         "",
@@ -190,7 +190,6 @@ def main():
     parser.add_argument("--results-file", required=True, help="Path to Trivy JSON output")
     parser.add_argument("--image-name", required=True, help="Docker image name")
     parser.add_argument("--image-tag", required=True, help="Docker image tag")
-    parser.add_argument("--scan-type", choices=["image", "fs"], default="image", help="Trivy scan type of the results")
     parser.add_argument(
         "--policy",
         choices=["warn", "block"],
@@ -214,7 +213,7 @@ def main():
         return
 
     data = parse_trivy_json(results_path)
-    summary = generate_summary(args.image_name, args.image_tag, data, args.policy, args.scan_type)
+    summary = generate_summary(args.image_name, args.image_tag, data, args.policy)
 
     print(summary)
 
@@ -222,7 +221,7 @@ def main():
         with open(args.github_step_summary, "a") as f:
             f.write(summary)
 
-    emit_annotations(f"{args.image_name}:{args.image_tag} ({args.scan_type} scan)", data, args.policy)
+    emit_annotations(f"{args.image_name}:{args.image_tag}", data, args.policy)
 
     has_blocking = any(f["blocking"] for f in data["findings"])
     blocked = args.policy == "block" and has_blocking
