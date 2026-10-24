@@ -1,4 +1,5 @@
 import os
+import re
 from argparse import ArgumentParser
 from datetime import timedelta, tzinfo
 from enum import Enum
@@ -56,13 +57,28 @@ class MonitorLog:
         self.run_time = timedelta(0)
         self.total_cpu = None
         self.total_memory = None
+        self.cpu_model = None
+        self.gpu = None
         self.task_name = None
         self.task_id = None
         # create a dict where key is the column name and value is the color
         self.colors = dict(zip(self.df_columns, ["black", "blue", "green", "red", "purple", "orange"], strict=False))
 
-    def process_line(self, line):  # noqa: C901, PLR0912
+    def process_host_info(self, line):
+        # line=MONITORING, [Sun Oct 18 12:38:55 UTC 2026], Host Information, CPU model: Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz, GPU: Tesla T4  # noqa: E501
+        host_info = line.split("Host Information,", 1)[1]
+        cpu_match = re.search(r"CPU model:\s*(.*?)(?:, GPU:|$)", host_info)
+        gpu_match = re.search(r", GPU:\s*(.*)$", host_info)
+        self.cpu_model = cpu_match.group(1).strip() if cpu_match else None
+        self.gpu = gpu_match.group(1).strip() if gpu_match else None
+
+    def process_line(self, line):  # noqa: C901, PLR0912, PLR0915
         if "MONITORING" not in line:
+            return
+
+        # Get host information (monitor 1.2+); not a usage sample
+        if "Host Information" in line:
+            self.process_host_info(line)
             return
 
         # Get general information
@@ -181,6 +197,8 @@ def performance(run_id, session=None, output_dir=None, output_prefix="") -> pd.D
                 "mean_IOWait": [monitor_log.df[MonitorColumns.IOWAIT.value].mean()],
                 "max_IOWait": [monitor_log.df[MonitorColumns.IOWAIT.value].max()],
                 "count_entries": [monitor_log.df[MonitorColumns.CPU.value].count()],
+                "cpu_model": [monitor_log.cpu_model],
+                "gpu": [monitor_log.gpu],
             }
         )
         total_performance_df = pd.concat([total_performance_df, new_row], ignore_index=True)
