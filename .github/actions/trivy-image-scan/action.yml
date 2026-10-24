@@ -16,13 +16,9 @@ inputs:
     required: false
     default: "warn"
   ignore-unfixed:
-    description: "Ignore unfixed vulnerabilities (default: false, so EOL libraries such as log4j 1.x are reported)"
+    description: "Ignore unfixed vulnerabilities (default: false)"
     required: false
     default: "false"
-  trivy-version:
-    description: "Trivy version to run (default: v0.70.0)"
-    required: false
-    default: "v0.70.0"
   artifact-retention-days:
     description: "Number of days to retain scan artifacts (default: 30)"
     required: false
@@ -42,11 +38,11 @@ runs:
     - name: Run Trivy to scan built image
       id: trivy-image
       continue-on-error: true
+      # Pinned by commit SHA; the Trivy version (v0.70.0) is the default of this action version
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       with:
         scan-type: 'image'
         image-ref: ${{ inputs.image-ref }}
-        version: ${{ inputs.trivy-version }}
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
         scanners: 'vuln,secret'
