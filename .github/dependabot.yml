@@ -20,3 +20,19 @@ updates:
       interval: "weekly"
     # Disables regular version updates completely
     open-pull-requests-limit: 0
+
+  # GitHub Actions used in workflows and composite actions (e.g. trivy-action, pinned by SHA).
+  # Opens a weekly PR when a new version is released; updating trivy-action also updates Trivy.
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
