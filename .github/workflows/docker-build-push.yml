@@ -61,10 +61,15 @@ on:
         type: string
         default: ubuntu-latest
       trivy-ignore-unfixed:
-        description: "Ignore unfixed vulnerabilities in Trivy scan (default: true)"
+        description: "Ignore unfixed vulnerabilities in Trivy image scan (default: false)"
         required: false
         type: boolean
-        default: true
+        default: false
+      cve-policy:
+        description: "CVE policy for the image scan: 'warn' flags findings only, 'block' does not publish the image on CRITICAL with a fix or CRITICAL in language packages (default: warn)"
+        required: false
+        type: string
+        default: "warn"
 
 permissions:
   id-token: write # Required for assuming an AWS role
@@ -82,7 +87,6 @@ env:
   GAR_REPO_INTERNAL: us-central1-docker.pkg.dev/ultima-data-307918/ultimagen
   GAR_REPO_SHARED: us-central1-docker.pkg.dev/ganymede-331016/ultimagen
   DOCKERHUB_ACCOUNT: ultimagenomics
-  TRIVY_VERSION: v0.69.2
 
 jobs:
   build:
@@ -94,24 +98,16 @@ jobs:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
 
+      # Dockerfile misconfiguration scan follows cve-policy: warn only reports, block fails on CRITICAL.
+      # Vulnerabilities are checked by the image scan below, which sees everything that ships.
       - name: Run Trivy to scan Dockerfiles
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'config'
           scan-ref: './'
           format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
-
-
-      - name: Run Trivy to scan fs
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
+          exit-code: ${{ inputs.cve-policy == 'block' && '1' || '0' }}
+          severity: ${{ inputs.cve-policy == 'block' && 'CRITICAL' || 'CRITICAL,HIGH' }}
 
       - uses: actions/checkout@v4 # deep check out for docker build
         if: ${{ inputs.git-repo != 'Ultimagen/ugbio-utils' }}
@@ -129,7 +125,7 @@ jobs:
 
       - name: Set tag based on commit sha
         id: set-tag
-        if: ${{ inputs.image-tag == '' }}
+        if: ${{ inputs.docker-tag == '' }}
         run: |
           if [ ${{ github.ref_name }} == '${{ inputs.base-branch }}' ]; then
             echo "imageTag=${{ inputs.base-branch }}_${{ steps.short-sha.outputs.sha }}" >>$GITHUB_OUTPUT;
@@ -190,6 +186,11 @@ jobs:
 
           echo "GAR_REPO=${gar_repo}" >> ${GITHUB_ENV}
           echo "DOCKER_DESTINATIONS=${docker_destinations%,}" >> ${GITHUB_ENV}
+          # The image is first pushed to a staging tag, scanned, and only then copied to DOCKER_DESTINATIONS
+          # Random suffix: parallel calls in the same run may build the same image repository
+          staging_tag=scan-${{ github.run_id }}-${{ github.run_attempt }}-$(openssl rand -hex 4)
+          echo "STAGING_TAG=${staging_tag}" >> ${GITHUB_ENV}
+          echo "STAGING_REF=${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}:${staging_tag}" >> ${GITHUB_ENV}
 
       - name: Download resources
         if: ${{ inputs.artifact-name != '' }}
@@ -200,7 +201,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Build and push
+      - name: Build and push to staging tag
         uses: docker/build-push-action@v4
         with:
           context: ${{ inputs.docker-context }}
@@ -208,7 +209,7 @@ jobs:
           target: ${{ inputs.docker-target }}
           provenance: false
           push: true
-          tags: ${{ env.DOCKER_DESTINATIONS }}
+          tags: ${{ env.STAGING_REF }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           secrets: |
@@ -217,6 +218,27 @@ jobs:
             VERSION_DOCKER=${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
             IMAGE_TAG=${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
             ${{ inputs.docker-build-args }}
+
+      - name: Trivy image scan
+        id: trivy-gate
+        uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@main
+        with:
+          image-ref: ${{ env.STAGING_REF }}
+          image-name: "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}"
+          image-tag: "${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}"
+          ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
+          policy: ${{ inputs.cve-policy }}
+          artifact-retention-days: "30"
+
+      - name: Publish image tags
+        run: |
+          set -e
+          tag_args=()
+          for dest in $(echo "${{ env.DOCKER_DESTINATIONS }}" | sed 's/,/ /g'); do
+            tag_args+=(-t "${dest}")
+          done
+          # --prefer-index=false copies the scanned single-image manifest as is (no manifest list)
+          docker buildx imagetools create --prefer-index=false "${tag_args[@]}" "${{ env.STAGING_REF }}"
 
       - name: Update action summary with built tags
         run: |
@@ -229,12 +251,10 @@ jobs:
             echo "- ${dest}" >> ${GITHUB_STEP_SUMMARY}
           done
 
-      - name: Trivy image scan
-        if: always()
-        uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@main
-        with:
-          image-ref: '${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}:${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}'
-          image-name: "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}"
-          image-tag: "${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}"
-          ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
-          artifact-retention-days: "30"
+      - name: Remove staging tag
+        if: always() && env.STAGING_TAG != ''
+        continue-on-error: true
+        run: |
+          aws ecr batch-delete-image --region ${{ env.AWS_REGION }} \
+            --repository-name ${{ inputs.docker-image }} \
+            --image-ids imageTag=${{ env.STAGING_TAG }}
