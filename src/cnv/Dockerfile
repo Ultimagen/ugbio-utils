@@ -122,8 +122,8 @@ RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 # TODO(BIOIN-2945): TEMPORARY - fetches a GitHub Actions artifact built from Ultimagen/jalign PR #20
 # (artifacts expire 2027-01-22). Switch back to the release asset para_jalign-<version>-debian-bookworm-x64
 # once the PR is merged and released.
-ARG JALIGN_RUN_ID=40094265270
-ARG JALIGN_ARTIFACT_NAME=jalign-debian-bookworm-x64-04de44d196aeeec47461327011321e7edefdf5f4
+ARG JALIGN_RUN_ID=40096603767
+ARG JALIGN_ARTIFACT_NAME=jalign-debian-bookworm-x64-a168a28333141f66a20476ab74e2009d78e953e3
 RUN --mount=type=secret,id=github_token \
     if [ ! -f /run/secrets/github_token ]; then \
         echo "ERROR: Authentication required to download dependencies" && exit 1; \
