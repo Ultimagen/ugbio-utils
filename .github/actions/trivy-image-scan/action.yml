@@ -35,6 +35,10 @@ outputs:
 runs:
   using: "composite"
   steps:
+    - name: Remove results of earlier scans
+      shell: bash
+      run: rm -f trivy-results.json
+
     - name: Run Trivy to scan built image
       id: trivy-image
       continue-on-error: true
@@ -79,4 +83,5 @@ runs:
           --image-name "${{ inputs.image-name }}" \
           --image-tag "${{ inputs.image-tag }}" \
           --policy "${{ inputs.policy }}" \
+          --scan-outcome "${{ steps.trivy-image.outcome }}" \
           --github-step-summary "$GITHUB_STEP_SUMMARY"

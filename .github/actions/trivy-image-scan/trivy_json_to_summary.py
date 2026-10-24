@@ -197,6 +197,11 @@ def main():
         help="warn: report only; block: exit 1 on blocking findings",
     )
     parser.add_argument(
+        "--scan-outcome",
+        default="success",
+        help="Outcome of the Trivy scan step; with policy=block anything but 'success' fails",
+    )
+    parser.add_argument(
         "--github-step-summary",
         default="",
         help="Path to GITHUB_STEP_SUMMARY file",
@@ -204,6 +209,10 @@ def main():
     args = parser.parse_args()
 
     results_path = Path(args.results_file)
+    if args.scan_outcome != "success" and args.policy == "block":
+        print(f"::error::Trivy scan did not succeed (outcome: {args.scan_outcome}); the image could not be verified")
+        write_outputs({"counts": {}, "findings": []}, blocked=True)
+        raise SystemExit(1)
     if not results_path.exists():
         level = "error" if args.policy == "block" else "warning"
         print(f"::{level}::Trivy results file not found: {results_path}")

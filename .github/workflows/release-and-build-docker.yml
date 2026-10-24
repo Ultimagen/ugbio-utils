@@ -57,6 +57,12 @@ permissions:
   id-token: write
   contents: write
 
+# One release per repository at a time: the next version is computed from the latest git tag,
+# which is pushed only at the end. A queued release waits; the running one is never cancelled.
+concurrency:
+  group: release-and-build-docker-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   version:
     runs-on: ubuntu-latest

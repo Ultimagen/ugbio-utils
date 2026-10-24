@@ -187,7 +187,8 @@ jobs:
           echo "GAR_REPO=${gar_repo}" >> ${GITHUB_ENV}
           echo "DOCKER_DESTINATIONS=${docker_destinations%,}" >> ${GITHUB_ENV}
           # The image is first pushed to a staging tag, scanned, and only then copied to DOCKER_DESTINATIONS
-          staging_tag=scan-${{ github.run_id }}-${{ github.run_attempt }}
+          # Random suffix: parallel calls in the same run may build the same image repository
+          staging_tag=scan-${{ github.run_id }}-${{ github.run_attempt }}-$(openssl rand -hex 4)
           echo "STAGING_TAG=${staging_tag}" >> ${GITHUB_ENV}
           echo "STAGING_REF=${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}:${staging_tag}" >> ${GITHUB_ENV}
 
@@ -236,7 +237,8 @@ jobs:
           for dest in $(echo "${{ env.DOCKER_DESTINATIONS }}" | sed 's/,/ /g'); do
             tag_args+=(-t "${dest}")
           done
-          docker buildx imagetools create "${tag_args[@]}" "${{ env.STAGING_REF }}"
+          # --prefer-index=false copies the scanned single-image manifest as is (no manifest list)
+          docker buildx imagetools create --prefer-index=false "${tag_args[@]}" "${{ env.STAGING_REF }}"
 
       - name: Update action summary with built tags
         run: |
