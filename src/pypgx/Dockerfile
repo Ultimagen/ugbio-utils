@@ -37,17 +37,9 @@ RUN apt-get update && \
 # Clone the pypgx-bundle repository at the corresponding version
 RUN git clone --branch ${PYPGX_BUNDLE_BRANCH} --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle
 
-# Install GATK
-ENV GATK_VERSION=4.6.2.0
-RUN wget -q https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION}/gatk-${GATK_VERSION}.zip -O /tmp/gatk.zip && \
-    unzip -q /tmp/gatk.zip -d /opt && \
-    mv /opt/gatk-${GATK_VERSION} /opt/gatk && \
-    ln -s /opt/gatk/gatk /usr/local/bin/gatk && \
-    rm /tmp/gatk.zip
-
-# Patch GATK fat JAR: upgrade bundled netty and zookeeper to fix CVEs
-COPY docker/patch-gatk-jars.sh /tmp/patch-gatk-jars.sh
-RUN chmod +x /tmp/patch-gatk-jars.sh && /tmp/patch-gatk-jars.sh && rm /tmp/patch-gatk-jars.sh
+# Install GATK (Ultima build of 4.7.0.0 with fixed netty, see docker/install-gatk.sh)
+COPY docker/install-gatk.sh /tmp/install-gatk.sh
+RUN bash /tmp/install-gatk.sh && rm /tmp/install-gatk.sh
 
 # Remove unnecessary packages
 RUN apt-get purge -y git wget unzip && \
