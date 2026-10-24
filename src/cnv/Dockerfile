@@ -2,15 +2,6 @@
 ARG BASE_IMAGE
 ARG OUT_DIR=/tmp/ugbio
 
-############################
-# Pull known-good parasail from Debian Bullseye (2.4.3)
-FROM debian:bullseye AS parasail-bullseye
-RUN apt-get update && \
-  apt-get -y install --no-install-recommends \
-    libparasail-dev \
-  && \
-  rm -rf /var/lib/apt/lists/* && apt-get autoclean
-
 FROM python:3.11-bookworm AS build
 
 ARG OUT_DIR
@@ -52,6 +43,7 @@ RUN apt-get update && apt-get upgrade -y && \
     libopenblas-dev \
     libstdc++-12-dev \
     libhdf5-dev \
+    libparasail8 \
     tzdata \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
@@ -124,38 +116,42 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
-# Download para_jalign binary from private jalign repository
-ARG JALIGN_VERSION=1.4.1
+# Download para_jalign binary from private jalign repository.
+# The bookworm build links the distro libparasail8 (parasail 2.6) and uses its striped kernels,
+# since the parasail 2.6 diag kernels return corrupted scores/cigars (DATA-9903)
+# TODO(BIOIN-2945): TEMPORARY - fetches a GitHub Actions artifact built from Ultimagen/jalign PR #20
+# (artifacts expire 2027-01-22). Switch back to the release asset para_jalign-<version>-debian-bookworm-x64
+# once the PR is merged and released.
+ARG JALIGN_RUN_ID=40096603767
+ARG JALIGN_ARTIFACT_NAME=jalign-debian-bookworm-x64-a168a28333141f66a20476ab74e2009d78e953e3
 RUN --mount=type=secret,id=github_token \
     if [ ! -f /run/secrets/github_token ]; then \
         echo "ERROR: Authentication required to download dependencies" && exit 1; \
     fi && \
     GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
-    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bullseye-x64" && \
-    echo "Looking for asset: ${ASSET_NAME}" && \
+    echo "Looking for artifact: ${JALIGN_ARTIFACT_NAME} in run ${JALIGN_RUN_ID}" && \
     curl -sL \
         -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" \
-        -o /tmp/release_data.json && \
-    ASSET_URL=$(cat /tmp/release_data.json | \
-        jq -r ".assets[] | select(.name == \"${ASSET_NAME}\") | .url" | head -1) && \
-    echo "Asset URL: ${ASSET_URL}" && \
-    if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then \
-        echo "ERROR: Could not find asset '${ASSET_NAME}' in release ${JALIGN_VERSION}" && \
-        echo "Available assets:" && \
-        cat /tmp/release_data.json | jq -r '.assets[].name' && \
+        "https://api.github.com/repos/Ultimagen/jalign/actions/runs/${JALIGN_RUN_ID}/artifacts?per_page=100" \
+        -o /tmp/artifacts.json && \
+    ARTIFACT_URL=$(jq -r ".artifacts[] | select(.name == \"${JALIGN_ARTIFACT_NAME}\") | .archive_download_url" /tmp/artifacts.json | head -1) && \
+    echo "Artifact URL: ${ARTIFACT_URL}" && \
+    if [ -z "$ARTIFACT_URL" ] || [ "$ARTIFACT_URL" = "null" ]; then \
+        echo "ERROR: Could not find artifact '${JALIGN_ARTIFACT_NAME}' in run ${JALIGN_RUN_ID}" && \
+        echo "Available artifacts:" && \
+        jq -r '.artifacts[].name' /tmp/artifacts.json && \
         exit 1; \
     fi && \
     curl -sLf \
-        -H "Accept: application/octet-stream" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "${ASSET_URL}" \
-        -o /opt/para_jalign && \
-    chmod +x /opt/para_jalign && \
-    rm /tmp/release_data.json
+        "${ARTIFACT_URL}" \
+        -o /tmp/jalign.zip && \
+    unzip -o /tmp/jalign.zip -d /tmp/jalign && \
+    install -m 0755 /tmp/jalign/para_jalign /opt/para_jalign && \
+    rm -rf /tmp/jalign.zip /tmp/jalign /tmp/artifacts.json
 
 ARG OUT_DIR
 
@@ -166,12 +162,6 @@ COPY --from=build ${OUT_DIR} ${OUT_DIR}
 # Build pywfa and pyabpoa without -march=native, so the image runs on hosts without AVX-512
 RUN PYWFA_MARCH=x86-64-v3 pip install --no-binary pywfa "pywfa>=0.6.0"
 RUN AVX2=1 pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
-
-# Bring parasail headers/libs from Bullseye into Bookworm image
-COPY --from=parasail-bullseye /usr/include/parasail /usr/include/parasail
-COPY --from=parasail-bullseye /usr/include/parasail.h /usr/include/parasail.h
-COPY --from=parasail-bullseye /usr/lib/x86_64-linux-gnu/libparasail.so* /usr/lib/x86_64-linux-gnu/
-RUN ldconfig
 
 #download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
 ENV PYTOR_DATA_DIR=/usr/share/cnvpytor_data
