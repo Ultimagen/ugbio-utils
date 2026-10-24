@@ -1,5 +1,5 @@
 name: "Trivy Image Scan"
-description: "Scan Docker image for vulnerabilities and secrets, generate summary, upload findings and apply the CVE gate"
+description: "Scan a built Docker image with Trivy, write the findings to the job summary and upload the full results. The step fails only when policy is 'block' and a blocking vulnerability is found."
 
 inputs:
   image-ref:
@@ -12,7 +12,7 @@ inputs:
     description: "Docker image tag (for summary display)"
     required: true
   policy:
-    description: "CVE policy: 'warn' flags findings only, 'block' fails on CRITICAL with a fix or CRITICAL in language packages (default: warn)"
+    description: "'warn' (default): only report findings. 'block': fail if the image has a CRITICAL vulnerability that has a fix, or a CRITICAL vulnerability in a library (jar, pip, npm, ...)"
     required: false
     default: "warn"
   ignore-unfixed:
