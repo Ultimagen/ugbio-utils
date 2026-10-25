@@ -106,6 +106,13 @@ jobs:
           docker image prune --all --force > /dev/null
           df -h /
 
+      # Trivy writes a temporary copy of the image and its databases to TMPDIR. /tmp on GitHub-hosted
+      # runners is small (large images failed with 'disk quota exceeded'), so use the runner's work area.
+      - name: Use the runner work area for temporary files
+        run: |
+          df -h /tmp "${{ runner.temp }}"
+          echo "TMPDIR=${{ runner.temp }}" >> "${GITHUB_ENV}"
+
       - uses: actions/checkout@v4 # lazy check out for trivy scanning
         with:
           repository: ${{ inputs.git-repo }}
