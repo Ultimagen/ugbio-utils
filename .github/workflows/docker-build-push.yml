@@ -61,10 +61,15 @@ on:
         type: string
         default: ubuntu-latest
       trivy-ignore-unfixed:
-        description: "Ignore unfixed vulnerabilities in Trivy scan (default: true)"
+        description: "Ignore unfixed vulnerabilities in Trivy image scan (default: false)"
         required: false
         type: boolean
-        default: true
+        default: false
+      cve-policy:
+        description: "CVE policy for the image scan: 'warn' flags findings only, 'block' does not publish the image on CRITICAL with a fix or CRITICAL in language packages (default: warn)"
+        required: false
+        type: string
+        default: "warn"
 
 permissions:
   id-token: write # Required for assuming an AWS role
@@ -82,7 +87,6 @@ env:
   GAR_REPO_INTERNAL: us-central1-docker.pkg.dev/ultima-data-307918/ultimagen
   GAR_REPO_SHARED: us-central1-docker.pkg.dev/ganymede-331016/ultimagen
   DOCKERHUB_ACCOUNT: ultimagenomics
-  TRIVY_VERSION: v0.69.2
 
 jobs:
   build:
@@ -94,24 +98,16 @@ jobs:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
 
+      # Dockerfile misconfiguration scan follows cve-policy: warn only reports, block fails on CRITICAL.
+      # Vulnerabilities are checked by the image scan below, which sees everything that ships.
       - name: Run Trivy to scan Dockerfiles
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'config'
           scan-ref: './'
           format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
-
-
-      - name: Run Trivy to scan fs
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
+          exit-code: ${{ inputs.cve-policy == 'block' && '1' || '0' }}
+          severity: ${{ inputs.cve-policy == 'block' && 'CRITICAL' || 'CRITICAL,HIGH' }}
 
       - uses: actions/checkout@v4 # deep check out for docker build
         if: ${{ inputs.git-repo != 'Ultimagen/ugbio-utils' }}
@@ -129,7 +125,7 @@ jobs:
 
       - name: Set tag based on commit sha
         id: set-tag
-        if: ${{ inputs.image-tag == '' }}
+        if: ${{ inputs.docker-tag == '' }}
         run: |
           if [ ${{ github.ref_name }} == '${{ inputs.base-branch }}' ]; then
             echo "imageTag=${{ inputs.base-branch }}_${{ steps.short-sha.outputs.sha }}" >>$GITHUB_OUTPUT;
@@ -190,6 +186,8 @@ jobs:
 
           echo "GAR_REPO=${gar_repo}" >> ${GITHUB_ENV}
           echo "DOCKER_DESTINATIONS=${docker_destinations%,}" >> ${GITHUB_ENV}
+          # Local tag that the scan reads; the image is pushed only after the scan
+          echo "SCAN_REF=${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}:${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}" >> ${GITHUB_ENV}
 
       - name: Download resources
         if: ${{ inputs.artifact-name != '' }}
@@ -200,14 +198,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Build and push
+      # Build into the runner's Docker (not pushed yet), so the image can be scanned before it is published
+      - name: Build
         uses: docker/build-push-action@v4
         with:
           context: ${{ inputs.docker-context }}
           file: ${{ inputs.docker-file }}
           target: ${{ inputs.docker-target }}
           provenance: false
-          push: true
+          load: true
+          push: false
           tags: ${{ env.DOCKER_DESTINATIONS }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -217,6 +217,24 @@ jobs:
             VERSION_DOCKER=${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
             IMAGE_TAG=${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
             ${{ inputs.docker-build-args }}
+
+      - name: Trivy image scan
+        id: trivy-gate
+        uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@main
+        with:
+          image-ref: ${{ env.SCAN_REF }}
+          image-name: "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}"
+          image-tag: "${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}"
+          ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
+          policy: ${{ inputs.cve-policy }}
+          artifact-retention-days: "30"
+
+      - name: Push image tags
+        run: |
+          set -e
+          for dest in $(echo "${{ env.DOCKER_DESTINATIONS }}" | sed 's/,/ /g'); do
+            docker push "${dest}"
+          done
 
       - name: Update action summary with built tags
         run: |
@@ -228,13 +246,3 @@ jobs:
           for dest in $(echo "${{ env.DOCKER_DESTINATIONS }}" | sed 's/,/ /g'); do
             echo "- ${dest}" >> ${GITHUB_STEP_SUMMARY}
           done
-
-      - name: Trivy image scan
-        if: always()
-        uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@main
-        with:
-          image-ref: '${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}:${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}'
-          image-name: "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}"
-          image-tag: "${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}"
-          ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
-          artifact-retention-days: "30"

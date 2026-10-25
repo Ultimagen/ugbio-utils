@@ -33,6 +33,11 @@ on:
         required: false
         type: string
         default: ubuntu-latest
+      cve-policy:
+        description: "CVE policy passed to docker-build-push.yml: 'warn' or 'block' (default: warn)"
+        required: false
+        type: string
+        default: "warn"
 
 permissions:
   id-token: write # Required for assuming an AWS role
@@ -124,3 +129,4 @@ jobs:
            BASE_IMAGE=${{ needs.pre-build.outputs.ecr-registry }}/${{ needs.pre-build.outputs.base-image }}
            BASE_BUILD_IMAGE=${{ needs.pre-build.outputs.ecr-registry }}/${{ needs.pre-build.outputs.base-build-image }}
          runner: ${{ inputs.runner }}
+         cve-policy: ${{ inputs.cve-policy }}
