@@ -26,15 +26,18 @@ The DP score table itself is correct, so jump scores matched. Only the per-align
 
 ### "Residual segfaults" (`9:141152500-141215000`) are unrelated
 
-The error `para_jalign.cpp:399 ERR failed to reference no 1 on lineno: 1` happens when a CNV's breakpoint window lies past the contig end. The window's reference is then empty, so the input line has no 4th field. jalign 1.4.1 also segfaults on such input on **bullseye**. This is already fixed on the Python side: `_fetch_reads_at_breakpoints` clamps windows to the contig length.
+The error `para_jalign.cpp:399 ERR failed to reference no 1 on lineno: 1` happens when a CNV's breakpoint window lies past the contig end. The window's reference is then empty, so the input line has no 4th field. jalign 1.4.1 also segfaults on such input on **bullseye**. This is fixed on the Python side, where `_fetch_reads_at_breakpoints` clamps windows to the contig length. Since jalign 1.4.2, para_jalign also exits with an error instead of crashing on malformed input.
 
-## Fix (jalign)
+## Fix (jalign 1.4.2, Ultimagen/jalign#20)
 
-- Switch to the `parasail_sw_{table,trace}_striped_16` kernels, falling back to `striped_32` on saturation.
-- Fix undefined behavior and leaks: `bzero` of a struct holding `std::string`, and `free()` instead of `parasail_result_free` on trace results.
-- Add a `debian-bookworm` build/release target that links the distro `libparasail8` dynamically.
+- Call the `parasail_sw_{table,trace}_striped_16` kernels instead of diag. They are correct on parasail 2.6 and about 30% faster.
+- There is no 32-bit fallback. 16-bit scores only saturate for reads of about 16 kb at match=2, so para_jalign exits with an error if `match × read length > INT16_MAX`.
+- Harden input parsing. para_jalign exits with an error on over-long lines or sequences, and on an `=` reference with no previous line.
+- Build cigars in `std::string`. The fixed 4 KB buffer used to truncate long cigars.
+- Fix undefined behavior and leaks: `bzero` of a struct holding `std::string`, `free()` instead of `parasail_result_free` on trace results, and leaked cigar and reference strings.
+- Replace the `debian-bullseye` build/release target with `debian-bookworm`, linked dynamically against the distro `libparasail8`.
 
-The bookworm asset is `para_jalign-<version>-debian-bookworm-x64`, fetched in the CNV Dockerfile through `JALIGN_VERSION`.
+The CNV Dockerfile fetches release asset `para_jalign-${JALIGN_VERSION}-debian-bookworm-x64` (`JALIGN_VERSION=1.4.2`).
 
 ## Validation
 

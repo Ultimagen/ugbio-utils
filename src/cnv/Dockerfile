@@ -119,39 +119,37 @@ RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 # Download para_jalign binary from private jalign repository.
 # The bookworm build links the distro libparasail8 (parasail 2.6) and uses its striped kernels,
 # since the parasail 2.6 diag kernels return corrupted scores/cigars (DATA-9903)
-# TODO(BIOIN-2945): TEMPORARY - fetches a GitHub Actions artifact built from Ultimagen/jalign PR #20
-# (artifacts expire 2027-01-22). Switch back to the release asset para_jalign-<version>-debian-bookworm-x64
-# once the PR is merged and released.
-ARG JALIGN_RUN_ID=40096603767
-ARG JALIGN_ARTIFACT_NAME=jalign-debian-bookworm-x64-a168a28333141f66a20476ab74e2009d78e953e3
+ARG JALIGN_VERSION=1.4.2
 RUN --mount=type=secret,id=github_token \
     if [ ! -f /run/secrets/github_token ]; then \
         echo "ERROR: Authentication required to download dependencies" && exit 1; \
     fi && \
     GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
-    echo "Looking for artifact: ${JALIGN_ARTIFACT_NAME} in run ${JALIGN_RUN_ID}" && \
+    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bookworm-x64" && \
+    echo "Looking for asset: ${ASSET_NAME}" && \
     curl -sL \
         -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "https://api.github.com/repos/Ultimagen/jalign/actions/runs/${JALIGN_RUN_ID}/artifacts?per_page=100" \
-        -o /tmp/artifacts.json && \
-    ARTIFACT_URL=$(jq -r ".artifacts[] | select(.name == \"${JALIGN_ARTIFACT_NAME}\") | .archive_download_url" /tmp/artifacts.json | head -1) && \
-    echo "Artifact URL: ${ARTIFACT_URL}" && \
-    if [ -z "$ARTIFACT_URL" ] || [ "$ARTIFACT_URL" = "null" ]; then \
-        echo "ERROR: Could not find artifact '${JALIGN_ARTIFACT_NAME}' in run ${JALIGN_RUN_ID}" && \
-        echo "Available artifacts:" && \
-        jq -r '.artifacts[].name' /tmp/artifacts.json && \
+        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" \
+        -o /tmp/release_data.json && \
+    ASSET_URL=$(cat /tmp/release_data.json | \
+        jq -r ".assets[] | select(.name == \"${ASSET_NAME}\") | .url" | head -1) && \
+    echo "Asset URL: ${ASSET_URL}" && \
+    if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then \
+        echo "ERROR: Could not find asset '${ASSET_NAME}' in release ${JALIGN_VERSION}" && \
+        echo "Available assets:" && \
+        cat /tmp/release_data.json | jq -r '.assets[].name' && \
         exit 1; \
     fi && \
     curl -sLf \
+        -H "Accept: application/octet-stream" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "${ARTIFACT_URL}" \
-        -o /tmp/jalign.zip && \
-    unzip -o /tmp/jalign.zip -d /tmp/jalign && \
-    install -m 0755 /tmp/jalign/para_jalign /opt/para_jalign && \
-    rm -rf /tmp/jalign.zip /tmp/jalign /tmp/artifacts.json
+        "${ASSET_URL}" \
+        -o /opt/para_jalign && \
+    chmod +x /opt/para_jalign && \
+    rm /tmp/release_data.json
 
 ARG OUT_DIR
 
