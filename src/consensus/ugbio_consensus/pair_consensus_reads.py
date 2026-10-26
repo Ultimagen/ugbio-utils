@@ -14,8 +14,9 @@ unaligned pair, adjacent and named ``<stem>2``:
 * The reverse read is reverse-complemented (quality reversed), because a mate is given to the aligner as
   it was sequenced. ``tp``/``t0`` stay as they are: the read group declares them reference-oriented.
 
-Everything else is written unchanged: reads with no partner, a ``po`` other than F1R2/F2R1, or partners
-that disagree on ``po`` or ``CS``.
+Everything else is written unchanged: reads with no partner, a ``po`` other than F1R2/F2R1, partners
+that disagree on ``po`` or ``CS``, and partners that both lack ``CS`` (nothing shows they are one molecule).
+With ``--require-cs-tag`` the step fails when any input read has no ``CS``, for CS-keyed duplicate marking.
 
 Why ``<stem>2`` and not ``<stem>``: names are numeric, so a stem can equal the full name of another
 molecule's unpaired read (stem ``x1`` of reads ``x10``/``x11`` is the name of read ``x1`` of stem ``x``).
@@ -47,6 +48,16 @@ R2_FLAG = 1 | 4 | 8 | 128
 PAIR_SUFFIX = "2"  # unpaired strand reads end in 0 or 1; see the module docstring
 _ORIENTATIONS = ("F1R2", "F2R1")
 _COMPLEMENT = str.maketrans("ACGTNacgtn", "TGCANtgcan")
+COUNTER_KEYS = (
+    "reads",
+    "paired",
+    "no_partner",
+    "other_orientation",
+    "partners_disagree",
+    "no_cs_tag",
+    "ambiguous",
+    "reads_without_cs",
+)
 
 
 def parse_args(argv=None):
@@ -61,6 +72,9 @@ def parse_args(argv=None):
     )
     parser.add_argument("--threads", type=int, default=1, help="htslib compression threads (default 1)")
     parser.add_argument("--counters", help="Write one 'name<TAB>count' line per outcome to this file")
+    parser.add_argument(
+        "--require-cs-tag", action="store_true", help="Fail if an input read has no CS tag (CS-keyed marking)"
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     return parser.parse_args(argv)
 
@@ -94,6 +108,8 @@ def pair_group(reads, po_tag: str, cs_tag: str):
         return reads, "other_orientation"
     if po != _tag(reverse, po_tag) or _tag(forward, cs_tag) != _tag(reverse, cs_tag):
         return reads, "partners_disagree"
+    if _tag(forward, cs_tag) is None:
+        return reads, "no_cs_tag"
     return _make_pair(forward, reverse, po), "paired"
 
 
@@ -107,6 +123,8 @@ def pair_reads(input_path: str, output_path: str, *, po_tag="po", cs_tag="CS", b
             try:
                 for read in bam:
                     counters["reads"] += 1
+                    if not read.has_tag(cs_tag):
+                        counters["reads_without_cs"] += 1
                     files[zlib.crc32(read.query_name[:-1].encode()) % buckets].write(read)
             finally:
                 for f in files:
@@ -143,19 +161,29 @@ def main(argv=None):
     )
     logging.info(
         "Done: %d reads in; %d pairs made; left single: %d without a partner, %d other orientation, "
-        "%d partners disagreeing, %d ambiguous",
+        "%d partners disagreeing, %d without CS, %d ambiguous",
         counters.get("reads", 0),
         counters.get("paired", 0),
         counters.get("no_partner", 0),
         counters.get("other_orientation", 0),
         counters.get("partners_disagree", 0),
+        counters.get("no_cs_tag", 0),
         counters.get("ambiguous", 0),
     )
     if args.counters:
         with open(args.counters, "w") as fh:
-            for key in ("reads", "paired", "no_partner", "other_orientation", "partners_disagree", "ambiguous"):
+            for key in COUNTER_KEYS:
                 fh.write(f"{key}\t{counters.get(key, 0)}\n")
+    if args.require_cs_tag and counters.get("reads_without_cs", 0):
+        logging.error(
+            "%d consensus reads carry no %s tag, but CS-keyed duplicate marking was requested. CS is stamped by "
+            "mark_duplicates_mi --use-umi and must be carried through read_fuser with --umi-tags u3,u5,CS",
+            counters["reads_without_cs"],
+            args.cs_tag,
+        )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -258,7 +258,7 @@ def test_wrong_record_count_fails(tmp_path, monkeypatch):
         return windows, total + 1
 
     monkeypatch.setattr(ubs, "make_windows", fewer)
-    with pytest.raises(RuntimeError, match="index lists"):
+    with pytest.raises(RuntimeError, match="input holds"):
         ubs.unpair_by_strand(inp, str(tmp_path / "out.bam"), workdir=str(tmp_path))
 
 
@@ -274,3 +274,28 @@ def test_main_writes_the_counters(tmp_path):
     lines = counters.read_text().splitlines()
     assert lines[:2] == ["total_records\t5", "supp_or_secondary\t1"]
     assert lines[-1].startswith("pair_orientation_none\t")
+
+
+def test_cram_input_with_crai_is_processed_in_full(tmp_path):
+    """CRAI stores no per-contig counts, so the windows and the record check must not rely on them."""
+    rng = random.Random(7)
+    fasta = tmp_path / "ref.fa"
+    with open(fasta, "w") as fh:
+        for sq in HEADER.to_dict()["SQ"]:
+            fh.write(f">{sq['SN']}\n{''.join(rng.choice('ACGT') for _ in range(sq['LN']))}\n")
+    pysam.faidx(str(fasta))
+    reads = random_reads(3)
+    cram = tmp_path / "in.cram"
+    with pysam.AlignmentFile(str(cram), "wc", header=HEADER, reference_filename=str(fasta)) as out:
+        for r in reads:
+            out.write(r)
+    pysam.index(str(cram))
+    bam = write_indexed_bam(tmp_path / "in.bam", reads)
+    kwargs = {"shard_size": 1000, "workdir": str(tmp_path), "pair_orientation_tag": "po"}
+    c_cram = ubs.unpair_by_strand(str(cram), str(tmp_path / "from_cram.bam"), reference=str(fasta), **kwargs)
+    c_bam = ubs.unpair_by_strand(bam, str(tmp_path / "from_bam.bam"), **kwargs)
+    assert c_cram["total_records"] == len(reads)
+    assert c_cram == c_bam
+    assert [r.split("\t")[:9] for r in records(tmp_path / "from_cram.bam")] == [
+        r.split("\t")[:9] for r in records(tmp_path / "from_bam.bam")
+    ]

@@ -316,3 +316,32 @@ def test_dx_marked_single_strand_reads_are_duplex(tmp_path):
     assert per.loc[duplex_metrics.DUPLEX, "avg_family_size"] == pytest.approx((3 + 1 + 4) / 3)
     assert per.loc[duplex_metrics.SINGLE_STRAND, "n_reads"] == 2
     assert per.loc[duplex_metrics.SINGLETON, "n_reads"] == 1
+
+
+def _paired(hdr, name, pos, *, read1, reverse, mate_reverse, mi):
+    a = _make_read(hdr, name, pos, None, reverse=reverse, mi=mi)
+    a.flag = 1 | 2 | (64 if read1 else 128) | (16 if reverse else 0) | (32 if mate_reverse else 0)
+    a.next_reference_id, a.next_reference_start = 0, 300
+    return a
+
+
+def test_mi_fallback_paired_end_mates_are_one_strand(tmp_path):
+    """Two F1R2 pairs sharing an MI are single-strand; opposite mate strands alone are not duplex."""
+
+    def reads(hdr):
+        out = []
+        for i in range(2):  # two PCR copies, both F1R2: R1 forward, R2 reverse
+            out.append(_paired(hdr, f"f{i}", 100, read1=True, reverse=False, mate_reverse=True, mi=1))
+            out.append(_paired(hdr, f"f{i}", 300, read1=False, reverse=True, mate_reverse=False, mi=1))
+        # MI 2 has one F1R2 and one F2R1 pair (R1 reverse): duplex
+        out.append(_paired(hdr, "a", 120, read1=True, reverse=False, mate_reverse=True, mi=2))
+        out.append(_paired(hdr, "a", 300, read1=False, reverse=True, mate_reverse=False, mi=2))
+        out.append(_paired(hdr, "b", 120, read1=False, reverse=False, mate_reverse=True, mi=2))
+        out.append(_paired(hdr, "b", 300, read1=True, reverse=True, mate_reverse=False, mi=2))
+        return sorted(out, key=lambda r: r.reference_start)
+
+    res = duplex_metrics.collect_family_metrics_from_mi_tags(_write_bam(tmp_path, reads), [(CHROM, 0, CHROM_LEN)], None)
+    per = res["per_category"]
+    assert per.loc[duplex_metrics.SINGLE_STRAND, "n_families"] == 1
+    assert per.loc[duplex_metrics.SINGLE_STRAND, "avg_family_size"] == 4
+    assert per.loc[duplex_metrics.DUPLEX, "n_families"] == 1

@@ -264,18 +264,40 @@ def process_window(task: tuple) -> tuple[str, Counter]:
     return out_path, counters
 
 
+def _cram_record_count(path: str) -> int:
+    """Records in a CRAM, summed from its container headers (CRAI has no per-contig counts)."""
+    for line in pysam.cram_size(path).splitlines():
+        if line.startswith("Number of sequences"):
+            return int(line.split()[-1])
+    raise RuntimeError(f"samtools cram-size did not report a record count for {path}")
+
+
 def make_windows(fin: pysam.AlignmentFile, shard_size: int) -> tuple[list[Window], int]:
-    """The windows to process (contigs without reads are skipped) and the number of records in the index."""
+    """The windows to process and the number of records in the file.
+
+    For BAM the index statistics give per-contig counts, so contigs without reads are skipped. CRAI has
+    no such statistics, so a CRAM gets windows over every contig plus the unplaced reads, and its record
+    count comes from the container headers.
+    """
     windows, total = [], 0
-    for stats in fin.get_index_statistics():
-        if stats.mapped + stats.unmapped == 0:
-            continue
-        total += stats.mapped + stats.unmapped
-        length = fin.get_reference_length(stats.contig)
-        for first in range(1, length + 1, shard_size):
-            windows.append(Window(len(windows), stats.contig, first, min(first + shard_size - 1, length)))
-    if fin.nocoordinate:
+    if fin.is_cram:
+        contigs = list(fin.references)
+        total = _cram_record_count(os.fsdecode(fin.filename))
+        has_unplaced = True
+    else:
+        contigs = []
+        for stats in fin.get_index_statistics():
+            if stats.mapped + stats.unmapped == 0:
+                continue
+            total += stats.mapped + stats.unmapped
+            contigs.append(stats.contig)
         total += fin.nocoordinate
+        has_unplaced = bool(fin.nocoordinate)
+    for contig in contigs:
+        length = fin.get_reference_length(contig)
+        for first in range(1, length + 1, shard_size):
+            windows.append(Window(len(windows), contig, first, min(first + shard_size - 1, length)))
+    if has_unplaced:
         windows.append(Window(len(windows), UNPLACED, 0, 0))
     return windows, total
 
@@ -316,7 +338,7 @@ def unpair_by_strand(
             total.update(counters)
         written = total["total_records"]
         if written != expected:
-            raise RuntimeError(f"wrote {written} records but the index lists {expected}")
+            raise RuntimeError(f"wrote {written} records but the input holds {expected}")
 
         listing = os.path.join(tmp, "windows.fofn")
         with open(listing, "w") as fh:

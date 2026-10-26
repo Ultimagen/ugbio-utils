@@ -9,7 +9,8 @@ The flag is therefore set from the majority: ``nr > nf`` is a reverse read, a ti
 for a mapped read SEQ is stored in reference orientation whatever 0x10 says, so the alignment keeps its meaning.
 
 Records that are left untouched: supplementary and secondary alignments, paired records (they were aligned as
-a pair, so their strand is already set) and records without ``nf``/``nr`` (not consensus reads).
+a pair, so their strand is already set) and records without ``nf``/``nr`` (not consensus reads). Paired
+records are still checked for ``nf``/``nr`` and ``CS``; only their flag is not rewritten.
 
 The input does not have to be sorted. The counters are written to ``--counters`` and the step fails when a
 record has no ``nf``/``nr`` tag, or, with ``--require-cs-tag``, when a consensus read has no ``CS`` tag.
@@ -85,15 +86,15 @@ def process_read(read: pysam.AlignedSegment, counters: Counter) -> None:
     if read.flag & SECONDARY_OR_SUPPLEMENTARY:
         counters["supplementary_or_secondary"] += 1
         return
-    if read.flag & PAIRED:
-        counters["paired_left_alone"] += 1
-        return
     nf, nr = _int_tag(read, "nf"), _int_tag(read, "nr")
     if nf < 0 or nr < 0:
         counters["no_nf_nr_tags"] += 1
         return
     if not _has_string_tag(read, "CS"):
         counters["no_cs_tag"] += 1
+    if read.flag & PAIRED:
+        counters["paired_left_alone"] += 1
+        return
     set_strand(read, counters, nf=nf, nr=nr)
 
 
@@ -133,7 +134,7 @@ def check_counters(counters: Counter, *, require_cs_tag: bool) -> list[str]:
     errors = []
     if counters["no_nf_nr_tags"]:
         errors.append(
-            f"{counters['no_nf_nr_tags']} unpaired records have no nf/nr tags: read_fuser and this step disagree "
+            f"{counters['no_nf_nr_tags']} primary records have no nf/nr tags: read_fuser and this step disagree "
             "about what a consensus read is"
         )
     if require_cs_tag and counters["no_cs_tag"]:

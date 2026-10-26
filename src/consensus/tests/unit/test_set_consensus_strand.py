@@ -150,3 +150,16 @@ def test_main_writes_counters_and_fails_without_cs(tmp_path):
     assert scs.main(base) == 1  # D still has no nf/nr tag
     clean = write_bam(tmp_path / "clean.bam", [r for r in READS if r.query_name not in {"D", "C0"}])
     assert scs.main([clean, str(tmp_path / "out2.bam"), "--counters", str(counters), "--require-cs-tag"]) == 0
+
+
+def test_paired_records_are_checked_for_nf_nr_and_cs(tmp_path):
+    paired = [
+        read("P1", 100, 1 | 64, [("nf", 2), ("nr", 1)]),  # no CS
+        read("P2", 110, 1 | 128, [("CS", "f")]),  # no nf/nr
+    ]
+    inp = write_bam(tmp_path / "in.bam", paired)
+    counters = scs.set_consensus_strand(inp, str(tmp_path / "out.bam"))
+    assert (counters["no_cs_tag"], counters["no_nf_nr_tags"], counters["paired_left_alone"]) == (1, 1, 1)
+    assert len(scs.check_counters(counters, require_cs_tag=True)) == 2
+    with pysam.AlignmentFile(str(tmp_path / "out.bam")) as fin:
+        assert [r.flag for r in fin] == [1 | 64, 1 | 128]

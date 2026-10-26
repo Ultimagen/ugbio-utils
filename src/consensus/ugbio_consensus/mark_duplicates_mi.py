@@ -40,22 +40,11 @@ Usage:
 
 # ruff: noqa: C901, PLR0912, PLR0915, FBT001, FBT002, FBT003
 #
-# The suppressions above are deliberate, and are about provenance rather than style.
-# This module is verified byte-for-byte -- MI, DS and CS on all 12,670,749 records of
-# 606174-L15806-Z0229, plus 55,884 CS links with 0 gained and 0 lost -- against the blob
-# that produced the four validated Omics arms of BIOIN-3068. Splitting process_shard()
-# to satisfy C901/PLR0912/PLR0915, or turning the `use_umi` / `strip_run_id` positionals
-# into keyword-only arguments to satisfy FBT, is a rewrite of code whose *output* is the
-# thing under warranty. If you do refactor it, re-run /data/Runs/BIOIN-3068/cmp_stream.py
-# (MI/DS vs the pre-CS baseline) and cs_links.py (linkage vs the validated blob) first,
-# and note that only a raw `samtools view` diff sees the emitted aux order MI, DS, CS.
-#
-# Since that validation, output changed in four places (and --position-tolerance became whole-file
-# only), all outside the default --use-umi path on primary records: FF/RR families with
-# --orientation-in-key get their own CS; CS links survive --position-tolerance merges; sharded mode
-# never pairs mates further apart than --pad; and a secondary/supplementary record far from its pair
-# (another contig, or beyond --pad) no longer takes its pair's MI/DS/CS in whole-file mode (see
-# _takes_family_tags).
+# Not refactored for these rules on purpose: the default --use-umi output (MI, DS, CS) is verified
+# byte-for-byte against the validated BIOIN-3068 runs (606174-L15806-Z0229, 12.7M records). Re-run
+# /data/Runs/BIOIN-3068/cmp_stream.py and cs_links.py after any refactor. Output has changed since
+# only outside that default path: FF/RR CS with --orientation-in-key, --position-tolerance, sharded
+# --pad, and secondary/supplementary records far from their pair (see _takes_family_tags).
 
 import argparse
 import bisect

@@ -440,6 +440,17 @@ def collect_family_metrics_from_strand_tags(
     }
 
 
+def _molecule_strand(read) -> str:
+    """Strand of the source molecule: the read's own strand, or for a paired read the strand of R1.
+
+    The two mates of one pair align to opposite strands, so their alignment strands alone would make
+    every paired-end family look duplex. R1's strand is the pair orientation (F1R2 forward, F2R1 reverse).
+    """
+    if read.is_paired and read.is_read2:
+        return "-" if read.mate_is_reverse else "+"
+    return "-" if read.is_reverse else "+"
+
+
 def collect_family_metrics_from_mi_tags(
     cram_path: str,
     intervals: list[tuple[str, int, int]],
@@ -450,8 +461,9 @@ def collect_family_metrics_from_mi_tags(
     """Fallback: classify families by grouping reads on the ``MI`` tag.
 
     Use only for consensus/duplicate-marked CRAMs that lack the ``nf``/``nr`` strand tags. A
-    family is *duplex* if its reads span both strands, *single_strand* if all
-    reads share one strand, and *singleton* if it has a single read. This mirrors
+    family is *duplex* if its reads span both molecule strands, *single_strand* if all
+    reads share one, and *singleton* if it has a single read. A paired read counts with the
+    strand of its R1 (see :func:`_molecule_strand`), so the two mates of one pair are one strand. This mirrors
     the historical MI-tag analysis; :func:`collect_family_metrics_from_strand_tags`
     is preferred (exact, per-read, and yields coverage).
 
@@ -487,7 +499,7 @@ def collect_family_metrics_from_mi_tags(
                 continue
             if _overlap_with_intervals(read, starts_by_chrom[chrom_intervals[0][0]], chrom_intervals) <= 0:
                 continue
-            mi_strands[read.get_tag("MI")].append("-" if read.is_reverse else "+")
+            mi_strands[read.get_tag("MI")].append(_molecule_strand(read))
 
     sizes: dict[str, list[int]] = {c: [] for c in CATEGORIES}
     for strands in mi_strands.values():

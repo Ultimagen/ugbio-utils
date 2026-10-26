@@ -152,3 +152,23 @@ def test_cli_writes_a_counters_file(tmp_path):
     pcr.main([str(inp), str(out), "--counters", str(cnt), "--buckets", "3"])
     lines = dict(line.split("\t") for line in cnt.read_text().split("\n") if line)
     assert (lines["reads"], lines["paired"], lines["no_partner"]) == ("3", "1", "1")
+
+
+def test_partners_without_cs_are_not_paired(tmp_path):
+    """Two strand reads with no CS share a stem, but nothing shows they come from one molecule."""
+    got, counters = run(tmp_path, strand_pair("m", cs=None), buckets=2)
+    assert sorted(r.query_name for r in got) == ["m0", "m1"]
+    assert {r.flag for r in got} == {4}
+    assert (counters["no_cs_tag"], counters["reads_without_cs"], counters.get("paired", 0)) == (2, 2, 0)
+
+
+def test_cli_require_cs_tag_fails_on_a_read_without_cs(tmp_path):
+    inp, out, cnt = tmp_path / "in.bam", tmp_path / "out.bam", tmp_path / "c.tsv"
+    with pysam.AlignmentFile(str(inp), "wb", header=HEADER) as fh:
+        for rec in strand_pair("z") + [read("solo0", FWD_SEQ, FWD_QUAL, cs=None)]:
+            fh.write(rec)
+    base = [str(inp), str(out), "--counters", str(cnt), "--buckets", "3"]
+    assert pcr.main(base) == 0
+    assert pcr.main(base + ["--require-cs-tag"]) == 1
+    lines = dict(line.split("\t") for line in cnt.read_text().split("\n") if line)
+    assert (lines["paired"], lines["reads_without_cs"]) == ("1", "1")
