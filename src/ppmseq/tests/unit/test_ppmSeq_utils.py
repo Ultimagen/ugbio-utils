@@ -16,6 +16,7 @@ from ugbio_ppmseq.ppmSeq_utils import (
     PpmseqAdapterVersions,
     PpmseqCategories,
     PpmseqStrandVcfAnnotator,
+    adapter_version_has_end_tag,
     add_strand_ratios_and_categories_to_featuremap,
     all_reads_have_sr_tag,
     build_headline_table,
@@ -238,6 +239,44 @@ def test_plot_strand_ratio_category(tmp_path):
     assert (tmp_path / "cat.png").exists()
 
 
+@pytest.mark.parametrize(
+    ("adapter_version", "expected"),
+    [
+        ("v1", True),
+        ("legacy_v5", True),
+        ("Solaris2_ppmSeq", True),
+        ("Solaris2_ppmSeq_plus", False),
+        (PpmseqAdapterVersions.SOLARIS2_PPMSEQ_PLUS, False),
+    ],
+)
+def test_adapter_version_has_end_tag(adapter_version, expected):
+    assert adapter_version_has_end_tag(adapter_version) is expected
+
+
+def test_adapter_version_has_end_tag_rejects_unknown():
+    with pytest.raises(AssertionError):
+        adapter_version_has_end_tag("Solaris2_ppmSeq_plus_v8.5")
+
+
+def _legend_labels(ax):
+    return [t.get_text() for t in ax.get_legend().get_texts()]
+
+
+@pytest.mark.parametrize(
+    ("adapter_version", "expect_end_bars"),
+    [("v1", True), ("Solaris2_ppmSeq", True), ("Solaris2_ppmSeq_plus", False)],
+)
+def test_plot_strand_ratio_category_end_bars_by_adapter_version(adapter_version, expect_end_bars):
+    """ppmSeq_plus has no end loop, so the category plot must show the start-tag bars only."""
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    _, ax = plt.subplots()
+    plot_strand_ratio_category(adapter_version, df_reads, ax=ax)
+    labels = _legend_labels(ax)
+    assert "Start tag strand ratio category" in labels
+    assert ("End tag strand ratio category" in labels) is expect_end_bars
+    plt.close("all")
+
+
 def _category_bar_xticks(ax):
     """Return the x-axis tick labels actually rendered on a seaborn barplot."""
     return [t.get_text() for t in ax.get_xticklabels()]
@@ -417,6 +456,27 @@ def test_ppmseq_qc_analysis(tmp_path):
         generate_report=False,
     )
     assert (tmp_path / "TEST_v1.ppmSeq.applicationQC.h5").exists()
+
+
+def test_ppmseq_qc_analysis_plus_keeps_hdf5_contents(tmp_path):
+    """The ppmSeq_plus change is report-level only: the HDF5 bundle matches v1."""
+    for adapter_version in ("v1", "Solaris2_ppmSeq_plus"):
+        ppmseq_qc_analysis(
+            adapter_version,
+            subsampled_sam=str(subsampled_sam),
+            output_path=str(tmp_path),
+            output_basename=adapter_version,
+            generate_report=False,
+        )
+    h5_v1, h5_plus = (tmp_path / f"{v}.ppmSeq.applicationQC.h5" for v in ("v1", "Solaris2_ppmSeq_plus"))
+    with pd.HDFStore(h5_v1, "r") as s_v1, pd.HDFStore(h5_plus, "r") as s_plus:
+        assert sorted(s_v1.keys()) == sorted(s_plus.keys())
+        for key in s_v1.keys():
+            obj_v1, obj_plus = s_v1[key], s_plus[key]
+            if isinstance(obj_v1, pd.DataFrame):
+                pd.testing.assert_frame_equal(obj_v1, obj_plus)
+            else:
+                pd.testing.assert_series_equal(obj_v1, obj_plus)
 
 
 def test_add_strand_ratios_and_categories_to_featuremap(tmp_path):
