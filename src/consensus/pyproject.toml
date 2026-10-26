@@ -24,6 +24,8 @@ consensus_report = "ugbio_consensus.consensus_report:main"
 mark_duplicates_mi = "ugbio_consensus.mark_duplicates_mi:main"
 mark_duplex_consensus = "ugbio_consensus.mark_duplex_consensus:main"
 pair_consensus_reads = "ugbio_consensus.pair_consensus_reads:main"
+set_consensus_strand = "ugbio_consensus.set_consensus_strand:main"
+unpair_rename_by_strand = "ugbio_consensus.unpair_rename_by_strand:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true

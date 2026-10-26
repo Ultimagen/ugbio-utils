@@ -142,8 +142,36 @@ Needs UA 4.x (`--unpaired-cost`, `--max-proper-tlen`); UA 3.x has no paired mode
 read as is, with identical alignments. UA sets the strand and pair flags, so do not run the nf/nr strand
 step on paired reads.
 
-## consensus_report
+## unpair_rename_by_strand
 
+Turns a paired-end, duplicate-marked BAM/CRAM into a single-end one whose reads carry their strand, so the
+consensus tool builds every family per strand. Each primary read gets `0` (forward) or `1` (reverse) appended
+to its name and to `MI`; the pair flags and mate fields are cleared. `CS` is left as it is, since it is the
+only link between the two strands of a molecule. Supplementary and secondary records are written unchanged.
+
+```bash
+unpair_rename_by_strand in.bam out.bam -T ref.fa --threads 8 --pair-orientation-tag po \
+    --counters unpair_rename_counters.txt
+```
+
+With `--pair-orientation-tag` the orientation of each pair (`F1R2`, `F2R1`, `FF`, `RR`) is written first, by
+pairing the mates on name within `--pair-window` bases of the sorted input; reads without a mate in reach get
+no tag. The file is cut into `--shard-size` windows that run in parallel, and the output does not depend on the
+window size. The input needs an index (built when missing).
+
+## set_consensus_strand
+
+read_fuser emits every consensus read reference-forward. This sets 0x10 from the `nf`/`nr` majority (`nr > nf`
+is reverse, a tie is forward) and changes nothing else. Supplementary, secondary and paired records and reads
+without `nf`/`nr` are left alone.
+
+```bash
+set_consensus_strand consensus.bam consensus.strand.bam --counters strand_flag_counters.txt --require-cs-tag
+```
+
+Exit status is 1 if a record has no `nf`/`nr`, or, with `--require-cs-tag`, if a consensus read has no `CS`.
+
+## consensus_report
 The consensus step (`read_fuser`) fuses the reads of each UMI/MI family into a
 single consensus read and records, on that read:
 
@@ -251,6 +279,8 @@ Outputs (alongside `--output`):
 | `on_target.py` | Genome-wide and optional on-target coverage from a bedGraph + targets BED. |
 | `consensus_log.py` | Parse the consensus tool stdout log for performance counters. |
 | `pair_consensus_reads.py` | Pairs the strand-consensus reads of a pair into unaligned R1/R2 records for UA. |
+| `unpair_rename_by_strand.py` | Unpairs reads, appends the strand digit to QNAME/`MI`, optionally writes the pair orientation tag. |
+| `set_consensus_strand.py` | Sets the consensus reads' reverse flag from the `nf`/`nr` majority. |
 | `consensus_report.py` | CLI orchestration: read local inputs, compute metrics, write the HTML report + CSVs. |
 
 ## Requirements
