@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 description = "Ultima Genomics consensus (ReadFuserAlignSort) duplicate marking, performance & duplex reports"
 authors = [
     { name = "Gat Krieger", email = "gat.krieger@ultimagen.com" },
+    { name = "Doron Shem-Tov", email = "doron.shemtov@ultimagen.com" },
 ]
 readme = "README.consensus.md"
 dependencies = [

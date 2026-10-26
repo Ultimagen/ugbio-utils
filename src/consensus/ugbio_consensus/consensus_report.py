@@ -66,12 +66,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_core.sorter_utils import read_sorter_statistics_csv
 
 from ugbio_consensus import duplex_metrics
 from ugbio_consensus.consensus_log import parse_consensus_log
-from ugbio_consensus.on_target import bed_covered_size, compute_coverage_from_bedgraph, sorted_bed
+from ugbio_consensus.on_target import compute_coverage_from_bedgraph
 
 # Sorter-stats metrics surfaced in the QC table (present in RFAS output CSVs).
 DEFAULT_QC_METRICS = [
@@ -196,8 +197,9 @@ def read_targets_bed(targets_bed: str, tmp_dir: str) -> tuple[str, int]:
         Sorted, merged BED path and merged target size in bp.
     """
     os.makedirs(tmp_dir, exist_ok=True)
-    sorted_path = sorted_bed(targets_bed, os.path.join(tmp_dir, "targets_sorted.bed"))
-    return sorted_path, bed_covered_size(sorted_path)
+    bed_utils = BedUtils()
+    sorted_path = bed_utils.sort_and_merge_bed(targets_bed, os.path.join(tmp_dir, "targets_sorted.bed"))
+    return sorted_path, bed_utils.merged_bed_size(sorted_path)
 
 
 def bed_intervals_on_chrom(bed_path: str, chrom: str | None) -> list[tuple[str, int, int]]:

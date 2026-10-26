@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -11,6 +12,27 @@ from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.logger import logger
 
 warnings.filterwarnings("ignore")
+
+
+def _run_pipefail(cmd: str) -> str:
+    """Run a shell pipeline with ``pipefail`` and return its stripped stdout.
+
+    ``pipefail`` matters for pipelines that end in ``awk``: it exits 0 even when an
+    upstream ``zcat`` or ``bedtools`` has died, so without it a truncated stream
+    would be reported as a valid, silently-too-small result.
+
+    Raises
+    ------
+    subprocess.CalledProcessError
+        If any stage of the pipeline fails.
+    """
+    completed = subprocess.run(  # noqa: S603
+        ["bash", "-o", "pipefail", "-c", cmd],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout.strip()
 
 
 class BedUtils:
@@ -673,3 +695,117 @@ class BedUtils:
         coverage_cmd += f" > {output_bed}"
 
         self.__execute(coverage_cmd)
+
+    def merged_bed_size(self, bed_path: str) -> int:
+        """Return the number of bp covered by a BED, merging overlaps.
+
+        Unlike :meth:`count_bases_in_bed_file`, overlapping intervals are counted once.
+
+        Parameters
+        ----------
+        bed_path : str
+            Path to a BED file.
+
+        Returns
+        -------
+        int
+            Sum of merged (non-overlapping) interval lengths.
+        """
+        merge = f"sort -k1,1 -k2,2n {shlex.quote(bed_path)} | {self.bedtools} merge -i -"
+        cmd = f"{merge} | awk '{{s+=$3-$2}} END{{print s+0}}'"
+        return int(_run_pipefail(cmd) or 0)
+
+    def sort_and_merge_bed(self, bed_path: str, output_path: str) -> str:
+        """Write a coordinate-sorted, merged (disjoint) copy of ``bed_path``.
+
+        Overlapping intervals are merged so that ``bedtools intersect`` against the
+        result counts each base once - consistent with :meth:`merged_bed_size`, which
+        measures the same union. Only the ``chrom``/``start``/``end`` columns are kept.
+        Sorting is lexicographic by chromosome name.
+
+        Parameters
+        ----------
+        bed_path : str
+            Input BED.
+        output_path : str
+            Where to write the sorted, merged BED.
+
+        Returns
+        -------
+        str
+            ``output_path``.
+        """
+        _run_pipefail(
+            f"sort -k1,1 -k2,2n {shlex.quote(bed_path)} | {self.bedtools} merge -i - > {shlex.quote(output_path)}"
+        )
+        return output_path
+
+    def check_bed_disjoint(self, bed_path: str) -> None:
+        """Raise if ``bed_path`` has overlapping intervals (row order does not matter).
+
+        Raises
+        ------
+        ValueError
+            If any two intervals on the same chromosome overlap.
+        """
+        by_chrom: dict[str, list[tuple[int, int]]] = {}
+        with open(bed_path, encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip() or line.startswith(("#", "track", "browser")):
+                    continue
+                chrom, start, end = line.split()[:3]
+                by_chrom.setdefault(chrom, []).append((int(start), int(end)))
+        for chrom, intervals in by_chrom.items():
+            max_end = -1
+            for start, end in sorted(intervals):
+                if start < max_end:
+                    raise ValueError(
+                        f"{bed_path} has overlapping intervals on {chrom}; "
+                        "prepare it with sort_and_merge_bed() so bases are not double counted"
+                    )
+                max_end = max(max_end, end)
+
+    def sum_bedgraph_weighted_bases(self, bedgraph: str, restrict_to_bed: str | None = None) -> int:
+        """Sum ``(end - start) * value`` over a bedGraph, optionally restricted to a BED.
+
+        The bedGraph is streamed once (plain or gzipped), so it may be large.
+
+        Parameters
+        ----------
+        bedgraph : str
+            Path of the bedGraph, plain or ``.gz``.
+        restrict_to_bed : str | None, optional
+            Non-overlapping BED (see :meth:`sort_and_merge_bed`). If given, only the
+            parts of the bedGraph intersecting it are summed. It need not be in the
+            same chromosome order as the bedGraph.
+
+        Returns
+        -------
+        int
+            The weighted base sum (e.g. total sequenced bases for a depth bedGraph).
+
+        Raises
+        ------
+        ValueError
+            If ``restrict_to_bed`` has overlapping intervals.
+        subprocess.CalledProcessError
+            If any stage of the pipeline fails (e.g. missing bedGraph).
+        """
+        source = f"zcat {shlex.quote(bedgraph)}" if bedgraph.endswith(".gz") else f"cat {shlex.quote(bedgraph)}"
+        # %.0f, not `print`: the sums reach ~2.5e10 and awk's default OFMT would render
+        # them in scientific notation, which int() cannot parse.
+        sum_weighted = "awk '{s+=($3-$2)*$4} END{printf \"%.0f\\n\", s+0}'"
+        if restrict_to_bed is None:
+            return int(_run_pipefail(f"{source} | {sum_weighted}") or 0)
+
+        # bedtools intersect emits one clipped block per overlapping interval, so an
+        # unmerged BED would count bases in overlaps more than once.
+        self.check_bed_disjoint(restrict_to_bed)
+        # `bedtools intersect -sorted` is NOT usable here. It requires both files in the
+        # same chromosome order, but a bedGraph is in reference/CRAM-header order while
+        # the BED is `sort -k1,1` (lexicographic), so bedtools aborts at chr10 - which,
+        # with its non-zero status swallowed mid-pipeline, silently truncated the sum to
+        # its chr1 prefix. Without -sorted the BED is loaded into memory and the result
+        # is order-independent.
+        intersect = f"{self.bedtools} intersect -a - -b {shlex.quote(restrict_to_bed)}"
+        return int(_run_pipefail(f"{source} | {intersect} | {sum_weighted}") or 0)

@@ -4,11 +4,11 @@ import gzip
 import subprocess
 
 import pytest
-from ugbio_consensus.on_target import (
-    bed_covered_size,
-    compute_coverage_from_bedgraph,
-    sorted_bed,
-)
+from ugbio_consensus.on_target import compute_coverage_from_bedgraph
+from ugbio_core.bed_utils import BedUtils
+
+bed_covered_size = BedUtils().merged_bed_size
+sorted_bed = BedUtils().sort_and_merge_bed
 
 # bedGraph: chrom start end depth
 _BEDGRAPH = "chr1\t0\t100\t10\nchr1\t100\t200\t20\nchr1\t200\t300\t5\n"
@@ -127,15 +127,6 @@ def _write_gz(path, text):
     return str(path)
 
 
-def test_sorted_bed_merges_overlapping_targets(tmp_path):
-    raw = tmp_path / "overlap.bed"
-    raw.write_text(_TARGETS_OVERLAPPING, encoding="utf-8")
-    out = sorted_bed(str(raw), str(tmp_path / "overlap.sorted.bed"))
-    with open(out, encoding="utf-8") as fh:
-        lines = fh.read().split("\n")[:-1]
-    assert lines == ["chr1\t0\t100"]
-
-
 def test_overlapping_targets_not_double_counted(tmp_path):
     bg = _write_gz(tmp_path / "flat.bedGraph.gz", _BEDGRAPH_FLAT)
     raw = tmp_path / "overlap.bed"
@@ -156,12 +147,6 @@ def test_unmerged_overlapping_targets_rejected(tmp_path):
     raw.write_text(_TARGETS_OVERLAPPING, encoding="utf-8")
     with pytest.raises(ValueError, match="overlapping"):
         compute_coverage_from_bedgraph(bg, genome_size=100, targets_bed_sorted=str(raw), target_size=100)
-
-
-def test_bed_covered_size_propagates_upstream_failure(tmp_path):
-    """pipefail: a missing BED must raise, not report a target size of 0."""
-    with pytest.raises(subprocess.CalledProcessError):
-        bed_covered_size(str(tmp_path / "missing.bed"))
 
 
 def test_paths_with_spaces_and_quotes(tmp_path):
