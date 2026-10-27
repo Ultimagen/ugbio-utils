@@ -143,6 +143,7 @@ STRAND_RATIO_UPPER_THRESH = 0.73
 MIN_TOTAL_HMER_LENGTHS_IN_LOOPS = 4
 MAX_TOTAL_HMER_LENGTHS_IN_LOOPS = 8
 MIN_STEM_END_MATCHED_LENGTH = 11  # the stem is 12bp, 1 indel allowed as tolerance
+NO_TRIMMING_FORMAT = "no trimming"  # Trimmer format name of the ppmSeq_plus st-tag continue chain
 BASE_PATH = Path(__file__).parent
 REPORTS_DIR = "reports"
 
@@ -849,8 +850,25 @@ def read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv: str):
         If the columns are not as expected
     """
     df_trimmer_failure_codes = read_trimmer_failure_codes(
-        trimmer_failure_codes_csv, include_failed_rsq=False, add_total=True
+        trimmer_failure_codes_csv, include_failed_rsq=False, add_total=False
     )
+    # ppmSeq_plus "no trimming" rows are the st-tag `continue` chain: "comparison failed" only
+    # routes the read to the next st value, it never rejects it, so they are not failures.
+    df_trimmer_failure_codes = df_trimmer_failure_codes[df_trimmer_failure_codes["format"] != NO_TRIMMING_FORMAT]
+    # PCT_failed_total: reads rejected by Trimmer / reads into Trimmer for this read group, RSQ-failed
+    # reads excluded from both (same denominator as the other PCT_failed_* rows).
+    failed_read_count = df_trimmer_failure_codes["failed_read_count"].sum()
+    total_read_count = df_trimmer_failure_codes["total_read_count"].iloc[0]
+    total_row = pd.DataFrame(
+        {
+            "format": [df_trimmer_failure_codes["format"].iloc[0]],
+            "failed_read_count": [failed_read_count],
+            "total_read_count": [total_read_count],
+            "PCT_failure": [100 * failed_read_count / total_read_count],
+        },
+        index=pd.MultiIndex.from_tuples([("total", "total")], names=["segment", "reason"]),
+    )
+    df_trimmer_failure_codes = pd.concat([df_trimmer_failure_codes, total_row])
     adapter_dimers_index = ("insert", "sequence was too short")
     adapter_dimers = (
         df_trimmer_failure_codes.reindex([adapter_dimers_index]).fillna(0).loc[adapter_dimers_index, "PCT_failure"]

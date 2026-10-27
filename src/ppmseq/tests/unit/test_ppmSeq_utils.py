@@ -52,6 +52,9 @@ expected_output_featuremap_legacy_v5 = (
 trimmer_failure_codes_csv_ppmseq_v1_incl_failed_rsq = (
     inputs_dir / "412884-L6860-Z0293-CATGTGAGCGGTGAT_trimmer-failure_codes.csv"
 )
+trimmer_failure_codes_csv_ppmseq_plus = (
+    inputs_dir / "603411-L16089-Z0375-CATGCTGAATGTGTGAT_ppmSeq_plus_v8_9_trimmer-failure_codes.csv"
+)
 sorter_stats_csv = inputs_dir / "ppmseq_sr_tag" / "Z0263_sorter_stats.csv"
 
 
@@ -83,6 +86,22 @@ def test_read_trimmer_failure_codes_ppmseq():
     # Regression: normalization of the per-category PCT columns (adapter-dimer fraction
     # is a critical QC metric per the review).
     assert np.isclose(df_metrics.loc["PCT_failed_adapter_dimers", "value"], 0.068886, atol=1e-4)
+    # 7 non-RSQ failure rows sum to 7,666,299 of 1,267,433,062 - 169,314,209 RSQ = 1,098,118,853.
+    assert df_metrics.loc["PCT_failed_total", "value"] == pytest.approx(100 * 7666299 / 1098118853)
+    assert df_metrics.loc["PCT_failed_total", "value"] == pytest.approx(0.698130, abs=1e-6)
+
+
+def test_read_trimmer_failure_codes_ppmseq_plus_failed_total():
+    df_trimmer_failure_codes, df_metrics = read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv_ppmseq_plus)
+    # The two "no trimming" rows (st-tag continue chain) are not rejections and must not count.
+    assert "no trimming" not in set(df_trimmer_failure_codes["format"])
+    # Only 200,764 "insert too short" reads rejected, of 95,990,888 - 14,932,854 RSQ = 81,058,034
+    # (= sorter PF_Barcode_reads; matches sorter PCT_PF_Unmatched_Barcode_reads 0.2476793355).
+    assert df_trimmer_failure_codes.loc[("total", "total"), "failed_read_count"] == 200764
+    assert df_trimmer_failure_codes.loc[("total", "total"), "total_read_count"] == 81058034
+    assert df_metrics.loc["PCT_failed_total", "value"] == pytest.approx(100 * 200764 / 81058034)
+    assert df_metrics.loc["PCT_failed_total", "value"] == pytest.approx(0.2476793355, abs=1e-9)
+    assert df_metrics.loc["PCT_failed_adapter_dimers", "value"] == pytest.approx(0.2476793355, abs=1e-9)
 
 
 def test_read_tags_from_subsampled_sam():
