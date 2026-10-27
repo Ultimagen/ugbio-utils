@@ -7,8 +7,10 @@ import numpy as np
 import pandas as pd
 import pysam
 import pytest
+from ugbio_ppmseq import ppmSeq_utils
 from ugbio_ppmseq.ppmSeq_utils import (
     ET_TAG,
+    MR_TAG,
     SORTER_STATS_KEYS_TO_SHOW,
     SR_TAG,
     ST_TAG,
@@ -17,6 +19,7 @@ from ugbio_ppmseq.ppmSeq_utils import (
     PpmseqCategories,
     PpmseqStrandVcfAnnotator,
     adapter_version_has_end_tag,
+    adapter_version_strand_ratio_tag,
     add_strand_ratios_and_categories_to_featuremap,
     all_reads_have_sr_tag,
     build_headline_table,
@@ -32,11 +35,16 @@ from ugbio_ppmseq.ppmSeq_utils import (
     ppmseq_qc_analysis,
     read_tags_from_subsampled_sam,
     read_trimmer_failure_codes_ppmseq,
+    select_strand_ratio_tag,
 )
 
 inputs_dir = Path(__file__).parent.parent / "resources"
 subsampled_sam = inputs_dir / "ppmseq_sr_tag" / "Z0263_sample.sam.gz"
 subsampled_sam_no_sr = inputs_dir / "ppmseq_sr_tag" / "Z0263_sample_no_sr.sam.gz"
+# Z0263_sample.sam.gz with sr renamed to mr (mr only), and with mr = original sr plus
+# sr = 1 - original (both tags, distinguishable).
+subsampled_sam_mr = inputs_dir / "ppmseq_sr_tag" / "Z0263_sample_mr.sam.gz"
+subsampled_sam_mr_sr = inputs_dir / "ppmseq_sr_tag" / "Z0263_sample_mr_sr.sam.gz"
 input_featuremap_legacy_v5 = inputs_dir / "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.vcf.gz"
 expected_output_featuremap_legacy_v5 = (
     inputs_dir / "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.with_strand_ratios.vcf.gz"
@@ -256,6 +264,143 @@ def test_adapter_version_has_end_tag(adapter_version, expected):
 def test_adapter_version_has_end_tag_rejects_unknown():
     with pytest.raises(AssertionError):
         adapter_version_has_end_tag("Solaris2_ppmSeq_plus_v8.5")
+
+
+def test_read_tags_from_subsampled_sam_mr():
+    """The mr fixture is Z0263_sample.sam.gz with sr renamed to mr: mr carries the original
+    sr values and sr is NaN everywhere."""
+    df_sr = read_tags_from_subsampled_sam(str(subsampled_sam))
+    df_mr = read_tags_from_subsampled_sam(str(subsampled_sam_mr))
+    assert df_mr[SR_TAG].isna().all()
+    np.testing.assert_allclose(df_mr[MR_TAG].to_numpy(), df_sr[SR_TAG].to_numpy(), rtol=1e-6)
+    assert df_sr[MR_TAG].isna().all()
+    assert has_sr_tag(df_mr, tag=MR_TAG) and all_reads_have_sr_tag(df_mr, tag=MR_TAG)
+    assert not has_sr_tag(df_mr) and not all_reads_have_sr_tag(df_mr)
+
+
+@pytest.mark.parametrize(
+    ("adapter_version", "expected"),
+    [
+        ("v1", SR_TAG),
+        ("legacy_v5", SR_TAG),
+        ("Solaris2_ppmSeq", SR_TAG),
+        ("Solaris2_ppmSeq_plus", MR_TAG),
+        (PpmseqAdapterVersions.SOLARIS2_PPMSEQ_PLUS, MR_TAG),
+    ],
+)
+def test_adapter_version_strand_ratio_tag(adapter_version, expected):
+    assert adapter_version_strand_ratio_tag(adapter_version) == expected
+
+
+@pytest.mark.parametrize(
+    ("adapter_version", "sam", "expected"),
+    [
+        ("Solaris2_ppmSeq_plus", subsampled_sam_mr, MR_TAG),
+        ("Solaris2_ppmSeq_plus", subsampled_sam_mr_sr, MR_TAG),
+        # No read carries mr: ppmSeq_plus falls back to sr.
+        ("Solaris2_ppmSeq_plus", subsampled_sam, SR_TAG),
+        ("v1", subsampled_sam_mr_sr, SR_TAG),
+        ("Solaris2_ppmSeq", subsampled_sam_mr_sr, SR_TAG),
+    ],
+)
+def test_select_strand_ratio_tag(adapter_version, sam, expected):
+    df_reads = read_tags_from_subsampled_sam(str(sam))
+    assert select_strand_ratio_tag(adapter_version, df_reads) == expected
+
+
+@pytest.mark.parametrize(
+    ("tag", "expected_xlabel"), [(SR_TAG, "Strand Ratio (sr)"), (MR_TAG, "Strand Mixture Ratio (mr)")]
+)
+def test_plot_sr_histogram_plots_requested_tag(tag, expected_xlabel):
+    """On the fixture where sr = 1 - mr, the plotted line must be the histogram of the
+    requested tag (and not of the other one), and the x-axis label must name it."""
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam_mr_sr))
+    other = MR_TAG if tag == SR_TAG else SR_TAG
+    _, ax = plt.subplots()
+    plot_sr_histogram(df_reads, ax=ax, tag=tag)
+    plotted = ax.lines[0].get_ydata()
+    edges = np.arange(0.0, 1.01, 0.01)
+
+    def _percent_hist(values):
+        counts, _ = np.histogram(values.clip(edges[0], edges[-1]), bins=edges)
+        return 100.0 * counts / len(values)
+
+    np.testing.assert_allclose(plotted, _percent_hist(df_reads[tag]))
+    assert not np.allclose(plotted, _percent_hist(df_reads[other]))
+    assert ax.get_xlabel() == expected_xlabel
+    plt.close("all")
+
+
+def _run_qc_capturing_report_inputs(monkeypatch, tmp_path, adapter_version, sam):
+    """Run ppmseq_qc_analysis with the notebook execution stubbed out. Returns the papermill
+    parameters and the (tag, title) the strand-ratio histogram was plotted with."""
+    captured = {}
+    original_plot = ppmSeq_utils.plot_sr_histogram
+
+    def _plot_spy(df_reads, title="", output_filename=None, ax=None, tag=SR_TAG):
+        captured["hist_tag"] = tag
+        captured["hist_title"] = title
+        return original_plot(df_reads, title=title, output_filename=output_filename, ax=ax, tag=tag)
+
+    def _report_spy(template_notebook_path, parameters, output_report_html_path, tmp_files):
+        captured["parameters"] = parameters
+
+    monkeypatch.setattr(ppmSeq_utils, "plot_sr_histogram", _plot_spy)
+    monkeypatch.setattr(ppmSeq_utils, "generate_report_func", _report_spy)
+    ppmseq_qc_analysis(
+        adapter_version,
+        subsampled_sam=str(sam),
+        output_path=str(tmp_path),
+        output_basename="TEST",
+    )
+    plt.close("all")
+    return captured
+
+
+@pytest.mark.parametrize(
+    ("adapter_version", "sam", "expected_tag", "expected_fallback"),
+    [
+        ("Solaris2_ppmSeq_plus", subsampled_sam_mr, MR_TAG, False),
+        ("Solaris2_ppmSeq_plus", subsampled_sam_mr_sr, MR_TAG, False),
+        ("Solaris2_ppmSeq_plus", subsampled_sam, SR_TAG, True),
+        ("v1", subsampled_sam_mr_sr, SR_TAG, False),
+        ("Solaris2_ppmSeq", subsampled_sam, SR_TAG, False),
+    ],
+)
+def test_ppmseq_qc_analysis_strand_ratio_tag(
+    monkeypatch, tmp_path, adapter_version, sam, expected_tag, expected_fallback
+):
+    """ppmSeq_plus plots mr (falling back to sr, visibly, when no read has mr); every other
+    adapter version plots sr. The notebook is told which tag it is describing."""
+    captured = _run_qc_capturing_report_inputs(monkeypatch, tmp_path, adapter_version, sam)
+    assert captured["hist_tag"] == expected_tag
+    assert captured["parameters"]["strand_ratio_tag"] == expected_tag
+    assert captured["parameters"]["strand_ratio_tag_fallback"] is expected_fallback
+    assert captured["parameters"]["sr_hist_png"] is not None
+    assert (f"no {MR_TAG} tag found" in captured["hist_title"]) is expected_fallback
+    if expected_tag == MR_TAG:
+        assert "strand mixture ratio" in captured["hist_title"]
+
+
+def test_ppmseq_qc_analysis_plus_mr_only_gates_sections_on_mr(monkeypatch, tmp_path):
+    """On the mr-only fixture (no sr at all) the ppmSeq_plus report still gets its
+    strand-ratio histogram, and UNDETERMINED is suppressed because every read has mr."""
+    calls = {}
+    original = ppmSeq_utils.plot_strand_ratio_category
+
+    def _category_spy(*args, sr_present=False, **kwargs):
+        calls["sr_present"] = sr_present
+        return original(*args, sr_present=sr_present, **kwargs)
+
+    monkeypatch.setattr(ppmSeq_utils, "plot_strand_ratio_category", _category_spy)
+    captured = _run_qc_capturing_report_inputs(monkeypatch, tmp_path, "Solaris2_ppmSeq_plus", subsampled_sam_mr)
+    assert calls["sr_present"] is True
+    assert captured["parameters"]["sr_hist_png"] is not None
+    # Classic adapter versions look at sr, which this fixture lacks: no histogram.
+    captured_v1 = _run_qc_capturing_report_inputs(monkeypatch, tmp_path / "v1", "v1", subsampled_sam_mr)
+    assert "hist_tag" not in captured_v1
+    assert captured_v1["parameters"]["sr_hist_png"] is None
+    assert calls["sr_present"] is False
 
 
 def _legend_labels(ax):

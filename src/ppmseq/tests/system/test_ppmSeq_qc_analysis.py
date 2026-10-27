@@ -166,6 +166,10 @@ def test_ppmseq_qc_report_solaris2_ppmseq_matches_v1(tmp_path, subsampled_sam):
             "Z0263_sample.sam.gz",
             ("3. Overall strand-ratio distribution", "4. Read-length distribution", "7.3 Read structure"),
         ),
+        (
+            "Z0263_sample_mr.sam.gz",
+            ("3. Overall strand-ratio distribution", "4. Read-length distribution", "7.3 Read structure"),
+        ),
         ("Z0263_sample_no_sr.sam.gz", ("3. Read-length distribution", "6.3 Read structure")),
     ],
 )
@@ -182,6 +186,38 @@ def test_ppmseq_qc_report_ppmseq_plus_has_no_end_tag(tmp_path, resources_dir, sa
         assert header in text
     assert _embeds(text, "ppmSeq_plus_illustration.png")
     assert not _embeds(text, "ppmSeq_v1_illustration.png")
+
+
+MR_SECTION_TEXT = "The <strong>strand mixture ratio</strong> tag (<code>mr</code>)"
+MR_CAPTION = "Strand Mixture Ratio (mr) distribution across all reads"
+SR_SECTION_TEXT = "The <strong>strand ratio</strong> tag (<code>sr</code>)"
+SR_CAPTION = "Strand Ratio distribution across all reads"
+FALLBACK_NOTE = "No read carries the mr tag, so the sr tag is shown instead."
+
+
+@pytest.mark.parametrize(
+    ("adapter_version", "sam_name", "expect_mr", "expect_fallback"),
+    [
+        ("Solaris2_ppmSeq_plus", "Z0263_sample_mr.sam.gz", True, False),
+        ("Solaris2_ppmSeq_plus", "Z0263_sample_mr_sr.sam.gz", True, False),
+        ("Solaris2_ppmSeq_plus", "Z0263_sample.sam.gz", False, True),
+        ("v1", "Z0263_sample_mr_sr.sam.gz", False, False),
+        ("Solaris2_ppmSeq", "Z0263_sample_mr_sr.sam.gz", False, False),
+    ],
+)
+def test_ppmseq_qc_report_strand_ratio_text(
+    tmp_path, resources_dir, adapter_version, sam_name, expect_mr, expect_fallback
+):
+    """ppmSeq_plus describes the mr tag in the strand-ratio section and caption (or says it fell
+    back to sr when no read has mr); classic adapter versions keep the sr text."""
+    text = _run_report(tmp_path, resources_dir / "ppmseq_sr_tag" / sam_name, adapter_version, "report_tag")
+    assert (MR_SECTION_TEXT in text) is expect_mr
+    assert (MR_CAPTION in text) is expect_mr
+    expected_threshold_rule = "mr ≤ 0.25 → MINUS" if expect_mr else "sr ≤ 0.25 → MINUS"
+    assert expected_threshold_rule in text
+    assert (SR_SECTION_TEXT in text) is not expect_mr
+    assert (SR_CAPTION in text) is not expect_mr
+    assert (FALLBACK_NOTE in text) is expect_fallback
 
 
 def test_ppmseq_qc_analysis_with_sorter_csv(tmp_path, resources_dir, subsampled_sam):
