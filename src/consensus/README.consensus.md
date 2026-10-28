@@ -1,0 +1,289 @@
+# ugbio_consensus
+
+Duplicate marking and performance & duplex reports for the **ReadFuserAlignSort**
+(consensus tool) pipeline at Ultima Genomics.
+
+| Entry point | Runs | Role |
+|-------------|------|------|
+| `mark_duplicates_mi` | *before* `read_fuser` | Assign `MI`/`DS` duplicate families, and with `--use-umi` the `CS` cross-strand duplex tag. |
+| `mark_duplex_consensus` | *after* the consensus is sorted | Write `dx=1` on the consensus reads of CS families whose `po` shows both orientations (F1R2 and F2R1). |
+| `pair_consensus_reads` | *after* `read_fuser`, before alignment | Re-pair the two strand-consensus reads of each pair (shared name, R1/R2 flags) so UA 4.x aligns them as a pair. |
+| `consensus_report` | *after* the pipeline | Per-sample HTML report of alignment, duplication, coverage and duplex family metrics. |
+
+## mark_duplicates_mi
+
+Marks duplicate families on a coordinate-sorted BAM/CRAM and writes, on every
+record of a family:
+
+```
+MI:Z:<run-id>-<10-digit family id>    the duplicate family (molecular identifier)
+DS:i:<family size>                    number of pairs in that family
+CS:Z:<run-id>-<10-digit family id>    --use-umi only: the cross-strand duplex group
+```
+
+`--use-umi` adds `(R1.u5, R2.u3)` to the dedup key alongside the position, so the
+two strands of one duplex molecule land in **separate** `MI` families — which is
+what we want, since each strand is consensus-called on its own. The cost is that
+the duplex relationship is erased: `read_fuser` groups strictly on `MI`, so
+`duplex_consensus` would be 0 by construction. `CS` restores the link.
+
+Two clusters are cross-strand partners iff they share the positional key, their
+UMI pairs are exact mutual reverses, **and** they sit on opposite strands. That
+last term is read off the FLAG (`read.is_reverse`), not off which mate starts
+further left: on a real library the two disagree for 10.5 % of pairs, because
+fragments shorter than the read dovetail.
+
+`CS` is **total** — a cluster with no partner gets `CS` equal to its own `MI`
+rather than no tag at all. That matters downstream, because `demux --umi=CS`
+treats a missing tag as the empty value, and every `CS`-less read at a position
+would then collapse into one duplicate family. So `CS == MI` reads as "clustered,
+but no cross-strand partner was found", and `CS != MI` as "duplex partner found".
+
+Two opt-in options (both off by default, so the default output is unchanged) merge
+clusters that are the same molecule into one `MI` family:
+
+- `--position-tolerance BP` merges same-UMI clusters whose fragment boundaries differ
+  by at most `BP` (read1/read2 use asymmetric adapters, so one molecule's copies can map
+  1-3 bp apart). Drifts chain transitively.
+- `--cross-strand` also merges the F1R2/F2R1 strands of a duplex molecule into one `MI`,
+  using the same orientation-aware rule as `CS`. Boundaries must match within
+  `--position-tolerance`.
+- `--orientation-in-key` does the opposite: the pair orientation (F1R2/F2R1/FF/RR) joins the
+  dedup key, so the two strands of one molecule never share an `MI`. It matters for a symmetric
+  UMI (`u5 == u3`), where both strands otherwise get the same key and so one `MI`. `CS` still links
+  the strands. On by default with `--use-umi`; `--no-orientation-in-key` turns it off, and
+  `--cross-strand` does so implicitly (forcing both is an error).
+  Without `--use-umi` it can still be forced on; `CS` is then the position family: every
+  orientation family at one (chrom, left_start, right_end) shares a `CS`, which over-links
+  independent molecules at the same place.
+
+```bash
+# whole-file
+mark_duplicates_mi input.bam output.bam --use-umi
+
+# sharded, which is what the WDL task runs (--jobs = cpu, shards = panel intervals)
+mark_duplicates_mi input.cram output.cram --use-umi \
+    --reference Homo_sapiens_assembly38.fasta \
+    --jobs 16 --regions xgen-pan-cancer-targets.hg38.bed
+```
+
+Family-size histogram goes to stdout; `--stats-only` skips writing the output file.
+Re-marking is idempotent, and re-marking **without** `--use-umi` strips any `CS`
+the input carried (a stale `CS` claims a duplex link the current key does not
+support, which is worse than no `CS`).
+
+`--pair-orientation-tag po` also writes each primary read's pair orientation
+(`F1R2`, `F2R1`, `FF` or `RR`) to that tag. The mates of this library carry no
+mate fields (no `RNEXT`, no `0x20`), so orientation only exists where the two
+are paired by name, which this tool does anyway for `MI`; doing it here costs
+no extra pass. A read whose mate is absent or on another contig, or in sharded
+mode further than `--pad` away, gets no tag, and a stale one is dropped. Like
+`CS`, it reaches the consensus reads only if listed in `read_fuser --umi-tags`.
+
+### Downstream contract (BIOIN-3068)
+
+`CS` only reaches the consensus reads if every stage is told to carry it:
+
+1. `read_fuser --umi-tags u3,u5,CS` — the default list is `u5,u3`, so **without
+   this `CS` is silently dropped** and the run still completes green.
+2. `sorter_params`: `umi_tag: "CS"` and `mark_duplicates_ends_read_uncertainty: 50`.
+   `umi_tag` must be `CS` **alone** — `read_fuser` copies `u5`/`u3` onto each
+   consensus read from its own strand's original read, and the two strands carry
+   them swapped, so adding them to the key splits exactly the pair `CS` exists to
+   join. The wide 50 bp window is needed because the two strands' consensus reads
+   routinely end ~27 bp apart, and it is safe only because `CS` is in the key: no
+   `(CS, alignment strand)` cell holds more than 2 reads, so there is nothing to
+   over-merge. Measured on 36,591 consensus reads: default recovers 424 of 3,423
+   true pairs (12.4 %), `ends_read_uncertainty: 50` recovers 3,307 (96.6 %),
+   precision 100 % both ways.
+3. For SRSNV/DeepSRSNV, add `"CS:Z"` to `cram_tags_to_copy`.
+
+> ⚠️ This module is verified byte-for-byte against a 12,670,749-record baseline
+> (`MI`/`DS` identical to the pre-`CS` output, 55,884 `CS` links, 0 gained / 0
+> lost). The one deliberate deviation is `--regions`: a read that starts upstream of an
+> interval and reaches into it is now emitted (as `samtools view -L` would), which adds
+> ~30 of 12.67 M records versus that baseline. Do not refactor it — including "just" reordering the `set_tag` calls,
+> which fixes the emitted aux order as `MI, DS, CS` — without re-running
+> `/data/Runs/BIOIN-3068/cmp_stream.py` and `cs_links.py`.
+
+## mark_duplex_consensus
+
+Writes `dx:i:1` on the consensus reads of duplex families. `DS` cannot say this: the sorter gives
+`DS=2` to two consensus reads of one orientation as readily as to the two strands of a duplex
+molecule. `dx` reads the orientation instead: a `CS` family is duplex when its consensus reads
+include both `po=F1R2` and `po=F2R1`, and then every read of the family gets `dx=1`.
+
+```bash
+mark_duplex_consensus consensus.cram consensus.dx.cram -T Homo_sapiens_assembly38.fasta --threads 8
+```
+
+The input is coordinate-sorted and is streamed with a window of `--pad` bp (default 2000); a family
+whose orientations start further apart than that is not seen as duplex. Reads of other families
+get no `dx`, a stale `dx` is replaced, reads without `CS` and
+secondary or supplementary records are left as they are. The output is indexed.
+
+## pair_consensus_reads
+
+After `unpair_reads_by_strand` each strand of a pair gets its own single-end consensus read, named
+`<stem>0` (forward) and `<stem>1` (reverse) with the same `CS` and `po`. Aligned alone, one of them can
+land with a low MAPQ in a repeat that its mate would have resolved. This writes the two as one unaligned
+pair: R1 is the forward read for `po=F1R2` and the reverse read for `F2R1` (flags 77/141), both are
+named `<stem>`, and the reverse read is reverse-complemented because a mate is handed to the aligner as
+sequenced. `tp`/`t0` are left alone (the read group declares them reference-oriented).
+
+```bash
+pair_consensus_reads consensus.bam consensus.paired.bam --counters pair_counters.txt
+```
+
+Reads without a partner, with another `po`, or whose partners disagree on `po` or `CS` are written
+unchanged. The input need not be sorted: reads are spread over `--buckets` temporary files by stem.
+
+Needs UA 4.x (`--unpaired-cost`, `--max-proper-tlen`); UA 3.x has no paired mode. A 3.x index is
+read as is, with identical alignments. UA sets the strand and pair flags, so do not run the nf/nr strand
+step on paired reads.
+
+## unpair_rename_by_strand
+
+Turns a paired-end, duplicate-marked BAM/CRAM into a single-end one whose reads carry their strand, so the
+consensus tool builds every family per strand. Each primary read gets `0` (forward) or `1` (reverse) appended
+to its name and to `MI`; the pair flags and mate fields are cleared. `CS` is left as it is, since it is the
+only link between the two strands of a molecule. Supplementary and secondary records are written unchanged.
+
+```bash
+unpair_rename_by_strand in.bam out.bam -T ref.fa --threads 8 --pair-orientation-tag po \
+    --counters unpair_rename_counters.txt
+```
+
+With `--pair-orientation-tag` the orientation of each pair (`F1R2`, `F2R1`, `FF`, `RR`) is written first, by
+pairing the mates on name within `--pair-window` bases of the sorted input; reads without a mate in reach get
+no tag. The file is cut into `--shard-size` windows that run in parallel, and the output does not depend on the
+window size. The input needs an index (built when missing).
+
+## set_consensus_strand
+
+read_fuser emits every consensus read reference-forward. This sets 0x10 from the `nf`/`nr` majority (`nr > nf`
+is reverse, a tie is forward) and changes nothing else. Supplementary, secondary and paired records and reads
+without `nf`/`nr` are left alone.
+
+```bash
+set_consensus_strand consensus.bam consensus.strand.bam --counters strand_flag_counters.txt --require-cs-tag
+```
+
+Exit status is 1 if a record has no `nf`/`nr`, or, with `--require-cs-tag`, if a consensus read has no `CS`.
+
+## consensus_report
+The consensus step (`read_fuser`) fuses the reads of each UMI/MI family into a
+single consensus read and records, on that read:
+
+```
+rn:Z:<comma-separated list of the fused query names>
+nf:i:<n_forward_strand_reads>
+nr:i:<n_reverse_strand_reads>
+```
+
+i.e. which reads were fused, and how many of them were on the forward (+) and
+reverse (−) strand. From these tags the report classifies every consensus read
+and measures family size **directly** (no MI re-grouping needed):
+
+| Category | Condition | Family size |
+|----------|-----------|-------------|
+| both-strands **duplex** | `nf > 0` and `nr > 0` | `nf + nr` |
+| **single-strand** duplicate | exactly one of `nf`/`nr` is 0 | the non-zero count |
+| **singleton** / pass-through | no `rn` tag | 1 |
+
+`nf + nr` equals the number of names in `rn`, so the two encodings agree on
+family size; the report cross-checks this and warns on a mismatch.
+
+> **A consensus read is identified by the presence of `rn`, never by a strand
+> tag.** Trimmer already emits `rs:i` ("start position in input of segment ...",
+> see the `@CO` lines in the input header) on the *input* reads, and that tag
+> survives onto the reads the consensus step passes through unchanged. An earlier
+> read_fuser wrote the strand counts as `fs`/`rs`, which collided with it and made
+> every pass-through read look like a consensus read; the counts were renamed to
+> `nf`/`nr` to break the collision. Keying off `rn` is collision-proof and also
+> handles the fact that `nf` is simply *absent* (not zero) on pass-through reads —
+> a parquet reader would fill that absence as `0`.
+
+## What the report summarises (per sample)
+
+- **Sorter QC** — alignment, duplication and coverage metrics from
+  `sorter_stats_csv` (post-consensus).
+- **Duplex family metrics** — average MI-family size *and* covered depth for
+  duplex families and for single-strand duplicate families, from the `nf`/`nr` tags.
+  These are scanned over one chromosome (`--duplex-chrom`, default `chr20`) — a
+  representative sample that avoids reading the whole (very large) CRAM. When a
+  targets BED is given, the scan is restricted to the targeted intervals on that
+  chromosome.
+- **On-target metrics (optional)** — when a `--targets` BED is supplied
+  (e.g. an exome capture BED): on-target rate and on-target mean coverage from
+  the `bedgraph_mapq0` coverage track. Omit `--targets` for genome-wide coverage
+  only. The report is target-agnostic; the exome case is simply "targets given".
+- **Consensus tool performance** — when a `--consensus-log` is supplied, the
+  counters parsed from the consensus tool stdout log.
+
+All inputs are **local files** — the report does no S3/DB access.
+
+## Usage
+
+```bash
+# Single sample, with an exome targets BED (Quotient case)
+consensus_report \
+    --name Z0315 \
+    --cram Z0315.cram --crai Z0315.cram.crai \
+    --sorter-stats-csv Z0315.csv --sorter-stats-json Z0315.json \
+    --bedgraph Z0315_0.bedGraph.gz --consensus-log Z0315.consensus.stdout.log \
+    --reference /data/Runs/genomes/hg38/ref_gen/Homo_sapiens_assembly38.fasta \
+    --targets Twist_Alliance_Clinical_Research_Exome_hg38.bed \
+    --output report.html
+
+# Multiple samples: one repeatable --sample key=value block per sample
+consensus_report \
+    --sample name=Z0315 cram=Z0315.cram sorter_stats_csv=Z0315.csv \
+        sorter_stats_json=Z0315.json bedgraph=Z0315_0.bedGraph.gz \
+    --sample name=Z0316 cram=Z0316.cram sorter_stats_csv=Z0316.csv \
+        sorter_stats_json=Z0316.json bedgraph=Z0316_0.bedGraph.gz \
+    --reference ref.fasta --targets exome.bed --output run_report.html
+
+# ReadFuserAlignSort three-way comparison: input vs singletons vs consensus CRAM.
+# Only the consensus CRAM carries rn/nf/nr, so it is the only one given a cram=
+# (the others contribute alignment metrics alone, and need no localised CRAM).
+# --no-summary drops the median-across-samples table, meaningless across these three.
+consensus_report \
+    --sample name=Z0315.input sorter_stats_csv=input.csv sorter_stats_json=input.json \
+    --sample name=Z0315.singletons sorter_stats_csv=sing.csv sorter_stats_json=sing.json \
+    --sample name=Z0315.consensus cram=cons.cram crai=cons.cram.crai \
+        sorter_stats_csv=cons.csv sorter_stats_json=cons.json \
+        consensus_log=Z0315.consensus.stdout.log \
+    --reference ref.fasta --no-summary --output comparison.html
+
+# b37 reference: scan chromosome 20 under its b37 name
+consensus_report ... --duplex-chrom 20 --output report.html
+```
+
+Sample rows appear in the order the `--sample` blocks are given, so the
+input → singletons → consensus reading order above is preserved in the table.
+
+Outputs (alongside `--output`):
+
+- `<output>.html` — the self-contained HTML report.
+- `<output>_per_sample.csv` — full per-sample metrics table (provenance).
+- `<output>_manifest.csv` — resolved input paths (provenance).
+
+## Modules
+
+| Module | Role |
+|--------|------|
+| `mark_duplicates_mi.py` | Duplicate families (`MI`/`DS`) and the `CS` cross-strand duplex tag; whole-file and sharded writers. |
+| `mark_duplex_consensus.py` | Streams a sorted consensus CRAM and writes `dx` on the reads of duplex CS families. |
+| `duplex_metrics.py` | Parse `rn`/`nf`/`nr`, classify families, family size + coverage per category (with an `MI`-tag fallback). |
+| `on_target.py` | Genome-wide and optional on-target coverage from a bedGraph + targets BED. |
+| `consensus_log.py` | Parse the consensus tool stdout log for performance counters. |
+| `pair_consensus_reads.py` | Pairs the strand-consensus reads of a pair into unaligned R1/R2 records for UA. |
+| `unpair_rename_by_strand.py` | Unpairs reads, appends the strand digit to QNAME/`MI`, optionally writes the pair orientation tag. |
+| `set_consensus_strand.py` | Sets the consensus reads' reverse flag from the `nf`/`nr` majority. |
+| `consensus_report.py` | CLI orchestration: read local inputs, compute metrics, write the HTML report + CSVs. |
+
+## Requirements
+
+- `bedtools` and `samtools` on `PATH` (used for BED handling and CRAM decoding).
+- The reference FASTA matching the run's `reference_genome`.
