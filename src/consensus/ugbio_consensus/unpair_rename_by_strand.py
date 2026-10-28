@@ -120,7 +120,7 @@ class PairOrientationTagger:
             contig = read.reference_name or UNPLACED
             pos = read.reference_start + 1
             yield from self._release(contig, pos)
-            if self._tail - self._head + 1 >= self.max_queue - 1:
+            if self._tail - self._head + 1 >= max(self.max_queue - 1, 1):
                 yield self._force()
             self._push(read, contig, pos)
             yield from self._release(contig, pos)
@@ -141,7 +141,7 @@ class PairOrientationTagger:
             return
         entry.reverse = bool(flag & REVERSE)
         entry.is_read1 = is_read1
-        name = read.query_name
+        name = _pair_name(read.query_name)
         mate_index = self._waiting.get(name)
         if mate_index is not None:
             mate = self._queue[mate_index]
@@ -193,6 +193,11 @@ class PairOrientationTagger:
         return read
 
 
+def _pair_name(name: str) -> str:
+    """QNAME without a /1 or /2 mate suffix, which mark_duplicates_mi accepts and keeps."""
+    return name[:-2] if name.endswith(("/1", "/2")) else name
+
+
 def unpair_and_rename(read: pysam.AlignedSegment, counters: Counter) -> None:
     """Rename a primary read with its strand digit and clear the pair information; count it."""
     counters["total_records"] += 1
@@ -201,7 +206,7 @@ def unpair_and_rename(read: pysam.AlignedSegment, counters: Counter) -> None:
         return
     reverse = bool(read.flag & REVERSE)
     suffix = "1" if reverse else "0"
-    read.query_name = read.query_name + suffix
+    read.query_name = _pair_name(read.query_name) + suffix
     if read.has_tag("MI"):
         value, value_type = read.get_tag("MI", with_value_type=True)
         if value_type == "Z":

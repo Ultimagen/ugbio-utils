@@ -299,3 +299,21 @@ def test_cram_input_with_crai_is_processed_in_full(tmp_path):
     assert [r.split("\t")[:9] for r in records(tmp_path / "from_cram.bam")] == [
         r.split("\t")[:9] for r in records(tmp_path / "from_bam.bam")
     ]
+
+
+def test_a_one_record_queue_does_not_crash():
+    reads, _ = tag_pairs(PO_READS, max_queue=1)
+    assert [(r.query_name, r.flag) for r in reads] == [(r.query_name, r.flag) for r in PO_READS]
+
+
+def test_mate_suffixes_pair_and_are_dropped_from_the_new_names(tmp_path):
+    suffixed = [
+        read("p/1", "chr1", 100, 99, [("MI", "f"), ("CS", "f")], ("chr1", 200, 104)),
+        read("p/2", "chr1", 200, 147, [("MI", "f"), ("CS", "f")], ("chr1", 100, -104)),
+    ]
+    tagged, _ = tag_pairs(suffixed)
+    assert [r.get_tag("po") for r in tagged] == ["F1R2", "F1R2"]
+    counters = ubs.Counter()
+    for r in tagged:
+        ubs.unpair_and_rename(r, counters)
+    assert [r.query_name for r in tagged] == ["p0", "p1"]

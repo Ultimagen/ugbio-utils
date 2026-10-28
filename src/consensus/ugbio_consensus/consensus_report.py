@@ -56,6 +56,7 @@ the median row, which is meaningless across populations::
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import sys
@@ -588,7 +589,7 @@ def _fmt(value: object) -> str:
         if 0 < abs(value) < 1:
             return f"{value:.3f}"
         return f"{value:.2f}"
-    return str(value)
+    return html.escape(str(value))
 
 
 def _build_table_html(df: pd.DataFrame, title: str) -> str:
@@ -606,23 +607,23 @@ def _build_table_html(df: pd.DataFrame, title: str) -> str:
         row_labels = list(table.index)
         value_rows = [list(table.loc[label]) for label in row_labels]
         header = "<th style='padding:6px 10px;text-align:left'>metric</th>" + "".join(
-            f"<th style='padding:6px 10px;text-align:left'>{c}</th>" for c in col_headers
+            f"<th style='padding:6px 10px;text-align:left'>{html.escape(str(c))}</th>" for c in col_headers
         )
     else:
         # Already-vertical frame (e.g. metric / median): first column is the label.
         row_labels = list(df.iloc[:, 0])
         value_rows = [list(row) for row in df.iloc[:, 1:].to_numpy()]
-        header = "".join(f"<th style='padding:6px 10px;text-align:left'>{c}</th>" for c in df.columns)
+        header = "".join(f"<th style='padding:6px 10px;text-align:left'>{html.escape(str(c))}</th>" for c in df.columns)
 
     rows = ""
     for label, values in zip(row_labels, value_rows, strict=True):
         cells = "".join(f"<td style='padding:6px 10px;border-top:1px solid #eee'>{_fmt(v)}</td>" for v in values)
         rows += (
             f"<tr><th style='padding:6px 10px;text-align:left;border-top:1px solid #eee;"
-            f"background:#fafafa'>{label}</th>{cells}</tr>"
+            f"background:#fafafa'>{html.escape(str(label))}</th>{cells}</tr>"
         )
     return (
-        f"<h2 style='font-size:22px;color:#000000'>{title}</h2>"
+        f"<h2 style='font-size:22px;color:#000000'>{html.escape(title)}</h2>"
         "<table style='border-collapse:collapse;font-size:13px;margin-bottom:24px'>"
         f"<thead style='background:#f3f3f3'><tr>{header}</tr></thead><tbody>{rows}</tbody></table>"
     )
@@ -632,12 +633,12 @@ def _assemble_html(title: str, tables_html: list[str], figures: list[go.Figure])
     """Assemble a self-contained HTML report from tables and figures."""
     parts = [
         "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-        f"<title>{title}</title>",
+        f"<title>{html.escape(title)}</title>",
         (
             "</head><body style='font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; "
             "padding: 20px; background:#ffffff; color:#000000;'>"
         ),
-        f"<h1 style='font-size:34px;'>{title}</h1>",
+        f"<h1 style='font-size:34px;'>{html.escape(title)}</h1>",
         (
             "<p style='color:#000000'>Consensus tool (ReadFuserAlignSort) performance and duplex metrics. "
             "Family size and duplex classification are derived from the per-read <code>nf:i</code> / "
