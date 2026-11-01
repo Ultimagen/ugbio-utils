@@ -40,6 +40,11 @@ RUN cd /T1K \
     && make htslib=1 LINKFLAGS="-lpthread -lz -ldeflate -llzma -lbz2 -lcurl -lssl -lcrypto" -j $(nproc)
 
 
+# htslib REF_CACHE builder (samtools misc/ script, Perl core modules only), matching the bundled htslib
+RUN git clone --depth 1 --branch 1.15.1 https://github.com/samtools/samtools.git /tmp/samtools \
+    && install -m 755 /tmp/samtools/misc/seq_cache_populate.pl /usr/local/bin/seq_cache_populate.pl \
+    && rm -rf /tmp/samtools
+
 # Install htslib shared library
 RUN cp /T1K/htslib-1.15.1/libhts.so.3 /usr/local/lib/ \
       && ldconfig
