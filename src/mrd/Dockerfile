@@ -37,17 +37,9 @@ RUN apt-get update && apt-get upgrade -y && apt-get install --no-install-recomme
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
-# Download and install gatk
-ARG GATK_VERSION=4.6.2.0
-RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION}/gatk-${GATK_VERSION}.zip && \
-    unzip gatk-${GATK_VERSION}.zip && \
-    mv gatk-${GATK_VERSION} /opt/gatk && \
-    ln -s /opt/gatk/gatk /usr/local/bin/gatk && \
-    rm gatk-${GATK_VERSION}.zip
-
-# Patch GATK fat JAR: upgrade bundled netty and zookeeper to fix CVEs
-COPY docker/patch-gatk-jars.sh /tmp/patch-gatk-jars.sh
-RUN chmod +x /tmp/patch-gatk-jars.sh && /tmp/patch-gatk-jars.sh && rm /tmp/patch-gatk-jars.sh
+# Install GATK (Ultima build of 4.7.0.0 with fixed netty, see docker/install-gatk.sh)
+COPY docker/install-gatk.sh /tmp/install-gatk.sh
+RUN bash /tmp/install-gatk.sh && rm /tmp/install-gatk.sh
 
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 

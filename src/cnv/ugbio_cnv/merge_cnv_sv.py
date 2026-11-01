@@ -232,14 +232,12 @@ def merge_cnv_sv_vcfs(
     All other variants are preserved in the final output with their original FILTER values:
 
     SVs excluded from merge:
-    - Non-DEL/DUP types (INV, INS, but excluding BND)
+    - Non-DEL/DUP types (INS, CTX, BND, ...)
     - Non-PASS DEL/DUP (failed filters in original VCF)
     - PASS DEL/DUP below size threshold (too small for merge)
 
     CNVs excluded from merge:
     - Non-PASS CNVs (failed filters in original VCF)
-
-    BND variants are excluded completely from output.
 
     Large SVs (>max_sv_length) are only retained if they overlap with CNV calls
     by at least pctsize; otherwise they are filtered out.
@@ -308,7 +306,7 @@ def merge_cnv_sv_vcfs(
 
     # Combine all exclusion criteria into single bcftools expression
     excluded_sv_expr = (
-        f'(SVTYPE!="DEL" & SVTYPE!="DUP" & SVTYPE!="BND") | '
+        f'(SVTYPE!="DEL" & SVTYPE!="DUP") | '
         f'((SVTYPE="DEL" | SVTYPE="DUP") & FILTER!="PASS") | '
         f'((SVTYPE="DEL" | SVTYPE="DUP") & FILTER="PASS" & abs(SVLEN) < {min_sv_length})'
     )

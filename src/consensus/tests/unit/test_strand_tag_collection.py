@@ -1,0 +1,347 @@
+"""Build a tiny in-memory BAM with rn/nf/nr/MI tags and check family classification & coverage."""
+
+import numpy as np
+import pandas as pd
+import pysam
+import pytest
+from ugbio_consensus import duplex_metrics
+
+CHROM = "chr1"
+CHROM_LEN = 1000
+READ_LEN = 100
+
+
+def _make_read(header, name, pos, strands, *, reverse=False, mi=None, extra_tags=None, rn=None):
+    """Build a read with the consensus ``rn:Z`` + ``nf:i``/``nr:i`` tags.
+
+    ``strands`` is ``(n_forward, n_reverse)``, or ``None`` for a pass-through read
+    (no consensus tags at all). ``rn`` overrides the generated read-name list, to
+    exercise the nf+nr vs rn cardinality cross-check. ``extra_tags`` adds raw tags
+    (used to plant a trimmer ``rs:i`` on a pass-through read).
+    """
+    a = pysam.AlignedSegment(header)
+    a.query_name = name
+    a.query_sequence = "A" * READ_LEN
+    a.flag = 16 if reverse else 0
+    a.reference_id = 0
+    a.reference_start = pos
+    a.mapping_quality = 60
+    a.cigartuples = [(0, READ_LEN)]  # 100M
+    a.query_qualities = pysam.qualitystring_to_array("I" * READ_LEN)
+    tags = []
+    if strands is not None:
+        n_fwd, n_rev = strands
+        # rn is the consensus discriminator: a comma-separated list of the fused
+        # query names, so its cardinality is nf + nr.
+        names = rn if rn is not None else ",".join(f"{name}_src{i}" for i in range(n_fwd + n_rev))
+        tags.append(("rn", names, "Z"))
+        tags.append(("nf", n_fwd, "i"))
+        tags.append(("nr", n_rev, "i"))
+    if mi is not None:
+        tags.append(("MI", mi))
+    if extra_tags:
+        tags.extend(extra_tags)
+    a.set_tags(tags)
+    return a
+
+
+@pytest.fixture
+def bam_path(tmp_path):
+    header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": CHROM, "LN": CHROM_LEN}]}
+    path = tmp_path / "consensus.bam"
+    # 2 duplex (sizes 8, 4), 2 single-strand (sizes 5, 3), 1 singleton (no rn tag)
+    reads = [
+        _make_read(pysam.AlignmentHeader.from_dict(header), "duplex1", 100, (4, 4), mi=1),
+        _make_read(pysam.AlignmentHeader.from_dict(header), "duplex2", 120, (1, 3), mi=2),
+        _make_read(pysam.AlignmentHeader.from_dict(header), "ss1", 140, (5, 0), reverse=False, mi=3),
+        _make_read(pysam.AlignmentHeader.from_dict(header), "ss2", 160, (0, 3), reverse=True, mi=4),
+        _make_read(pysam.AlignmentHeader.from_dict(header), "single1", 180, None),
+    ]
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for r in reads:
+            out.write(r)
+    pysam.index(str(path))
+    return str(path)
+
+
+def test_family_classification_counts(bam_path):
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(bam_path, [(CHROM, 0, CHROM_LEN)], reference=None)
+    per = res["per_category"]
+    assert per.loc[duplex_metrics.DUPLEX, "n_reads"] == 2
+    assert per.loc[duplex_metrics.SINGLE_STRAND, "n_reads"] == 2
+    assert per.loc[duplex_metrics.SINGLETON, "n_reads"] == 1
+
+
+def test_family_sizes(bam_path):
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(bam_path, [(CHROM, 0, CHROM_LEN)], reference=None)
+    per = res["per_category"]
+    # duplex sizes 8 and 4 -> avg 6; single-strand 5 and 3 -> avg 4; singleton -> 1
+    assert per.loc[duplex_metrics.DUPLEX, "avg_family_size"] == pytest.approx(6.0)
+    assert per.loc[duplex_metrics.SINGLE_STRAND, "avg_family_size"] == pytest.approx(4.0)
+    assert per.loc[duplex_metrics.SINGLETON, "avg_family_size"] == pytest.approx(1.0)
+    # rn cardinality agrees with nf + nr on every consensus read.
+    assert res["n_size_mismatch"] == 0
+    assert res["n_unclassified"] == 0
+
+
+def test_coverage_sums(bam_path):
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(bam_path, [(CHROM, 0, CHROM_LEN)], reference=None)
+    per = res["per_category"]
+    # each category's reads each cover READ_LEN bases over the CHROM_LEN interval
+    assert per.loc[duplex_metrics.DUPLEX, "coverage"] == pytest.approx(2 * READ_LEN / CHROM_LEN)
+    assert per.loc[duplex_metrics.SINGLE_STRAND, "coverage"] == pytest.approx(2 * READ_LEN / CHROM_LEN)
+    assert res["total_interval_bp"] == CHROM_LEN
+
+
+def test_capped_scan_does_not_report_coverage(bam_path):
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(
+        bam_path, [(CHROM, 0, CHROM_LEN)], reference=None, max_reads=1
+    )
+    per = res["per_category"]
+    assert res["n_reads_scanned"] == 1
+    assert per.loc[duplex_metrics.DUPLEX, "covered_bases"] == READ_LEN
+    assert per["coverage"].isna().all()
+
+
+def test_whole_chromosome_end_none(bam_path):
+    # end=None means "to the end of the contig"; resolved from the header (CHROM_LEN).
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(bam_path, [(CHROM, 0, None)], reference=None)
+    per = res["per_category"]
+    assert res["total_interval_bp"] == CHROM_LEN
+    assert per.loc[duplex_metrics.DUPLEX, "n_reads"] == 2
+    assert per.loc[duplex_metrics.SINGLE_STRAND, "n_reads"] == 2
+    assert per.loc[duplex_metrics.SINGLETON, "n_reads"] == 1
+
+
+def test_trimmer_rs_tag_is_not_mistaken_for_a_consensus_read(tmp_path):
+    """A pass-through read carrying only trimmer's ``rs:i`` must stay a singleton.
+
+    Regression test for the tag collision that forced the ``fs``/``rs`` -> ``nf``/``nr``
+    rename: trimmer writes ``rs:i`` ("start position in input of segment ...") on
+    the *input* reads, which survives onto the reads the consensus step passes
+    through unchanged. Keying the consensus/singleton decision off a strand tag
+    made every such read look like a consensus read. The discriminator is ``rn``.
+    """
+    header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": CHROM, "LN": CHROM_LEN}]}
+    path = tmp_path / "with_trimmer_tags.bam"
+    hdr = pysam.AlignmentHeader.from_dict(header)
+    reads = [
+        # Pass-through reads: trimmer rs (and the legacy fs) present, but no rn.
+        _make_read(hdr, "passthrough_rs", 100, None, extra_tags=[("rs", 1, "i")]),
+        _make_read(hdr, "passthrough_fs_rs", 120, None, extra_tags=[("fs", 2, "i"), ("rs", 1, "i")]),
+        # A genuine duplex consensus read, for contrast.
+        _make_read(hdr, "duplex1", 140, (2, 2)),
+    ]
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for r in reads:
+            out.write(r)
+    pysam.index(str(path))
+
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(str(path), [(CHROM, 0, CHROM_LEN)], reference=None)
+    per = res["per_category"]
+    assert per.loc[duplex_metrics.SINGLETON, "n_reads"] == 2
+    assert per.loc[duplex_metrics.SINGLETON, "avg_family_size"] == pytest.approx(1.0)
+    assert per.loc[duplex_metrics.DUPLEX, "n_reads"] == 1
+    assert per.loc[duplex_metrics.SINGLE_STRAND, "n_reads"] == 0
+    assert res["n_unclassified"] == 0
+
+
+def test_rn_cardinality_mismatch_is_counted(tmp_path):
+    """nf + nr disagreeing with the rn read-name count is reported, not silently used."""
+    header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": CHROM, "LN": CHROM_LEN}]}
+    path = tmp_path / "mismatch.bam"
+    hdr = pysam.AlignmentHeader.from_dict(header)
+    reads = [
+        # nf+nr = 4 but rn lists only 2 names.
+        _make_read(hdr, "bad1", 100, (2, 2), rn="a,b"),
+        # Consistent, for contrast.
+        _make_read(hdr, "good1", 140, (2, 2)),
+    ]
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for r in reads:
+            out.write(r)
+    pysam.index(str(path))
+
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(str(path), [(CHROM, 0, CHROM_LEN)], reference=None)
+    assert res["n_size_mismatch"] == 1
+    # Both still classify as duplex; the mismatch is reported, not dropped.
+    assert res["per_category"].loc[duplex_metrics.DUPLEX, "n_reads"] == 2
+
+
+def test_consensus_read_without_strand_counts_is_unclassified(tmp_path):
+    """An rn tag with no usable nf/nr is malformed, not a singleton."""
+    header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": CHROM, "LN": CHROM_LEN}]}
+    path = tmp_path / "malformed.bam"
+    hdr = pysam.AlignmentHeader.from_dict(header)
+    read = _make_read(hdr, "no_counts", 100, None, extra_tags=[("rn", "a,b", "Z")])
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        out.write(read)
+    pysam.index(str(path))
+
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(str(path), [(CHROM, 0, CHROM_LEN)], reference=None)
+    assert res["n_unclassified"] == 1
+    assert res["per_category"].loc[duplex_metrics.SINGLETON, "n_reads"] == 0
+
+
+def test_mi_fallback_matches(bam_path):
+    res = duplex_metrics.collect_family_metrics_from_mi_tags(bam_path, [(CHROM, 0, CHROM_LEN)], reference=None)
+    # MI grouping sees 4 tagged reads, each its own MI, all singletons by MI membership
+    # (one read per MI) -> all classified as singleton. This documents that the strand-tag
+    # path is the accurate one for consensus reads; MI fallback needs multi-read MI groups.
+    assert res["n_families"] == 4
+    assert np.isnan(res["per_category"].loc[duplex_metrics.DUPLEX, "avg_family_size"])
+
+
+def test_family_size_histogram(bam_path):
+    """The returned histogram is the family-size distribution, not a per-read list.
+
+    Memory during the scan must not grow with the number of reads: family sizes are
+    accumulated as {size: count}, which is what a whole-CRAM scan relies on.
+    """
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(bam_path, [(CHROM, 0, CHROM_LEN)], reference=None)
+    hist = res["family_size_hist"]
+    assert hist[duplex_metrics.DUPLEX] == {8: 1, 4: 1}
+    assert hist[duplex_metrics.SINGLE_STRAND] == {5: 1, 3: 1}
+    assert hist[duplex_metrics.SINGLETON] == {1: 1}
+    # Every scanned read is counted exactly once in its category's histogram.
+    for category in duplex_metrics.CATEGORIES:
+        per_cat_reads = res["per_category"].loc[category, "n_reads"]
+        assert sum(hist[category].values()) == per_cat_reads
+
+
+@pytest.mark.parametrize(
+    "sizes",
+    [
+        [1],
+        [3, 7],  # even n -> mean of the two central order statistics
+        [2, 2, 9],
+        [1, 1, 2, 300, 300, 301],  # sizes past the small-int cache
+        [5] * 10,
+    ],
+)
+def test_median_from_histogram_matches_numpy(sizes):
+    hist: dict[int, int] = {}
+    for size in sizes:
+        hist[size] = hist.get(size, 0) + 1
+    assert duplex_metrics._median_from_histogram(hist, len(sizes)) == pytest.approx(float(np.median(sizes)))
+
+
+def test_median_from_histogram_empty():
+    assert np.isnan(duplex_metrics._median_from_histogram({}, 0))
+
+
+def _write_bam(tmp_path, reads_fn, name="reads.bam"):
+    header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": CHROM, "LN": CHROM_LEN}]}
+    hdr = pysam.AlignmentHeader.from_dict(header)
+    path = tmp_path / name
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for r in reads_fn(hdr):
+            out.write(r)
+    pysam.index(str(path))
+    return str(path)
+
+
+def _deletion_read(hdr):
+    """A single-strand consensus read 10M100D10M at 100: 20 aligned bases spanning [100, 220)."""
+    a = _make_read(hdr, "del1", 100, (2, 0))
+    a.query_sequence = "A" * 20
+    a.cigartuples = [(0, 10), (2, 100), (0, 10)]
+    a.query_qualities = pysam.qualitystring_to_array("I" * 20)
+    return [a]
+
+
+def test_deletion_bases_not_counted_as_covered(tmp_path):
+    path = _write_bam(tmp_path, _deletion_read)
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(path, [(CHROM, 0, CHROM_LEN)], reference=None)
+    assert res["per_category"].loc[duplex_metrics.SINGLE_STRAND, "covered_bases"] == 20
+
+
+def test_target_inside_deletion_is_not_covered(tmp_path):
+    path = _write_bam(tmp_path, _deletion_read)
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(path, [(CHROM, 150, 170)], reference=None)
+    assert res["per_category"].loc[duplex_metrics.SINGLE_STRAND, "covered_bases"] == 0
+    assert res["per_category"].loc[duplex_metrics.SINGLE_STRAND, "n_reads"] == 0
+
+
+def test_unknown_contig_is_skipped(bam_path):
+    """A contig missing from the header (b37 '20' vs 'chr20', chrM, alts) is skipped, not fatal."""
+    expected = duplex_metrics.collect_family_metrics_from_strand_tags(bam_path, [(CHROM, 0, CHROM_LEN)], None)
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(
+        bam_path, [("chr20", 0, None), ("chrM", 0, 100), (CHROM, 0, CHROM_LEN)], reference=None
+    )
+    pd.testing.assert_frame_equal(res["per_category"], expected["per_category"])
+    assert res["total_interval_bp"] == CHROM_LEN
+    mi = duplex_metrics.collect_family_metrics_from_mi_tags(bam_path, [("chrM", 0, 100), (CHROM, 0, CHROM_LEN)], None)
+    assert mi["n_families"] == 4
+
+
+def test_mi_fallback_counts_read_spanning_two_intervals_once(tmp_path):
+    """A read [100, 200) overlapping two disjoint targets is one singleton family, not a size-2 family."""
+    path = _write_bam(tmp_path, lambda hdr: [_make_read(hdr, "r1", 100, None, mi=7)])
+    res = duplex_metrics.collect_family_metrics_from_mi_tags(path, [(CHROM, 100, 120), (CHROM, 150, 170)], None)
+    assert res["n_families"] == 1
+    assert res["per_category"].loc[duplex_metrics.SINGLETON, "n_families"] == 1
+    assert res["per_category"].loc[duplex_metrics.SINGLE_STRAND, "n_families"] == 0
+
+
+def test_mi_fallback_ignores_reads_between_intervals(tmp_path):
+    """The per-chromosome fetch spans the gap between targets; reads only in the gap are excluded."""
+    path = _write_bam(tmp_path, lambda hdr: [_make_read(hdr, "gap", 300, None, mi=9)])
+    res = duplex_metrics.collect_family_metrics_from_mi_tags(path, [(CHROM, 0, 200), (CHROM, 600, 700)], None)
+    assert res["n_families"] == 0
+
+
+def test_dx_marked_single_strand_reads_are_duplex(tmp_path):
+    """Reads split by strand carry one strand each; ``dx=1`` is what makes the family duplex."""
+    header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": CHROM, "LN": CHROM_LEN}]}
+    path = tmp_path / "dx.bam"
+    hdr = pysam.AlignmentHeader.from_dict(header)
+    dx = [("dx", 1, "i")]
+    reads = [
+        _make_read(hdr, "dx_fwd", 100, (3, 0), extra_tags=dx),
+        _make_read(hdr, "dx_rev", 120, (0, 1), reverse=True, extra_tags=dx),
+        _make_read(hdr, "ss", 140, (4, 0)),
+        _make_read(hdr, "dx0", 160, (2, 0), extra_tags=[("dx", 0, "i")]),
+        _make_read(hdr, "both", 180, (2, 2)),
+        _make_read(hdr, "single1", 200, None),
+    ]
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for r in reads:
+            out.write(r)
+    pysam.index(str(path))
+
+    res = duplex_metrics.collect_family_metrics_from_strand_tags(str(path), [(CHROM, 0, CHROM_LEN)], reference=None)
+    per = res["per_category"]
+    assert per.loc[duplex_metrics.DUPLEX, "n_reads"] == 3
+    assert per.loc[duplex_metrics.DUPLEX, "avg_family_size"] == pytest.approx((3 + 1 + 4) / 3)
+    assert per.loc[duplex_metrics.SINGLE_STRAND, "n_reads"] == 2
+    assert per.loc[duplex_metrics.SINGLETON, "n_reads"] == 1
+
+
+def _paired(hdr, name, pos, *, read1, reverse, mate_reverse, mi):
+    a = _make_read(hdr, name, pos, None, reverse=reverse, mi=mi)
+    a.flag = 1 | 2 | (64 if read1 else 128) | (16 if reverse else 0) | (32 if mate_reverse else 0)
+    a.next_reference_id, a.next_reference_start = 0, 300
+    return a
+
+
+def test_mi_fallback_paired_end_mates_are_one_strand(tmp_path):
+    """Two F1R2 pairs sharing an MI are single-strand; opposite mate strands alone are not duplex."""
+
+    def reads(hdr):
+        out = []
+        for i in range(2):  # two PCR copies, both F1R2: R1 forward, R2 reverse
+            out.append(_paired(hdr, f"f{i}", 100, read1=True, reverse=False, mate_reverse=True, mi=1))
+            out.append(_paired(hdr, f"f{i}", 300, read1=False, reverse=True, mate_reverse=False, mi=1))
+        # MI 2 has one F1R2 and one F2R1 pair (R1 reverse): duplex
+        out.append(_paired(hdr, "a", 120, read1=True, reverse=False, mate_reverse=True, mi=2))
+        out.append(_paired(hdr, "a", 300, read1=False, reverse=True, mate_reverse=False, mi=2))
+        out.append(_paired(hdr, "b", 120, read1=False, reverse=False, mate_reverse=True, mi=2))
+        out.append(_paired(hdr, "b", 300, read1=True, reverse=True, mate_reverse=False, mi=2))
+        return sorted(out, key=lambda r: r.reference_start)
+
+    res = duplex_metrics.collect_family_metrics_from_mi_tags(_write_bam(tmp_path, reads), [(CHROM, 0, CHROM_LEN)], None)
+    per = res["per_category"]
+    assert per.loc[duplex_metrics.SINGLE_STRAND, "n_families"] == 1
+    assert per.loc[duplex_metrics.SINGLE_STRAND, "avg_family_size"] == 4
+    assert per.loc[duplex_metrics.DUPLEX, "n_families"] == 1

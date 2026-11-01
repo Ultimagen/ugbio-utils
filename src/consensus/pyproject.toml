@@ -1,0 +1,40 @@
+[project]
+name = "ugbio_consensus"
+version = "1.33.2-0"
+requires-python = ">=3.11"
+description = "Ultima Genomics consensus (ReadFuserAlignSort) duplicate marking, performance & duplex reports"
+authors = [
+    { name = "Gat Krieger", email = "gat.krieger@ultimagen.com" },
+    { name = "Doron Shem-Tov", email = "doron.shemtov@ultimagen.com" },
+]
+readme = "README.consensus.md"
+dependencies = [
+    "ugbio_core[vcfbed]",
+    "ugbio_cloud_utils",
+    "pysam>=0.22.0",
+    "boto3",
+]
+
+[project.license]
+text = "Apache-2.0"
+
+[project.scripts]
+run_tests = "pytest:main"
+consensus_report = "ugbio_consensus.consensus_report:main"
+mark_duplicates_mi = "ugbio_consensus.mark_duplicates_mi:main"
+mark_duplex_consensus = "ugbio_consensus.mark_duplex_consensus:main"
+pair_consensus_reads = "ugbio_consensus.pair_consensus_reads:main"
+set_consensus_strand = "ugbio_consensus.set_consensus_strand:main"
+unpair_rename_by_strand = "ugbio_consensus.unpair_rename_by_strand:main"
+
+[tool.uv.sources.ugbio_core]
+workspace = true
+
+[tool.uv.sources.ugbio_cloud_utils]
+workspace = true
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"

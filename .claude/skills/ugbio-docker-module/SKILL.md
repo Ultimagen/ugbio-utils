@@ -78,7 +78,7 @@ This is not a "which base" choice, it's a "can't upgrade yet" blocker:
 - DO create and `USER` into the non-root `ugbio` user in the runtime stage.
 - DO purge any tool installed only for building (git/wget/unzip/build-essential) in the *same RUN layer* it was used, once no longer needed — but never purge something the runtime actually calls (e.g. don't purge `bcftools`, only purge `git`/`wget`/`unzip`/compilers).
 - DO run `apt-get upgrade -y` if the Dockerfile does its own apt installs, to pick up patched system packages.
-- DO check `docker/patch-gatk-jars.sh` if the module bundles GATK — it patches the fat JAR's netty/zookeeper to fix CVEs GATK itself hasn't shipped a fix for yet.
+- DO install GATK with `docker/install-gatk.sh` (COPY + RUN) if the module bundles GATK — it installs the Ultima GATK build with fixed netty (official releases still bundle a vulnerable netty) into /opt/gatk.
 - DO pin any version that's had a proven runtime incompatibility (numpy/pandas ABI, etc.) with a comment explaining *why*, not just what.
 
 ## DON'T

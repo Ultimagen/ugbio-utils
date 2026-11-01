@@ -2,15 +2,6 @@
 ARG BASE_IMAGE
 ARG OUT_DIR=/tmp/ugbio
 
-############################
-# Pull known-good parasail from Debian Bullseye (2.4.3)
-FROM debian:bullseye AS parasail-bullseye
-RUN apt-get update && \
-  apt-get -y install --no-install-recommends \
-    libparasail-dev \
-  && \
-  rm -rf /var/lib/apt/lists/* && apt-get autoclean
-
 FROM python:3.11-bookworm AS build
 
 ARG OUT_DIR
@@ -52,6 +43,7 @@ RUN apt-get update && apt-get upgrade -y && \
     libopenblas-dev \
     libstdc++-12-dev \
     libhdf5-dev \
+    libparasail8 \
     tzdata \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
@@ -124,14 +116,16 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
-# Download para_jalign binary from private jalign repository
-ARG JALIGN_VERSION=1.4.1
+# Download para_jalign binary from private jalign repository.
+# The bookworm build links the distro libparasail8 (parasail 2.6) and uses its striped kernels,
+# since the parasail 2.6 diag kernels return corrupted scores/cigars (DATA-9903)
+ARG JALIGN_VERSION=1.4.2
 RUN --mount=type=secret,id=github_token \
     if [ ! -f /run/secrets/github_token ]; then \
         echo "ERROR: Authentication required to download dependencies" && exit 1; \
     fi && \
     GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
-    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bullseye-x64" && \
+    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bookworm-x64" && \
     echo "Looking for asset: ${ASSET_NAME}" && \
     curl -sL \
         -H "Accept: application/vnd.github+json" \
@@ -166,12 +160,6 @@ COPY --from=build ${OUT_DIR} ${OUT_DIR}
 # Build pywfa and pyabpoa without -march=native, so the image runs on hosts without AVX-512
 RUN PYWFA_MARCH=x86-64-v3 pip install --no-binary pywfa "pywfa>=0.6.0"
 RUN AVX2=1 pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
-
-# Bring parasail headers/libs from Bullseye into Bookworm image
-COPY --from=parasail-bullseye /usr/include/parasail /usr/include/parasail
-COPY --from=parasail-bullseye /usr/include/parasail.h /usr/include/parasail.h
-COPY --from=parasail-bullseye /usr/lib/x86_64-linux-gnu/libparasail.so* /usr/lib/x86_64-linux-gnu/
-RUN ldconfig
 
 #download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
 ENV PYTOR_DATA_DIR=/usr/share/cnvpytor_data
