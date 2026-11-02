@@ -110,6 +110,9 @@ jobs:
     with:
       docker-file: src/${{ matrix.module }}/Dockerfile
       docker-image: ugbio_${{ matrix.module }}
+      # A member image with a blocking CRITICAL vulnerability is not pushed;
+      # other members and the PyPI release are not affected (fail-fast: false)
+      cve-policy: block
       commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
       workspace-folder: src/${{ matrix.module }}
       docker-tag: latest
@@ -117,6 +120,8 @@ jobs:
   prepare-next-dev-version:
     runs-on: ubuntu-latest
     needs: [ publish, build-dockers ]
+    # Runs even if a member image was blocked by the CVE gate: the PyPI release already happened
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     steps:
       - uses: actions/checkout@v4
         with:

@@ -111,8 +111,8 @@ jobs:
       base-branch: ${{ inputs.base-branch }}
       project-version: ${{ needs.version.outputs.new_version }}
       runner: ${{ inputs.runner }}
-      # TODO(BIOIN-3152): switch to 'block' once all images in BIOIN-3141 are fixed
-      cve-policy: warn
+      # Releases fail on blocking CRITICAL vulnerabilities (BIOIN-3152)
+      cve-policy: block
 
   release:
     needs: [version, build-docker]
