@@ -161,7 +161,7 @@ jobs:
       # and which commit of the built repository was checked out. Both go into the image labels.
       - name: Record build provenance
         id: provenance
-        uses: Ultimagen/ugbio-utils/.github/actions/build-provenance@ilyasoifer/BIOIN-3173-trace-ugbio-utils-version
+        uses: Ultimagen/ugbio-utils/.github/actions/build-provenance@main
         with:
           github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN || github.token }}
 
