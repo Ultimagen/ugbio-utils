@@ -123,11 +123,19 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
+      # Annotated tag: its message records what was released and how it was built (see BUILD_PROVENANCE)
       - name: Create and push tag
+        env:
+          BUILD_PROVENANCE: |
+            Image: ${{ inputs.docker-image }}:${{ needs.version.outputs.docker_tag }}
+            Image digest: ${{ needs.build-docker.outputs.image-digest }}
+            ${{ github.repository }} commit: ${{ needs.build-docker.outputs.source-sha }}
+            ugbio-utils commit (docker-build-push.yml): ${{ needs.build-docker.outputs.ugbio-utils-sha }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ needs.version.outputs.new_version }} ${{ github.sha }}
+          git tag -a ${{ needs.version.outputs.new_version }} ${{ github.sha }} \
+            -m "Release ${{ needs.version.outputs.new_version }}" -m "${BUILD_PROVENANCE}"
           git push origin ${{ needs.version.outputs.new_version }}
 
       - name: Create GitHub Release
@@ -138,13 +146,23 @@ jobs:
         with:
           tag_name: ${{ needs.version.outputs.new_version }}
           release_name: Release ${{ needs.version.outputs.new_version }}
+          body: |
+            - Image: `${{ inputs.docker-image }}:${{ needs.version.outputs.docker_tag }}`
+            - Image digest: `${{ needs.build-docker.outputs.image-digest }}`
+            - ${{ github.repository }} commit: `${{ needs.build-docker.outputs.source-sha }}`
+            - ugbio-utils commit (docker-build-push.yml): `${{ needs.build-docker.outputs.ugbio-utils-sha }}`
           draft: false
           prerelease: false
 
       - name: Update action summary
+        env:
+          IMAGE_DIGEST: ${{ needs.build-docker.outputs.image-digest }}
+          UGBIO_UTILS_SHA: ${{ needs.build-docker.outputs.ugbio-utils-sha }}
         run: |
           VERSION=${{ needs.version.outputs.new_version }}
           REPO=${{ github.repository }}
           echo "### Release" >> ${GITHUB_STEP_SUMMARY}
           echo "- **Version:** ${VERSION}" >> ${GITHUB_STEP_SUMMARY}
           echo "- **Tag:** [${VERSION}](https://github.com/${REPO}/releases/tag/${VERSION})" >> ${GITHUB_STEP_SUMMARY}
+          echo "- **Image digest:** \`${IMAGE_DIGEST}\`" >> ${GITHUB_STEP_SUMMARY}
+          echo "- **ugbio-utils commit:** \`${UGBIO_UTILS_SHA}\`" >> ${GITHUB_STEP_SUMMARY}
