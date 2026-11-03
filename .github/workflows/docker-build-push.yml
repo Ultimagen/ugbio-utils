@@ -103,8 +103,8 @@ jobs:
     runs-on: ${{ inputs.runner }}
     outputs:
       image-digest: ${{ steps.push.outputs.image_digest }}
-      source-sha: ${{ steps.provenance.outputs.source_sha }}
-      ugbio-utils-sha: ${{ steps.provenance.outputs.ugbio_utils_sha }}
+      source-sha: ${{ steps.provenance.outputs.source-sha }}
+      ugbio-utils-sha: ${{ steps.provenance.outputs.ugbio-utils-sha }}
 
     steps:
       # The image is built into the runner's Docker and scanned before it is pushed, which needs disk
@@ -159,38 +159,11 @@ jobs:
 
       # Callers use this workflow by branch (@main), so record exactly which ugbio-utils commit runs it,
       # and which commit of the built repository was checked out. Both go into the image labels.
-      # The job's OIDC token names this workflow file and its commit (job_workflow_ref/_sha); callers
-      # already grant id-token: write. Fallback: the run's referenced_workflows.
       - name: Record build provenance
         id: provenance
-        env:
-          GH_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN || github.token }}
-        run: |
-          set -euo pipefail
-          workflow_ref=""
-          workflow_sha=""
-          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            token=$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=ugbio-utils-provenance" | \
-              python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])') || token=""
-            if [ -n "${token}" ]; then
-              read -r workflow_ref workflow_sha < <(python3 -c '
-          import base64, json, sys
-          payload = sys.argv[1].split(".")[1]
-          claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-          print(claims.get("job_workflow_ref", ""), claims.get("job_workflow_sha", ""))' "${token}") || true
-            fi
-          fi
-          if [ -z "${workflow_sha}" ]; then
-            read -r workflow_ref workflow_sha < <(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-              --jq '.referenced_workflows[] | select(.path | startswith("Ultimagen/ugbio-utils/.github/workflows/docker-build-push.yml")) | "\(.path) \(.sha)"' \
-              | head -1) || true
-          fi
-          source_sha=$(git rev-parse HEAD)
-          echo "ugbio_utils_ref=${workflow_ref:-unknown}" >> "${GITHUB_OUTPUT}"
-          echo "ugbio_utils_sha=${workflow_sha:-unknown}" >> "${GITHUB_OUTPUT}"
-          echo "source_sha=${source_sha}" >> "${GITHUB_OUTPUT}"
-          echo "ugbio-utils: ${workflow_ref:-unknown} (${workflow_sha:-unknown}); ${{ inputs.git-repo }}: ${source_sha}"
+        uses: Ultimagen/ugbio-utils/.github/actions/build-provenance@ilyasoifer/BIOIN-3173-trace-ugbio-utils-version
+        with:
+          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN || github.token }}
 
       - name: Set tag based on commit sha
         id: set-tag
@@ -288,9 +261,9 @@ jobs:
             ${{ inputs.docker-build-args }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ inputs.git-repo }}
-            org.opencontainers.image.revision=${{ steps.provenance.outputs.source_sha }}
-            com.ultimagenomics.ugbio-utils.ref=${{ steps.provenance.outputs.ugbio_utils_ref }}
-            com.ultimagenomics.ugbio-utils.sha=${{ steps.provenance.outputs.ugbio_utils_sha }}
+            org.opencontainers.image.revision=${{ steps.provenance.outputs.source-sha }}
+            com.ultimagenomics.ugbio-utils.ref=${{ steps.provenance.outputs.ugbio-utils-ref }}
+            com.ultimagenomics.ugbio-utils.sha=${{ steps.provenance.outputs.ugbio-utils-sha }}
 
       - name: Trivy image scan
         id: trivy-gate
@@ -314,6 +287,13 @@ jobs:
           echo "image_digest=$(docker inspect --format '{{ index .RepoDigests 0 }}' "${SCAN_REF}" | sed 's/.*@//')" >> "${GITHUB_OUTPUT}"
 
       - name: Update action summary with built tags
+        # Values reach the script as environment variables, never as shell source (a branch name may hold $(...))
+        env:
+          IMAGE_DIGEST: ${{ steps.push.outputs.image_digest }}
+          GIT_REPO: ${{ inputs.git-repo }}
+          SOURCE_SHA: ${{ steps.provenance.outputs.source-sha }}
+          UGBIO_UTILS_REF: ${{ steps.provenance.outputs.ugbio-utils-ref }}
+          UGBIO_UTILS_SHA: ${{ steps.provenance.outputs.ugbio-utils-sha }}
         run: |
           echo "### ECR LOGIN" >> ${GITHUB_STEP_SUMMARY}
           echo "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ steps.ecr-login.outputs.registry }}" >> ${GITHUB_STEP_SUMMARY}
@@ -324,7 +304,7 @@ jobs:
             echo "- ${dest}" >> ${GITHUB_STEP_SUMMARY}
           done
           echo "### BUILD PROVENANCE" >> ${GITHUB_STEP_SUMMARY}
-          echo "- Image digest: \`${{ steps.push.outputs.image_digest }}\`" >> ${GITHUB_STEP_SUMMARY}
-          echo "- ${{ inputs.git-repo }} commit: \`${{ steps.provenance.outputs.source_sha }}\`" >> ${GITHUB_STEP_SUMMARY}
-          echo "- ugbio-utils: \`${{ steps.provenance.outputs.ugbio_utils_ref }}\` at \`${{ steps.provenance.outputs.ugbio_utils_sha }}\`" >> ${GITHUB_STEP_SUMMARY}
+          echo "- Image digest: \`${IMAGE_DIGEST}\`" >> ${GITHUB_STEP_SUMMARY}
+          echo "- ${GIT_REPO} commit: \`${SOURCE_SHA}\`" >> ${GITHUB_STEP_SUMMARY}
+          echo "- ugbio-utils: \`${UGBIO_UTILS_REF}\` at \`${UGBIO_UTILS_SHA}\`" >> ${GITHUB_STEP_SUMMARY}
           echo "- Stored in the image labels: \`docker inspect --format '{{ json .Config.Labels }}' <image>\`" >> ${GITHUB_STEP_SUMMARY}
