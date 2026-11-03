@@ -153,35 +153,99 @@ def _iter_intervals(path: str):
             yield fields[0], start, int(fields[2])
 
 
+_ACGT_CODES = np.frombuffer(b"ACGT", dtype=np.uint8)
+
+
+def _seq_codes(seq: str) -> np.ndarray:
+    """Uppercased sequence as a uint8 array (one byte per base)."""
+    return np.frombuffer(seq.upper().encode("ascii"), dtype=np.uint8)
+
+
+def _run_length_from(flags: np.ndarray) -> np.ndarray:
+    """For each position x, the number of consecutive True values in ``flags`` starting at x."""
+    m = flags.size
+    idx = np.arange(m, dtype=np.int64)
+    next_false = np.where(flags, m, idx)
+    next_false = np.minimum.accumulate(next_false[::-1])[::-1]
+    return next_false - idx
+
+
+def _homopolymer_runs(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(base code, length) of every maximal run of identical bytes in ``arr``."""
+    if arr.size == 0:
+        return arr[:0], np.zeros(0, dtype=np.int64)
+    starts = np.concatenate(([0], np.flatnonzero(arr[1:] != arr[:-1]) + 1))
+    lengths = np.diff(np.concatenate((starts, [arr.size])))
+    return arr[starts], lengths
+
+
 def homopolymer_run_length_histogram(path: str, ref_fasta: str) -> dict[int, int]:
     """Histogram ``{run_length: n_runs}`` of maximal homopolymer runs (A/C/G/T) within the intervals.
 
     A homopolymer-indel error opportunity occurs ~once per homopolymer run (not per base), so per-run-length
     counts are the opportunity denominators of the per-run-length-bin hmer recalibration tables (bins are
     defined on ``X_HMER_RUN``, the reference run length the indel changes). Runs are counted within each
-    interval independently (runs spanning interval boundaries are not merged).
+    interval independently (runs spanning interval boundaries are not merged). Vectorized with numpy
+    (run boundaries + bincount), so a whole-genome interval list takes seconds, not hours.
     """
     import pysam  # local import: pysam is heavy and only needed here
 
-    hist: dict[int, int] = {}
+    counts = np.zeros(1, dtype=np.int64)
     with pysam.FastaFile(ref_fasta) as fa:
         for chrom, start, end in _iter_intervals(path):
-            seq = fa.fetch(chrom, start - 1, end).upper()  # pysam fetch is 0-based half-open
-            n = len(seq)
-            i = 0
-            while i < n:
-                j = i
-                while j < n and seq[j] == seq[i]:
-                    j += 1
-                if seq[i] in "ACGT":
-                    hist[j - i] = hist.get(j - i, 0) + 1
-                i = j
-    return hist
+            bases, lengths = _homopolymer_runs(_seq_codes(fa.fetch(chrom, start - 1, end)))  # 0-based half-open
+            lengths = lengths[np.isin(bases, _ACGT_CODES)]
+            if lengths.size:
+                per = np.bincount(lengths)
+                if per.size > counts.size:
+                    counts = np.pad(counts, (0, per.size - counts.size))
+                counts[: per.size] += per
+    return {int(length): int(n) for length, n in enumerate(counts) if n}
 
 
 def count_homopolymer_runs_in_interval_list(path: str, ref_fasta: str, min_run: int = 2) -> int:
     """Count maximal homopolymer runs of length >= ``min_run`` within the intervals (see the histogram)."""
     return sum(n for length, n in homopolymer_run_length_histogram(path, ref_fasta).items() if length >= min_run)
+
+
+def _str_loci_in_sequence(arr: np.ndarray, min_unit: int, max_unit: int, min_copies: int) -> int:
+    """Greedy count of maximal STR loci in one sequence (same semantics as the original per-base scan).
+
+    At each position i, take the longest tandem repeat over unit sizes ``min_unit..max_unit`` with at least
+    ``min_copies`` copies (units must not be homopolymers; ties keep the smaller unit), count it and jump past
+    it; otherwise advance by one base. Copy counts for every (position, unit) come from vectorized period-u
+    match runs; only the greedy jump walk is a Python loop, over candidate positions.
+    """
+    n = arr.size
+    if n == 0:
+        return 0
+    same_next = _run_length_from(arr[1:] == arr[:-1]) if n > 1 else np.zeros(0, dtype=np.int64)
+    best = np.zeros(n, dtype=np.int64)
+    for u in range(min_unit, max_unit + 1):
+        if n <= u:
+            continue
+        copies = np.ones(n, dtype=np.int64)
+        copies[: n - u] += _run_length_from(arr[u:] == arr[:-u]) // u
+        span = copies * u
+        ok = copies >= min_copies
+        # a homopolymer unit (all u bases identical) is an hmer, not an STR: same_next[i] >= u-1
+        hmer_unit = np.zeros(n, dtype=bool)
+        hmer_unit[: same_next.size] = same_next >= u - 1
+        ok &= ~hmer_unit
+        np.maximum(best, np.where(ok, span, 0), out=best)
+    candidates = np.flatnonzero(best)
+    if candidates.size == 0:
+        return 0
+    # Greedy walk = follow "next candidate starting at/after this STR's end" from the first candidate. The
+    # pointers are computed in one vectorized searchsorted; the walk then visits only the counted loci.
+    nxt = np.searchsorted(candidates, candidates + best[candidates]).tolist()
+    n_cand = candidates.size
+    n_str = 0
+    j = 0
+    while j < n_cand:
+        n_str += 1
+        j = nxt[j]
+    return n_str
 
 
 def count_str_loci_in_interval_list(
@@ -190,34 +254,14 @@ def count_str_loci_in_interval_list(
     """Count maximal short-tandem-repeat loci (unit 2..6 bp, >= ``min_copies`` copies) in the intervals.
 
     Non-homopolymer-indel "opportunity" denominator analog of the homopolymer-run count. Non-overlapping
-    maximal STRs are counted once each.
+    maximal STRs are counted once each (greedy, left to right, within each interval).
     """
     import pysam
 
     n_str = 0
     with pysam.FastaFile(ref_fasta) as fa:
         for chrom, start, end in _iter_intervals(path):
-            seq = fa.fetch(chrom, start - 1, end).upper()
-            n = len(seq)
-            i = 0
-            while i < n:
-                best = 0
-                for u in range(min_unit, max_unit + 1):
-                    if i + min_copies * u > n:
-                        continue
-                    unit = seq[i : i + u]
-                    if len(set(unit)) < _MIN_STR_UNIT_DISTINCT_BASES:  # skip homopolymer units (hmer, not STR)
-                        continue
-                    k = 0
-                    while i + (k + 1) * u <= n and seq[i + k * u : i + (k + 1) * u] == unit:
-                        k += 1
-                    if k >= min_copies and k * u > best:
-                        best = k * u
-                if best:
-                    n_str += 1
-                    i += best
-                else:
-                    i += 1
+            n_str += _str_loci_in_sequence(_seq_codes(fa.fetch(chrom, start - 1, end)), min_unit, max_unit, min_copies)
     return n_str
 
 
