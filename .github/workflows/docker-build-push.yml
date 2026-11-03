@@ -103,8 +103,8 @@ jobs:
     runs-on: ${{ inputs.runner }}
     outputs:
       image-digest: ${{ steps.push.outputs.image_digest }}
-      source-sha: ${{ steps.provenance.outputs.source-sha }}
-      ugbio-utils-sha: ${{ steps.provenance.outputs.ugbio-utils-sha }}
+      source-sha: ${{ steps.provenance.outputs.source_sha }}
+      ugbio-utils-sha: ${{ job.workflow_sha }}
 
     steps:
       # The image is built into the runner's Docker and scanned before it is pushed, which needs disk
@@ -157,13 +157,12 @@ jobs:
         with:
           length: 7
 
-      # Callers use this workflow by branch (@main), so record exactly which ugbio-utils commit runs it,
-      # and which commit of the built repository was checked out. Both go into the image labels.
-      - name: Record build provenance
+      # Callers use this workflow by branch (@main): job.workflow_ref/job.workflow_sha name this workflow
+      # file and the ugbio-utils commit it runs from. With the checked-out commit of the built repository
+      # (git-ref may be a branch), they go into the image labels.
+      - name: Record the built commit
         id: provenance
-        uses: Ultimagen/ugbio-utils/.github/actions/build-provenance@main
-        with:
-          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN || github.token }}
+        run: echo "source_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
       - name: Set tag based on commit sha
         id: set-tag
@@ -261,9 +260,9 @@ jobs:
             ${{ inputs.docker-build-args }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ inputs.git-repo }}
-            org.opencontainers.image.revision=${{ steps.provenance.outputs.source-sha }}
-            com.ultimagenomics.ugbio-utils.ref=${{ steps.provenance.outputs.ugbio-utils-ref }}
-            com.ultimagenomics.ugbio-utils.sha=${{ steps.provenance.outputs.ugbio-utils-sha }}
+            org.opencontainers.image.revision=${{ steps.provenance.outputs.source_sha }}
+            com.ultimagenomics.ugbio-utils.ref=${{ job.workflow_ref }}
+            com.ultimagenomics.ugbio-utils.sha=${{ job.workflow_sha }}
 
       - name: Trivy image scan
         id: trivy-gate
@@ -291,9 +290,9 @@ jobs:
         env:
           IMAGE_DIGEST: ${{ steps.push.outputs.image_digest }}
           GIT_REPO: ${{ inputs.git-repo }}
-          SOURCE_SHA: ${{ steps.provenance.outputs.source-sha }}
-          UGBIO_UTILS_REF: ${{ steps.provenance.outputs.ugbio-utils-ref }}
-          UGBIO_UTILS_SHA: ${{ steps.provenance.outputs.ugbio-utils-sha }}
+          SOURCE_SHA: ${{ steps.provenance.outputs.source_sha }}
+          UGBIO_UTILS_REF: ${{ job.workflow_ref }}
+          UGBIO_UTILS_SHA: ${{ job.workflow_sha }}
         run: |
           echo "### ECR LOGIN" >> ${GITHUB_STEP_SUMMARY}
           echo "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ steps.ecr-login.outputs.registry }}" >> ${GITHUB_STEP_SUMMARY}
