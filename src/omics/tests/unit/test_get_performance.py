@@ -99,7 +99,8 @@ def test_performance(mock_get_run_info, mock_boto3_client, mock_run_info, mock_l
 
     total_performance_df = performance(run_id, output_dir=output_dir, output_prefix=output_prefix)
 
-    expected_df = pd.read_csv(resources_dir / "expected_performance.csv")
+    # the mock log is a CPU task (Host Information line without GPU), so the empty gpu column is read as text
+    expected_df = pd.read_csv(resources_dir / "expected_performance.csv", dtype={"gpu": object})
     pd.testing.assert_frame_equal(total_performance_df, expected_df)
 
 
@@ -148,6 +149,40 @@ def test_monitor_log_process_line_invalid_data():
     assert monitor_log.df["IO_rKb/s"].iloc[0] == 0.0
     assert monitor_log.df["IO_wKb/s"].iloc[0] == 0.0
     assert monitor_log.df["IOWait"].iloc[0] == 0.0
+
+
+def test_monitor_log_process_line_host_info_cpu_only():
+    monitor_log = MonitorLog()
+    line = "MONITORING, [Sun Oct 18 11:54:26 UTC 2026], Host Information, CPU model: Intel(R) Xeon(R) Platinum 8275CL CPU @ 3.00GHz"  # noqa: E501
+    monitor_log.process_line(line)
+    assert monitor_log.cpu_model == "Intel(R) Xeon(R) Platinum 8275CL CPU @ 3.00GHz"
+    assert monitor_log.gpu is None
+    # the host line is not a usage sample
+    assert monitor_log.df.empty
+
+
+def test_monitor_log_process_line_host_info_with_gpus():
+    monitor_log = MonitorLog()
+    line = "MONITORING, [Sun Oct 18 12:43:04 UTC 2026], Host Information, CPU model: AMD EPYC 7R13 Processor, GPU: NVIDIA L4;NVIDIA L4"  # noqa: E501
+    monitor_log.process_line(line)
+    assert monitor_log.cpu_model == "AMD EPYC 7R13 Processor"
+    assert monitor_log.gpu == "NVIDIA L4;NVIDIA L4"
+    assert monitor_log.df.empty
+
+
+def test_monitor_log_host_info_does_not_change_usage_stats():
+    monitor_log = MonitorLog()
+    for line in [
+        "MONITORING, [Sun Oct 18 11:54:26 UTC 2026], General Information, CPU: 2, Memory(GiB): 3",
+        "MONITORING, [Sun Oct 18 11:54:26 UTC 2026], Host Information, CPU model: AMD EPYC 9R14",
+        "MONITORING, [Sun Oct 18 11:54:35 UTC 2026], %CPU: 63.20, %Memory: 22.50",
+        "MONITORING, [Sun Oct 18 11:54:45 UTC 2026], %CPU: 54.10, %Memory: 22.90",
+    ]:
+        monitor_log.process_line(line)
+    assert monitor_log.df.shape[0] == 2
+    assert monitor_log.df["CPU"].mean() == pytest.approx(58.65)
+    assert monitor_log.total_cpu == 2
+    assert monitor_log.cpu_model == "AMD EPYC 9R14"
 
 
 def test_monitor_log_process_line_no_monitoring():

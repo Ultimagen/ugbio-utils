@@ -915,6 +915,7 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913, PLR0917
     *,
     collapsed=False,
     include_quality: bool = False,
+    is_mixed_col: str | None = None,
 ):
     """Calculate and plot trinuc histogram, optionally with quality panels.
 
@@ -946,6 +947,14 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913, PLR0917
         "fwd_only": using only forward-strand reads.
     include_quality : bool
         Whether to include quality panels
+    split_col : str
+        Column used to split the quality panels into groups (default "is_mixed"; the report passes the
+        display variant's trinuc split column, e.g. "is_mixed_start", or the N-group read_group column).
+    group_specs : list, optional
+        Explicit (stats column prefix, label, color) group specs for N-group splits.
+    is_mixed_col : str, optional
+        Backward-compatible alias of ``split_col`` (e.g. "is_mixed_start" for start-tag mixed on start-only
+        ppmSeq). Overrides ``split_col`` when given.
 
     Returns
     -------
@@ -961,7 +970,7 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913, PLR0917
         label_col=label_col,
         is_forward_col=is_forward_col,
         qual_col=qual_col,
-        is_mixed_col=split_col,
+        is_mixed_col=is_mixed_col if is_mixed_col is not None else split_col,
         order=order,
         labels=labels,
         q1=q1,

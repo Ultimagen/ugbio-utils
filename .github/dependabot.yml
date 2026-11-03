@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Docker base image updates
+  - package-ecosystem: "docker"
+    directories:
+      - "/src/*"
+      - "/ugbio_base"
+      - "/"
+    schedule:
+      interval: "weekly"
+    # Disables regular version updates completely
+    open-pull-requests-limit: 0
+    labels:
+      - "dependencies"
+
+  # Python dependencies (UV workspace) - scan only, no PRs
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Disables regular version updates completely
+    open-pull-requests-limit: 0

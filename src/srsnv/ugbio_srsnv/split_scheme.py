@@ -334,7 +334,9 @@ MIXED_SCHEME = SplitScheme(
             neg_lc="non-mixed",
             tag_axis="ppmSeq tag",
             hist_col_name=IS_MIXED_START,
-            trinuc_split_col=IS_MIXED,
+            # BIOIN-3125: split trinuc quality panels by the start tag; the both-ends is_mixed collapses to
+            # all-False on start-only ppmSeq (no et tag) and would force a single "all reads" curve.
+            trinuc_split_col=IS_MIXED_START,
             trinuc_group_specs=None,
             fq_conditions_fn=_mixed_display_fq_conditions,
         ),

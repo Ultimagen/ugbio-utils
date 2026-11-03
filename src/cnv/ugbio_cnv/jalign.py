@@ -462,10 +462,17 @@ def _fetch_reads_at_breakpoints(
     """
     reads = {}
     refs_extents = []
+    # CNV calls can end past the contig end; an unclamped window then yields an empty
+    # reference and para_jalign segfaults
+    contig_len = reads_file.get_reference_length(chrom)
+    if start >= contig_len:
+        # Nothing to realign: the whole CNV lies past the contig end
+        logger.warning(f"CNV {chrom}:{start}-{end} starts past the contig end ({contig_len}), skipping")
+        return reads, refs_extents
 
-    for loc in [start, end]:
+    for loc in [start, min(end, contig_len)]:
         rmin = max(0, loc - config.fetch_read_padding)
-        rmax = loc + config.fetch_read_padding
+        rmax = min(contig_len, loc + config.fetch_read_padding)
 
         for read in reads_file.fetch(
             chrom,
@@ -489,7 +496,7 @@ def _fetch_reads_at_breakpoints(
 
     # Extend references with additional padding
     refs_extents[0][0] = max(0, refs_extents[0][0] - config.fetch_ref_padding)
-    refs_extents[1][1] = refs_extents[1][1] + config.fetch_ref_padding
+    refs_extents[1][1] = min(contig_len, refs_extents[1][1] + config.fetch_ref_padding)
 
     return reads, refs_extents
 
@@ -525,13 +532,10 @@ def _extract_references(
 def _write_alignment_input(
     reads: dict[str, pysam.AlignedSegment],
     refs: list[tuple[int, str]],
-    temp_dir: Path,
-    chrom: str,
-    start: int,
-    end: int,
+    input_file: Path,
     config: JAlignConfig,
     log_file: TextIO | None = None,
-) -> tuple[Path, list[pysam.AlignedSegment]]:
+) -> list[pysam.AlignedSegment]:
     """Write input file for jump alignment tool.
 
     Parameters
@@ -540,14 +544,8 @@ def _write_alignment_input(
         Mapping of read names to AlignedSegment objects
     refs : list of tuples
         Reference sequences with (start_pos, sequence)
-    temp_dir : Path
-        Directory for temporary files
-    chrom : str
-        Chromosome name
-    start : int
-        CNV start position
-    end : int
-        CNV end position
+    input_file : Path
+        Path of the input file to write
     config : JAlignConfig
         Configuration parameters
     log_file : file-like object, optional
@@ -555,9 +553,8 @@ def _write_alignment_input(
 
     Returns
     -------
-    tuple
-        - Path to created input file
-        - List of reads in order written
+    list
+        Reads in the order written
     """
     # Subsample if too many reads
     subsample_ratio = 1.0
@@ -565,8 +562,6 @@ def _write_alignment_input(
         subsample_ratio = config.max_reads_per_cnv / len(reads)
         logger.info(f"Subsampling reads with ratio {subsample_ratio:.3f}")
 
-    # Create input file
-    input_file = temp_dir / f"jalign_{chrom}_{start}_{end}_{os.getpid()}.txt"
     reads_in_order = []
     ref_emitted = False
 
@@ -590,7 +585,7 @@ def _write_alignment_input(
                 log_file.write(line)
 
     logger.info(f"Wrote {len(reads_in_order)} reads to {input_file}")
-    return input_file, reads_in_order
+    return reads_in_order
 
 
 def _evaluate_alignment_scores(
@@ -1062,15 +1057,14 @@ def process_cnv(
     if header is None:
         header = create_bam_header(reads_file.header)
 
-    # Write alignment input file
-    input_file, reads_in_order = _write_alignment_input(reads, refs, temp_dir, chrom, start, end, config, log_file)
-
-    # Create output JSON file path
+    input_file = temp_dir / f"jalign_{chrom}_{start}_{end}_{os.getpid()}.txt"
     output_file = temp_dir / f"jalign_{chrom}_{start}_{end}_{os.getpid()}_output.json"
-    alignment_cmd = config.build_alignment_command(input_file, output_file)
-
-    # Run jump alignment tool
     try:
+        # Write alignment input file
+        reads_in_order = _write_alignment_input(reads, refs, input_file, config, log_file)
+        alignment_cmd = config.build_alignment_command(input_file, output_file)
+
+        # Run jump alignment tool
         run_alignment_tool(alignment_cmd, log_file)
 
         # Parse results from JSON file
@@ -1098,11 +1092,9 @@ def process_cnv(
         # Count supporting alignments
         counts = _count_supporting_alignments(result_df, config)
     finally:
-        # Clean up temporary files
-        if input_file.exists():
-            input_file.unlink()
-        if output_file.exists():
-            output_file.unlink()
+        # Clean up temporary files; missing_ok tolerates delayed deletes on shared storage (e.g. HealthOmics)
+        input_file.unlink(missing_ok=True)
+        output_file.unlink(missing_ok=True)
 
     if log_file:
         log_file.write(f"<<< alignments: {chrom}:{start}-{end}\n")

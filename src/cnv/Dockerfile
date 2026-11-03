@@ -1,8 +1,8 @@
 # BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE)
-# Pinned to bullseye (1.7.0) — bookworm migration blocked by libparasail8 incompatibility (DATA-9903)
-ARG BASE_IMAGE=ugbio_base:1.7.0
+ARG BASE_IMAGE
 ARG OUT_DIR=/tmp/ugbio
-FROM python:3.11-bullseye AS build
+
+FROM python:3.11-bookworm AS build
 
 ARG OUT_DIR
 ARG MODULE_DIR=cnv
@@ -21,8 +21,9 @@ FROM $BASE_IMAGE
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
 
-# Install basic dependencies
-RUN apt-get update && \
+# Install basic dependencies; upgrade first to pick up security fixes missing from the base image
+# (e.g. ugbio_base:1.8.6 ships perl 5.36.0-7+deb12u3, CRITICAL CVE-2026-13221/-42496/-8376, fixed in deb12u4)
+RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     g++ \
     gfortran \
@@ -40,9 +41,9 @@ RUN apt-get update && \
     libncurses5-dev \
     libncursesw5-dev \
     libopenblas-dev \
-    libstdc++-10-dev \
-    libparasail3 libparasail-dev \
+    libstdc++-12-dev \
     libhdf5-dev \
+    libparasail8 \
     tzdata \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
@@ -59,11 +60,11 @@ RUN apt-get update && \
     software-properties-common && \
     gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
     gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' | tee /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
-    echo "deb https://cloud.r-project.org/bin/linux/debian bullseye-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
+    echo "deb https://cloud.r-project.org/bin/linux/debian bookworm-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-    r-base=4.5.1-1~bullseyecran.0 \
-    r-base-dev=4.5.1-1~bullseyecran.0 && \
+    r-base=4.5.3-1~bookwormcran.0 \
+    r-base-dev=4.5.3-1~bookwormcran.0 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -107,7 +108,7 @@ RUN apt-get update && \
 RUN R -e "install.packages(c('argparse', 'BiocManager', 'bitops', 'codetools', 'findpython', 'futile.logger', 'futile.options', 'lambda.r'), repos='https://cloud.r-project.org/', Ncpus=4)"
 
 # Install Bioconductor packages - using Ncpus for parallel compilation
-RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase', 'GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'rhdf5', 'rhdf5filters', 'Rhtslib', 'Rsamtools', 'rtracklayer'), ask=FALSE, update=FALSE, Ncpus=4)"
+RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase', 'GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'rhdf5', 'rhdf5filters', 'Rhtslib', 'Rsamtools', 'GenomicAlignments', 'BSgenome', 'VariantAnnotation'), ask=FALSE, Ncpus=4)"
 
 # Remove unnecessary files
 RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
@@ -115,14 +116,16 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
-# Download para_jalign binary from private jalign repository
-ARG JALIGN_VERSION=1.4.1
+# Download para_jalign binary from private jalign repository.
+# The bookworm build links the distro libparasail8 (parasail 2.6) and uses its striped kernels,
+# since the parasail 2.6 diag kernels return corrupted scores/cigars (DATA-9903)
+ARG JALIGN_VERSION=1.4.2
 RUN --mount=type=secret,id=github_token \
     if [ ! -f /run/secrets/github_token ]; then \
         echo "ERROR: Authentication required to download dependencies" && exit 1; \
     fi && \
     GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
-    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bullseye-x64" && \
+    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bookworm-x64" && \
     echo "Looking for asset: ${ASSET_NAME}" && \
     curl -sL \
         -H "Accept: application/vnd.github+json" \
@@ -153,7 +156,10 @@ ARG OUT_DIR
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
 COPY --from=build ${OUT_DIR} ${OUT_DIR}
-RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
+
+# Build pywfa and pyabpoa without -march=native, so the image runs on hosts without AVX-512
+RUN PYWFA_MARCH=x86-64-v3 pip install --no-binary pywfa "pywfa>=0.6.0"
+RUN AVX2=1 pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
 
 #download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
 ENV PYTOR_DATA_DIR=/usr/share/cnvpytor_data

@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_utils"
-version = "1.28.2-0"
+version = "1.33.2-0"
 description = "Ultima Genomics bioinfo utils"
 authors = [
     { name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" },
@@ -42,6 +42,12 @@ pre-commit-group = [
 default-groups = [
     "dev",
 ]
+
+[tool.uv.extra-build-variables.pywfa]
+PYWFA_MARCH = "x86-64-v3"
+
+[tool.uv.extra-build-variables.pyabpoa]
+AVX2 = "1"
 
 [tool.uv.workspace]
 members = [

@@ -240,7 +240,7 @@ class TestMergeCnvSvVcfs:
             assert "CNV2" in record_ids
 
     def test_excluded_svs_in_output(self, tmp_path, cnv_vcf_header, fasta_index):
-        """Test that excluded SVs (non-DEL/DUP excl. BND, non-PASS DEL/DUP, small PASS DEL/DUP) are in output."""
+        """Test that excluded SVs (non-DEL/DUP incl. BND, non-PASS DEL/DUP, small PASS DEL/DUP) are in output."""
         # Create CNV VCF (non-overlapping with SV_DEL_PASS)
         cnv_vcf_path = tmp_path / "test_cnv_excluded.vcf.gz"
         with pysam.VariantFile(str(cnv_vcf_path), "w", header=cnv_vcf_header) as vcf:
@@ -262,7 +262,7 @@ class TestMergeCnvSvVcfs:
             inv_rec.info["SVTYPE"] = "INV"
             vcf.write(inv_rec)
 
-            # BND type - should be excluded completely (not in output)
+            # BND type - should be excluded from merge but included in output
             bnd_rec = make_cnv_record(vcf, "chr1", 10000, 12000, "SV_BND", "BND", qual=750.0)
             bnd_rec.info["SVTYPE"] = "BND"
             vcf.write(bnd_rec)
@@ -306,8 +306,8 @@ class TestMergeCnvSvVcfs:
             # INV should be present (excluded but added back)
             assert "SV_INV" in record_ids, "INV should be in output"
 
-            # BND should NOT be present (excluded completely)
-            assert "SV_BND" not in record_ids, "BND should NOT be in output"
+            # BND should be present (excluded but added back)
+            assert "SV_BND" in record_ids, "BND should be in output"
 
             # Failed filter DEL should be present (excluded but added back)
             assert "SV_DEL_LOWQUAL" in record_ids, "Non-PASS DEL should be in output"
@@ -321,6 +321,55 @@ class TestMergeCnvSvVcfs:
                     assert "LowQual" in record.filter, "Filter value should be preserved"
                 if record.id in ["SV_INV", "SV_DEL_SHORT"]:
                     assert "PASS" in record.filter, "PASS filter should be preserved"
+
+    def test_breakend_pairs_in_output(self, tmp_path, cnv_vcf_header, fasta_index):
+        """Both breakends of a BND pair are added back to the output unchanged."""
+        cnv_vcf_path = tmp_path / "test_cnv_bnd.vcf.gz"
+        with pysam.VariantFile(str(cnv_vcf_path), "w", header=cnv_vcf_header) as vcf:
+            vcf.write(make_cnv_record(vcf, "chr1", 50000, 60000, "CNV1", "DEL", qual=35.0, cnv_source="cnvpytor"))
+        pysam.tabix_index(str(cnv_vcf_path), preset="vcf", force=True)
+
+        sv_vcf_header = cnv_vcf_header.copy()
+        sv_vcf_header.add_line('##INFO=<ID=MATEID,Number=.,Type=String,Description="ID of mate breakend">')
+        sv_vcf_path = tmp_path / "test_sv_bnd.vcf.gz"
+        # Inversion-type breakend pair as written by the GRIDSS converter (no END or SVLEN)
+        breakends = [
+            ("BND_1o", 10000, "T", "T]chr1:30000]", "BND_1h"),
+            ("BND_1h", 30000, "G", "G]chr1:10000]", "BND_1o"),
+        ]
+        with pysam.VariantFile(str(sv_vcf_path), "w", header=sv_vcf_header) as vcf:
+            vcf.write(make_cnv_record(vcf, "chr1", 5000, 5500, "SV_DEL_SHORT", "DEL", qual=700.0))
+            for record_id, pos, ref, alt, mate_id in breakends:
+                record = vcf.new_record(contig="chr1", start=pos - 1, alleles=(ref, alt), id=record_id, qual=2000.0)
+                record.info["SVTYPE"] = "BND"
+                record.info["MATEID"] = (mate_id,)
+                record.filter.add("PASS")
+                record.samples["test_sample"]["GT"] = (1, 1)
+                vcf.write(record)
+        pysam.tabix_index(str(sv_vcf_path), preset="vcf", force=True)
+
+        output_vcf = tmp_path / "merged_with_bnd.vcf.gz"
+        merge_cnv_sv_vcfs(
+            cnv_vcf=str(cnv_vcf_path),
+            sv_vcf=str(sv_vcf_path),
+            output_vcf=str(output_vcf),
+            fasta_index=fasta_index,
+            min_sv_length=1000,
+            min_sv_qual=600,
+        )
+
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = {record.id: record for record in vcf}
+            assert {"CNV1", "SV_DEL_SHORT", "BND_1o", "BND_1h"} <= set(records)
+            for record_id, pos, _, alt, mate_id in breakends:
+                record = records[record_id]
+                assert record.pos == pos
+                assert record.alts == (alt,)
+                assert record.info["MATEID"] == (mate_id,)
+                assert "END" not in record.info
+                assert "SVLEN" not in record.info
+                assert record.stop == pos
+                assert record.filter.keys() == ["PASS"]
 
     def test_excluded_cnvs_lack_merge_metadata(self, tmp_path, cnv_vcf_header, fasta_index):
         """Verify excluded (non-PASS) CNVs have CNV_SOURCE but lack CNV_ID.

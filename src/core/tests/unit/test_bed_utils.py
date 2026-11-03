@@ -1,3 +1,6 @@
+import gzip
+import subprocess
+
 import pytest
 from ugbio_core.bed_utils import BedUtils
 
@@ -381,3 +384,47 @@ def test_count_bases_in_bed_file(tmpdir):
         result = BedUtils().count_bases_in_bed_file(str(bed_file))
         # 100 + 200 + 500 = 800 bases
         assert result == 800
+
+
+def test_sort_and_merge_bed_merges_overlaps(tmp_path):
+    raw = tmp_path / "overlap.bed"
+    raw.write_text("chr1\t50\t100\nchr1\t0\t60\nchr2\t5\t10\n", encoding="utf-8")
+    out = BedUtils().sort_and_merge_bed(str(raw), str(tmp_path / "merged.bed"))
+    assert out == str(tmp_path / "merged.bed")
+    assert (tmp_path / "merged.bed").read_text(encoding="utf-8") == "chr1\t0\t100\nchr2\t5\t10\n"
+
+
+def test_merged_bed_size_counts_overlaps_once(tmp_path):
+    raw = tmp_path / "overlap.bed"
+    raw.write_text("chr1\t0\t100\nchr1\t50\t100\nchr2\t0\t10\n", encoding="utf-8")
+    assert BedUtils().merged_bed_size(str(raw)) == 110
+    assert BedUtils().count_bases_in_bed_file(str(raw)) == 160
+
+
+def test_merged_bed_size_propagates_upstream_failure(tmp_path):
+    with pytest.raises(subprocess.CalledProcessError):
+        BedUtils().merged_bed_size(str(tmp_path / "missing.bed"))
+
+
+def test_check_bed_disjoint(tmp_path):
+    bed_utils = BedUtils()
+    ok = tmp_path / "ok.bed"
+    ok.write_text("chr1\t200\t250\nchr1\t100\t150\n# c\n", encoding="utf-8")
+    bed_utils.check_bed_disjoint(str(ok))
+    bad = tmp_path / "bad.bed"
+    bad.write_text("chr1\t0\t100\nchr1\t50\t100\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="overlapping"):
+        bed_utils.check_bed_disjoint(str(bad))
+
+
+def test_sum_bedgraph_weighted_bases(tmp_path):
+    bg = tmp_path / "cov.bedGraph.gz"
+    with gzip.open(bg, "wt") as fh:
+        fh.write("chr1\t0\t100\t10\nchr1\t100\t200\t20\nchr10\t0\t100\t5\n")
+    targets = tmp_path / "t.bed"
+    targets.write_text("chr1\t100\t150\nchr10\t0\t100\n", encoding="utf-8")
+    bed_utils = BedUtils()
+    assert bed_utils.sum_bedgraph_weighted_bases(str(bg)) == 3500
+    assert bed_utils.sum_bedgraph_weighted_bases(str(bg), restrict_to_bed=str(targets)) == 50 * 20 + 100 * 5
+    with pytest.raises(subprocess.CalledProcessError):
+        bed_utils.sum_bedgraph_weighted_bases(str(tmp_path / "nope.bedGraph.gz"))
