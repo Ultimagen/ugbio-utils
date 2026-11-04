@@ -383,6 +383,19 @@ def test_calc_run_info_table_content_validation(test_resources_calc_run_info, re
                 key in quality_summary_modern.index
             ), f"Expected key {key} not found in run_quality_summary_table_mixed_start"
 
+        # Validate absolute (end-to-end) recall tables carry the recall@SNVQ keys.
+        quality_summary_absolute_legacy = pd.read_hdf(h5_file, key="run_quality_summary_table_absolute")
+        for key in expected_legacy_keys:
+            assert (
+                key in quality_summary_absolute_legacy.index
+            ), f"Expected key {key} not found in run_quality_summary_table_absolute"
+
+        quality_summary_absolute = pd.read_hdf(h5_file, key="run_quality_summary_table_absolute_mixed_start")
+        for key in expected_modern_keys:
+            assert (
+                key in quality_summary_absolute.index
+            ), f"Expected key {key} not found in run_quality_summary_table_absolute_mixed_start"
+
         # Validate training_info_table structure
         training_info = pd.read_hdf(h5_file, key="training_info_table")
 
@@ -466,6 +479,61 @@ def test_calc_run_info_table_numerical_validation(test_resources_calc_run_info, 
         # Basic checks on structure
         assert isinstance(quality_summary, pd.Series), "run_quality_summary_table should be a Series"
         assert len(quality_summary) > 0, "run_quality_summary_table should not be empty"
+
+
+def test_calc_run_info_table_absolute_recall_relationship(test_resources_calc_run_info, real_models_calc_run_info):
+    """Absolute recall@SNVQ must equal relative recall@SNVQ times the pre-filter recall."""
+    featuremap_df, metadata, metadata_path = test_resources_calc_run_info
+
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        temp_metadata_file = os.path.join(temp_output_dir, "test_metadata.json")
+        with open(temp_metadata_file, "w") as f:
+            json.dump(metadata, f)
+
+        categorical_features = [f for f in metadata["features"] if f["type"] == "c"]
+        numerical_features = [f for f in metadata["features"] if f["type"] != "c"]
+
+        params = {
+            "workdir": temp_output_dir,
+            "data_name": "test_run",
+            "categorical_features_names": [f["name"] for f in categorical_features],
+            "categorical_features_dict": {f["name"]: list(f["values"].keys()) for f in categorical_features},
+            "numerical_features": [f["name"] for f in numerical_features],
+            "fp_regions_bed_file": 1,
+            "num_CV_folds": len(real_models_calc_run_info),
+        }
+
+        report = SRSNVReport(
+            models=real_models_calc_run_info,
+            data_df=featuremap_df.copy(),
+            params=params,
+            out_path=temp_output_dir,
+            srsnv_metadata=temp_metadata_file,
+            base_name="test_",
+            raise_exceptions=True,
+        )
+
+        report.plot_fq_recall(only_calculate=True)
+        report.calc_run_info_table()
+
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        relative = pd.read_hdf(h5_file, key="run_quality_summary_table_mixed_start")
+        absolute = pd.read_hdf(h5_file, key="run_quality_summary_table_absolute_mixed_start")
+
+        # Absolute recall = relative recall * pre-filter recall (per category), within signif() rounding.
+        prefilter_recall = {
+            "All reads": relative[("Pre-filter Recall", "All reads")],
+            "Mixed": relative[("Pre-filter Recall", "Mixed")],
+        }
+        for snvq in (50, 60, 70):
+            for category, base_recall in prefilter_recall.items():
+                key = (f"Recall at SNVQ={snvq}", category)
+                expected = relative[key] * base_recall
+                assert absolute[key] == pytest.approx(
+                    expected, rel=1e-2, abs=1e-6
+                ), f"Absolute recall {key}={absolute[key]} should equal relative*prefilter={expected}"
+                # Absolute (end-to-end) recall can never exceed the prefilter-relative recall.
+                assert absolute[key] <= relative[key] + 1e-6
 
 
 def test_plot_logit_histograms_writes_legacy_and_mixed_start_keys(
