@@ -614,20 +614,22 @@ def _make_skip_rule_data(signatures):
 
     ``signatures``: list of (sig_type, sig_name, n_loci, n_supported, ctdna_vaf).  Each supported
     locus has 1 read, plus one extra hot locus (100 reads) that the Poisson filter removes
-    whenever it runs on that signature.
+    whenever it runs on that signature.  ``corrected_coverage`` is set so reads / coverage = ctdna_vaf.
     """
     feats, sigs, tf_rows, tf_index = [], [], [], []
     for sig_type, sig_name, n_loci, n_supported, vaf in signatures:
         chrom = f"chr_{sig_name}"
+        n_reads = n_supported + 99
+        per_locus_cov = n_reads / vaf / n_loci  # snvq recall = 1, so sum(coverage) == corrected_coverage
         sigs += [
-            {"chrom": chrom, "pos": i, "signature": sig_name, "signature_type": sig_type, "coverage": 100.0}
+            {"chrom": chrom, "pos": i, "signature": sig_name, "signature_type": sig_type, "coverage": per_locus_cov}
             for i in range(n_loci)
         ]
         for i in range(n_supported - 1):
             feats.append({"chrom": chrom, "pos": i, "signature": sig_name, "signature_type": sig_type})
         feats += [{"chrom": chrom, "pos": n_loci - 1, "signature": sig_name, "signature_type": sig_type}] * 100
         tf_index.append((sig_type, sig_name))
-        tf_rows.append({"ctdna_vaf": vaf, "supporting_reads": n_supported + 99, "corrected_coverage": n_loci * 100.0})
+        tf_rows.append({"ctdna_vaf": vaf, "supporting_reads": n_reads, "corrected_coverage": n_reads / vaf})
     df_features = pd.DataFrame(feats).set_index(["chrom", "pos"])
     df_signatures = pd.DataFrame(sigs).set_index(["chrom", "pos"])
     df_tf = pd.DataFrame(tf_rows, index=pd.MultiIndex.from_tuples(tf_index, names=["signature_type", "signature"]))
@@ -645,7 +647,7 @@ def _hot_locus_kept(df_out, sig_name, n_loci):
         (1.2e-2, 1200, 30_000, True),  # high TF with broad support: 4% of loci
         (1.2e-2, 100, 30_000, False),  # high VAF driven by few loci (0.3%, e.g. germline contamination)
         (5e-4, 1200, 30_000, False),  # low TF: filter must run
-        (1e-3, 1200, 30_000, False),  # VAF threshold is strict
+        (9.9e-4, 1200, 30_000, False),  # just below the VAF threshold
         (1.2e-2, 300, 30_000, True),  # supported fraction exactly at threshold (1%)
         (1e-2, 50, 2_000, True),  # same 50 supported loci: 2.5% of a small signature
         (1e-2, 50, 130_000, False),  # ... but 0.04% of a large one
@@ -693,6 +695,59 @@ def test_apply_multi_read_locus_filter_skip_rule_disabled_by_default():
 
     assert not _hot_locus_kept(df_out, "m", 30_000)
     assert info["skipped_signatures"] == []
+
+
+def test_apply_multi_read_locus_filter_skip_rule_ignores_reads_at_excluded_loci():
+    """Matched reads at a locus excluded for matched (but kept for a control) must not count toward the rule.
+
+    df_tf is built from reads at the union of all signatures' active loci, so such a read would raise
+    the supported fraction from 19/1999 (0.95%) to 20/2000 (1%) and wrongly open the gate.
+    """
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    n_loci, n_supported, excluded_pos = 2_000, 19, 1_999
+    df_signatures = pd.DataFrame(
+        [
+            {"chrom": "chr1", "pos": i, "signature": "m", "signature_type": "matched", "coverage": 100.0}
+            for i in range(n_loci)
+        ]
+        + [
+            {
+                "chrom": "chr1",
+                "pos": excluded_pos,
+                "signature": "syn0",
+                "signature_type": "db_control",
+                "coverage": 100.0,
+            }
+        ]
+    ).set_index(["chrom", "pos"])
+    df_features = pd.DataFrame(
+        [{"chrom": "chr1", "pos": i, "signature": "m", "signature_type": "matched"} for i in range(n_supported)]
+        + [{"chrom": "chr1", "pos": excluded_pos, "signature": "m", "signature_type": "matched"}]
+    ).set_index(["chrom", "pos"])
+    corrected_coverage = (n_loci - 1) * 100.0 * 0.01  # active matched loci only; VAF ~ 1e-2
+    df_tf = pd.DataFrame(
+        [{"ctdna_vaf": 20 / corrected_coverage, "supporting_reads": 20, "corrected_coverage": corrected_coverage}],
+        index=pd.MultiIndex.from_tuples([("matched", "m")], names=["signature_type", "signature"]),
+    )
+    excluded = {"m": pd.MultiIndex.from_tuples([("chr1", excluded_pos)], names=["chrom", "pos"])}
+
+    _, info = apply_multi_read_locus_filter(
+        df_features,
+        df_tf,
+        df_signatures,
+        0.01,
+        skip_min_vaf=1e-3,
+        skip_min_supported_fraction=0.01,
+        excluded_loci=excluded,
+    )
+    assert info["skipped_signatures"] == []
+
+    # Without the exclusion the same data would (wrongly) pass the rule.
+    _, info_no_excl = apply_multi_read_locus_filter(
+        df_features, df_tf, df_signatures, 0.01, skip_min_vaf=1e-3, skip_min_supported_fraction=0.01
+    )
+    assert [s["signature"] for s in info_no_excl["skipped_signatures"]] == ["m"]
 
 
 def test_apply_multi_read_locus_filter_removes_outlier_db_control_loci():
