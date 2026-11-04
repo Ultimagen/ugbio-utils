@@ -356,7 +356,7 @@ def _gate_inputs(matched_vaf: float, n_supported_loci: int, signature_size: int 
 @pytest.mark.parametrize(
     "matched_vaf,n_loci,expected_skip",
     [
-        (1.2e-2, 1200, True),  # high TF with broad support: 4% of loci (VHIO ULT_111-like)
+        (1.2e-2, 1200, True),  # high TF with broad support: 4% of loci
         (1.2e-2, 100, False),  # high VAF driven by few loci (0.3%, e.g. germline contamination)
         (5e-4, 1200, False),  # low TF: filter must run
         (1e-3, 1200, False),  # VAF threshold is strict
