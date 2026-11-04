@@ -1,5 +1,43 @@
+from types import SimpleNamespace
+
 import pandas as pd
-from ugbio_mrd.mrd_report_renderer import render_intersection_snvq_combined
+from ugbio_mrd.mrd_report_renderer import (
+    _format_vaf_ci,
+    render_binomial_distribution,
+    render_intersection_snvq_combined,
+)
+
+
+def _detection(**overrides):
+    values = {
+        "vaf_ci_low": 7.2e-4,
+        "vaf_ci_high": 1.5e-3,
+        "total_coverage": 83_788.0,
+        "snvq_recall": 0.36,
+        "noise_rate": 3.2e-6,
+        "matched_supporting_reads": 32,
+        "p_value": 1e-10,
+        "alpha": 0.01,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_format_vaf_ci():
+    assert _format_vaf_ci(_detection()) == "7.2 \u00d7 10\u207b\u2074 \u2013 1.5 \u00d7 10\u207b\u00b3"
+
+
+def test_format_vaf_ci_zero_lower_bound():
+    assert _format_vaf_ci(_detection(vaf_ci_low=0.0)).startswith("0 \u2013 ")
+
+
+def test_format_vaf_ci_not_available():
+    assert _format_vaf_ci(_detection(vaf_ci_low=None, vaf_ci_high=None)) == "N/A"
+
+
+def test_render_binomial_distribution_uses_raw_coverage():
+    assert render_binomial_distribution(_detection()) != ""
+    assert render_binomial_distribution(_detection(total_coverage=0.0)) == ""
 
 
 def test_render_intersection_snvq_combined_all_below_display_floor():

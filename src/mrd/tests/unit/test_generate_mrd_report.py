@@ -111,6 +111,9 @@ def test_generate_mrd_report_detection_output(output_path, mrd_report_inputs):
         "mean_coverage",
         "corrected_coverage",
         "alpha",
+        "matched_ctdna_vaf_ci_low",
+        "matched_ctdna_vaf_ci_high",
+        "ci_level",
     ]
     for field in expected_fields:
         assert field in detection, f"Missing field: {field}"
@@ -136,6 +139,11 @@ def test_generate_mrd_report_detection_output(output_path, mrd_report_inputs):
 
     # Verify mean coverage is reasonable
     assert detection["mean_coverage"] > 0
+
+    # The VAF confidence interval brackets the point estimate
+    assert detection["ci_level"] == 0.95
+    assert detection["matched_ctdna_vaf_ci_low"] <= detection["matched_ctdna_vaf"]
+    assert detection["matched_ctdna_vaf"] <= detection["matched_ctdna_vaf_ci_high"]
 
 
 def test_generate_mrd_report_snvq_scoring_failure_forces_indeterminate(output_path, mrd_report_inputs, monkeypatch):
@@ -193,6 +201,8 @@ def test_generate_mrd_report_html_contains_detection_banner(output_path, mrd_rep
     assert "Sample-specific LOD" in html_content or "sample_specific_lod" in html_content.lower()
     assert "Supporting Reads" in html_content
 
+    # Report should show the ctDNA VAF confidence interval
+    assert "95% CI:" in html_content
     # Report should contain the assay metrics section
     assert "Signature Size" in html_content
     assert "Mean Coverage" in html_content
