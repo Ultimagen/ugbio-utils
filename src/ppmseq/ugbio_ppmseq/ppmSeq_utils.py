@@ -1,6 +1,5 @@
 # noqa: N999
 import itertools
-import json
 import os
 import warnings
 from collections import defaultdict
@@ -26,6 +25,8 @@ from ugbio_ppmseq.ppmSeq_consts import STRAND_RATIO_AXIS_LABEL
 class PpmseqAdapterVersions(Enum):
     LEGACY_V5 = "legacy_v5"
     V1 = "v1"
+    SOLARIS2_PPMSEQ = "Solaris2_ppmSeq"  # regular ppmSeq, identical to V1
+    SOLARIS2_PPMSEQ_PLUS = "Solaris2_ppmSeq_plus"  # ppmSeq+ v8.9: single loop at the read start, no end tag
 
 
 # Trimmer segment labels and tags
@@ -71,7 +72,8 @@ class HistogramColumnNames(Enum):
 
 
 # Per-read ppmSeq tag names expected in the subsampled SAM.
-SR_TAG = "sr"  # strand ratio (float, from raw signal)
+SR_TAG = "sr"  # strand ratio (float, from raw signal on the classic ppmSeq loop)
+MR_TAG = "mr"  # strand mixture ratio (float, from raw signal on the ppmSeq+ loop)
 ST_TAG = "st"  # start-loop category (MINUS / PLUS / MIXED / UNDETERMINED)
 ET_TAG = "et"  # end-loop category
 TM_TAG = "tm"  # trimming reasons; contains "A" when the adapter was seen (end reached)
@@ -141,6 +143,7 @@ STRAND_RATIO_UPPER_THRESH = 0.73
 MIN_TOTAL_HMER_LENGTHS_IN_LOOPS = 4
 MAX_TOTAL_HMER_LENGTHS_IN_LOOPS = 8
 MIN_STEM_END_MATCHED_LENGTH = 11  # the stem is 12bp, 1 indel allowed as tolerance
+NO_TRIMMING_FORMAT = "no trimming"  # Trimmer format name of the ppmSeq_plus st-tag continue chain
 BASE_PATH = Path(__file__).parent
 REPORTS_DIR = "reports"
 
@@ -278,7 +281,7 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
                         self.sr_lower,
                         self.sr_upper,
                     )  # this works for nan values as well - returns UNDETERMINED
-            else:  # v1 — st/et tags already carry the category
+            else:  # v1 / Solaris2_* — st/et tags already carry the category
                 record.info[HistogramColumnNames.ST.value] = record.info.get(
                     HistogramColumnNames.ST.value, PpmseqCategories.UNDETERMINED.value
                 )
@@ -326,6 +329,93 @@ def _assert_adapter_version_supported(
             )
 
 
+ADAPTER_VERSIONS_WITHOUT_END_TAG = (PpmseqAdapterVersions.SOLARIS2_PPMSEQ_PLUS.value,)
+
+
+def adapter_version_has_end_tag(adapter_version: str | PpmseqAdapterVersions) -> bool:
+    """
+    Whether reads of this adapter version carry an end-loop tag (et).
+
+    ppmSeq+ (Solaris2_ppmSeq_plus) has a single ppmSeq loop at the read start and no end loop,
+    so every end-tag statistic is meaningless for it and is left out of the QC report.
+
+    Parameters
+    ----------
+    adapter_version : str | PpmseqAdapterVersions
+        adapter version to check
+
+    Returns
+    -------
+    bool
+        False for adapter versions without an end loop, True otherwise
+    """
+    _assert_adapter_version_supported(adapter_version)
+    value = adapter_version.value if isinstance(adapter_version, PpmseqAdapterVersions) else adapter_version
+    return value not in ADAPTER_VERSIONS_WITHOUT_END_TAG
+
+
+# Adapter versions whose st tag is called from the mr tag (ppmSeq+ loop) instead of sr.
+ADAPTER_VERSIONS_USING_MR_TAG = (PpmseqAdapterVersions.SOLARIS2_PPMSEQ_PLUS.value,)
+
+# Display names of the per-read strand-ratio tags, used in plot labels.
+STRAND_RATIO_TAG_DISPLAY_NAMES = {
+    SR_TAG: STRAND_RATIO_AXIS_LABEL,
+    MR_TAG: "Strand Mixture Ratio",
+}
+
+
+def adapter_version_strand_ratio_tag(adapter_version: str | PpmseqAdapterVersions) -> str:
+    """
+    The per-read strand-ratio tag that the st tag is called from for this adapter version.
+
+    ppmSeq+ (Solaris2_ppmSeq_plus) calls st from ``mr`` (flows of the ppmSeq+ loop); every
+    other adapter version calls it from ``sr`` (flows of the classic ppmSeq loop).
+
+    Parameters
+    ----------
+    adapter_version : str | PpmseqAdapterVersions
+        adapter version to check
+
+    Returns
+    -------
+    str
+        ``MR_TAG`` or ``SR_TAG``
+    """
+    _assert_adapter_version_supported(adapter_version)
+    value = adapter_version.value if isinstance(adapter_version, PpmseqAdapterVersions) else adapter_version
+    return MR_TAG if value in ADAPTER_VERSIONS_USING_MR_TAG else SR_TAG
+
+
+def select_strand_ratio_tag(adapter_version: str | PpmseqAdapterVersions, df_reads: pd.DataFrame) -> str:
+    """
+    The strand-ratio tag the QC report plots for this adapter version and set of reads.
+
+    This is :func:`adapter_version_strand_ratio_tag`, except that when it is ``mr`` and no
+    read carries ``mr`` the report falls back to ``sr``. Callers should label the fallback.
+
+    Parameters
+    ----------
+    adapter_version : str | PpmseqAdapterVersions
+        adapter version
+    df_reads : pd.DataFrame
+        per-read dataframe from :func:`read_tags_from_subsampled_sam`
+
+    Returns
+    -------
+    str
+        ``MR_TAG`` or ``SR_TAG``
+    """
+    tag = adapter_version_strand_ratio_tag(adapter_version)
+    if tag == MR_TAG and not has_sr_tag(df_reads, tag=MR_TAG):
+        return SR_TAG
+    return tag
+
+
+def strand_ratio_axis_label(tag: str = SR_TAG) -> str:
+    """Axis label naming the plotted strand-ratio tag, e.g. ``Strand Mixture Ratio (mr)``."""
+    return f"{STRAND_RATIO_TAG_DISPLAY_NAMES[tag]} ({tag})"
+
+
 def get_strand_ratio_category(strand_ratio, sr_lower, sr_upper) -> str:
     """
     Determine the strand ratio category
@@ -359,7 +449,7 @@ def read_tags_from_subsampled_sam(
     output_filename: str = None,
 ) -> pd.DataFrame:
     """
-    Read per-read ppmSeq tags (sr, st, et, tm) from the subsampled SAM/BAM/CRAM produced by sorter.
+    Read per-read ppmSeq tags (sr, mr, st, et, tm) from the subsampled SAM/BAM/CRAM produced by sorter.
 
     Parameters
     ----------
@@ -377,6 +467,8 @@ def read_tags_from_subsampled_sam(
         One row per read with columns:
           - ``sr`` (float): strand ratio from raw signal. NaN on reads whose sr tag is
             absent; the report's sr-dependent sections are skipped when every read lacks it.
+          - ``mr`` (float): strand mixture ratio from raw signal on the ppmSeq+ loop. NaN on
+            reads whose mr tag is absent. The ppmSeq_plus report plots mr instead of sr.
           - ``st`` (str): start-loop category (MINUS / PLUS / MIXED / UNDETERMINED).
           - ``et`` (str): end-loop category; empty string when the ``et`` tag is absent.
           - ``tm`` (str): trimming-reason string (e.g. ``A``, ``AQZ``). Empty string when
@@ -421,6 +513,11 @@ def read_tags_from_subsampled_sam(
                 # without the sr-based sections.
                 sr = for_sr_nan
             try:
+                mr = float(rec.get_tag(MR_TAG))
+            except KeyError:
+                # mr is optional too: only ppmSeq+ reads from recent base callers carry it.
+                mr = for_sr_nan
+            try:
                 et = rec.get_tag(ET_TAG)
             except KeyError:
                 et = ""
@@ -432,10 +529,10 @@ def read_tags_from_subsampled_sam(
                 tm = ""
             read_len = rec.query_length or 0
             rows.append(
-                (sr, str(st), str(et), str(tm), int(read_len), not rec.is_unmapped),
+                (sr, mr, str(st), str(et), str(tm), int(read_len), not rec.is_unmapped),
             )
 
-    df_reads = pd.DataFrame(rows, columns=[SR_TAG, ST_TAG, ET_TAG, TM_TAG, "read_length", "is_aligned"])
+    df_reads = pd.DataFrame(rows, columns=[SR_TAG, MR_TAG, ST_TAG, ET_TAG, TM_TAG, "read_length", "is_aligned"])
     df_reads[HistogramColumnNames.COUNT.value] = 1
     is_end_reached = df_reads[TM_TAG].str.contains("A", na=False)
     undetermined = PpmseqCategories.UNDETERMINED.value
@@ -457,17 +554,19 @@ def read_tags_from_subsampled_sam(
     return df_reads
 
 
-def has_sr_tag(df_reads: pd.DataFrame) -> bool:
-    """Return True if at least one read in the per-read dataframe carries a non-NaN sr value.
+def has_sr_tag(df_reads: pd.DataFrame, tag: str = SR_TAG) -> bool:
+    """Return True if at least one read in the per-read dataframe carries a non-NaN value of
+    the strand-ratio tag ``tag`` (``sr`` by default, ``mr`` for ppmSeq_plus).
 
     Used to decide whether the sr-dependent report sections (Figure 3 "Overall strand-ratio
     distribution" and Figure 4 "Strand-ratio by end-tag category") should be rendered at all.
     """
-    return df_reads[SR_TAG].notna().any()
+    return bool(tag in df_reads.columns and df_reads[tag].notna().any())
 
 
-def all_reads_have_sr_tag(df_reads: pd.DataFrame) -> bool:
-    """Return True only when every read in the per-read dataframe has a non-NaN sr value.
+def all_reads_have_sr_tag(df_reads: pd.DataFrame, tag: str = SR_TAG) -> bool:
+    """Return True only when every read in the per-read dataframe has a non-NaN value of the
+    strand-ratio tag ``tag`` (``sr`` by default, ``mr`` for ppmSeq_plus).
 
     Used to decide whether the start-axis UNDETERMINED category can be safely suppressed in
     the category / concordance plots. When sr is present on every read the Trimmer --compare
@@ -475,7 +574,7 @@ def all_reads_have_sr_tag(df_reads: pd.DataFrame) -> bool:
     one read is missing sr, st could still legitimately be UNDETERMINED for that read, so we
     keep the bar/row.
     """
-    return len(df_reads) > 0 and df_reads[SR_TAG].notna().all()
+    return bool(len(df_reads) > 0 and tag in df_reads.columns and df_reads[tag].notna().all())
 
 
 def group_trimmer_histogram_by_strand_ratio_category(
@@ -751,8 +850,25 @@ def read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv: str):
         If the columns are not as expected
     """
     df_trimmer_failure_codes = read_trimmer_failure_codes(
-        trimmer_failure_codes_csv, include_failed_rsq=False, add_total=True
+        trimmer_failure_codes_csv, include_failed_rsq=False, add_total=False
     )
+    # ppmSeq_plus "no trimming" rows are the st-tag `continue` chain: "comparison failed" only
+    # routes the read to the next st value, it never rejects it, so they are not failures.
+    df_trimmer_failure_codes = df_trimmer_failure_codes[df_trimmer_failure_codes["format"] != NO_TRIMMING_FORMAT]
+    # PCT_failed_total: reads rejected by Trimmer / reads into Trimmer for this read group, RSQ-failed
+    # reads excluded from both (same denominator as the other PCT_failed_* rows).
+    failed_read_count = df_trimmer_failure_codes["failed_read_count"].sum()
+    total_read_count = df_trimmer_failure_codes["total_read_count"].iloc[0]
+    total_row = pd.DataFrame(
+        {
+            "format": [df_trimmer_failure_codes["format"].iloc[0]],
+            "failed_read_count": [failed_read_count],
+            "total_read_count": [total_read_count],
+            "PCT_failure": [100 * failed_read_count / total_read_count],
+        },
+        index=pd.MultiIndex.from_tuples([("total", "total")], names=["segment", "reason"]),
+    )
+    df_trimmer_failure_codes = pd.concat([df_trimmer_failure_codes, total_row])
     adapter_dimers_index = ("insert", "sequence was too short")
     adapter_dimers = (
         df_trimmer_failure_codes.reindex([adapter_dimers_index]).fillna(0).loc[adapter_dimers_index, "PCT_failure"]
@@ -923,9 +1039,8 @@ def collect_statistics(
             store["trimmer_failure_codes"] = df_trimmer_failure_codes
             store["failure_codes_metrics"] = df_failure_codes_metrics
             keys_to_convert += ["trimmer_failure_codes", "failure_codes_metrics"]
-        # keys_to_convert is consumed by convert_h5_to_papyrus_json to decide which HDF keys
-        # to flatten into the shareable Papyrus JSON. Kept in the HDF for downstream tools
-        # that need the same list (analytics DB ingestion, etc.).
+        # Papyrus application-QC ingestion (DataEngineering) reads keys_to_convert to choose
+        # which tables in this HDF5 to load.
         store["keys_to_convert"] = pd.Series(keys_to_convert)
 
 
@@ -1021,6 +1136,9 @@ def plot_strand_ratio_category(
         st=UNDETERMINED and hiding their bar would be misleading. The end-tag axis keeps
         UNDETERMINED regardless because et is base-called.
 
+    For adapter versions without an end loop (see :func:`adapter_version_has_end_tag`) only the
+    start-tag bars are plotted.
+
     Returns
     -------
         matplotlib.axes.Axes
@@ -1036,12 +1154,15 @@ def plot_strand_ratio_category(
         plt.sca(ax)
 
     # group by category
+    end_columns_to_drop = [HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value]
+    if not adapter_version_has_end_tag(adapter_version):
+        end_columns_to_drop.append(HistogramColumnNames.STRAND_RATIO_CATEGORY_END_NO_UNREACHED.value)
 
     df_trimmer_histogram_by_strand_ratio_category = (
         (group_trimmer_histogram_by_strand_ratio_category(adapter_version, df_trimmer_histogram))
         .drop(PpmseqCategories.END_UNREACHED.value, errors="ignore")
         .drop(
-            columns=[HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value],
+            columns=end_columns_to_drop,
             errors="ignore",
         )
         .rename(
@@ -1199,7 +1320,7 @@ _SR_TITLE_FONTSIZE = 28
 _SR_AXIS_LABEL_FONTSIZE = 20
 
 # Vertical lines at the sr thresholds used by the Solaris-2 --compare cascade (MIXED band edges).
-_SR_THRESHOLD_LINES = (0.2, 0.8)
+_SR_THRESHOLD_LINES = (0.25, 0.75)
 
 # Colors for sr-by-et facets; one per end-tag category so the per-category panels read at a glance.
 _SR_CATEGORY_COLORS = {
@@ -1234,12 +1355,13 @@ def plot_sr_histogram(
     title: str = "",
     output_filename: str = None,
     ax: plt.Axes = None,
+    tag: str = SR_TAG,
 ) -> plt.Axes:
     """
     Plot the overall strand-ratio histogram across all reads. Bins are 0.01 wide and the
-    y-axis is a percentage of total reads. Reads with sr outside [0, 1] are clipped to the
-    edge bins so they remain visible. Two dashed guide lines at 0.2 and 0.8 mark the
-    thresholds used by the Solaris-2 ``--compare`` cascade.
+    y-axis is a percentage of total reads. Reads with values outside [0, 1] are clipped to the
+    edge bins so they remain visible. Two dashed guide lines at 0.25 and 0.75 mark the
+    thresholds used to call st.
 
     Parameters
     ----------
@@ -1251,6 +1373,9 @@ def plot_sr_histogram(
         if provided, save the plot.
     ax : matplotlib.axes.Axes, optional
         axes to plot on.
+    tag : str, optional
+        strand-ratio tag to plot, ``sr`` (default) or ``mr`` (ppmSeq_plus, see
+        :func:`select_strand_ratio_tag`). The x-axis label names it.
     """
     set_pyplot_defaults()
     if ax is None:
@@ -1258,9 +1383,9 @@ def plot_sr_histogram(
         ax = plt.gca()
     else:
         plt.sca(ax)
-    sr_values = df_reads[SR_TAG].dropna()
+    sr_values = df_reads[tag].dropna()
     _plot_sr_hist_on_ax(ax, sr_values, "xkcd:royal blue")
-    ax.set_xlabel(STRAND_RATIO_AXIS_LABEL, fontsize=_SR_AXIS_LABEL_FONTSIZE)
+    ax.set_xlabel(strand_ratio_axis_label(tag), fontsize=_SR_AXIS_LABEL_FONTSIZE)
     ax.set_ylabel("Frequency (%)", fontsize=_SR_AXIS_LABEL_FONTSIZE)
     title_handle = plt.title(title, fontsize=_SR_TITLE_FONTSIZE)
     if output_filename is not None:
@@ -1318,7 +1443,7 @@ def plot_sr_by_et(
         _plot_sr_hist_on_ax(ax, sr_values, _SR_CATEGORY_COLORS[et_val])
         ax.set_title(f"et={et_val}", fontsize=_SR_TITLE_FONTSIZE)
         ax.set_ylabel("Frequency (%)", fontsize=_SR_AXIS_LABEL_FONTSIZE)
-    axs[-1].set_xlabel(STRAND_RATIO_AXIS_LABEL, fontsize=_SR_AXIS_LABEL_FONTSIZE)
+    axs[-1].set_xlabel(strand_ratio_axis_label(SR_TAG), fontsize=_SR_AXIS_LABEL_FONTSIZE)
     title_handle = fig.suptitle(title, fontsize=_SR_TITLE_FONTSIZE)
     fig.tight_layout()
     if output_filename is not None:
@@ -1441,77 +1566,6 @@ def build_headline_table(statistics_h5: str) -> pd.Series:
     return shortlist
 
 
-def flatten_strand_ratio_category(h5_file: str, key: str) -> pd.DataFrame:
-    """ "
-    convert the 2D dataframe of strand ratio categories to a 1D dataframe that is readable by Papyrus
-    """
-    df = pd.read_hdf(h5_file, key)  # noqa: PD901
-    df["index_col"] = df.index
-    df = df.reset_index(drop=True)  # noqa: PD901
-    df1 = df.melt(id_vars=["index_col"])
-    df1[""] = df1["index_col"] + "_" + df1["variable"]
-    df2 = df1[["", "value"]]
-    df2 = df2.set_index("")
-    df2 = df2.T
-    df2 = df2.reset_index(drop=True)
-    return df2
-
-
-def flatten_metrics(h5_file: str, key: str) -> pd.DataFrame:
-    """
-    Convert a 1D dataframe to a 1D dataframe that is readable by Papyrus
-    """
-    df = pd.read_hdf(h5_file, key)  # noqa: PD901
-    df.index.names = [""]
-    df = df.T  # noqa: PD901
-    df = df.reset_index(drop=True)  # noqa: PD901
-    return df
-
-
-def convert_h5_to_papyrus_json(h5_file: str, output_json: str) -> str:
-    """
-    Convert a statistics HDF5 file to a Papyrus JSON file
-    """
-    with pd.HDFStore(h5_file, "r") as store:
-        h5_file_keys = store.keys()
-
-    # flatten strand ratio categories
-    strand_ratio_to_convert = [
-        "strand_ratio_category_counts",
-        "strand_ratio_category_norm",
-    ]
-    flatten_dfs = {
-        key: flatten_strand_ratio_category(h5_file, key) for key in strand_ratio_to_convert if f"/{key}" in h5_file_keys
-    }
-
-    # flatten 1D dataframes
-    keys_to_convert = [
-        "stats_shortlist",
-        "mixed_reads_stats",
-        "sorter_stats",
-        "strand_ratio_category_consensus",
-    ]
-    flatten_dfs.update({key: flatten_metrics(h5_file, key) for key in keys_to_convert if f"/{key}" in h5_file_keys})
-
-    # category concordance
-    if "/strand_ratio_category_concordance" in h5_file_keys or "strand_ratio_category_concordance" in h5_file_keys:
-        df_category_concordance = pd.read_hdf(h5_file, "/strand_ratio_category_concordance")
-        df_category_concordance.index = df_category_concordance.index.to_flat_index()
-        df_category_concordance = df_category_concordance.to_frame().rename(
-            columns={HistogramColumnNames.COUNT_NORM.value: 0}
-        )
-        df_category_concordance = df_category_concordance.T
-        flatten_dfs["category_concordance"] = df_category_concordance
-
-    # wrap all in one json
-    root_element = "metrics"
-    new_json_dict = {root_element: {}}
-    new_json_dict[root_element] = {key: json.loads(df.to_json(orient="table")) for key, df in flatten_dfs.items()}
-
-    with open(output_json, "w", encoding="utf-8") as f:
-        json.dump(new_json_dict, f, indent=2)
-
-
 def ppmseq_qc_analysis(
     adapter_version: str | PpmseqAdapterVersions,
     subsampled_sam: str,
@@ -1529,19 +1583,23 @@ def ppmseq_qc_analysis(
 
     All per-read QC — including the strand-ratio category plots, the concordance
     heatmap, the sr/sr-by-et histograms, and the aligned-vs-unaligned read-length
-    plot — is derived from the SAM. ``adapter_version`` is validated but no longer
-    branches any logic; all supported versions share the same SAM-based path. It's
-    retained in the signature because existing WDL callers still pass it.
+    plot — is derived from the SAM. All supported versions share the same SAM-based
+    statistics. The only branch is on adapter versions without an end loop
+    (``Solaris2_ppmSeq_plus``, see :func:`adapter_version_has_end_tag`): their report omits
+    every end-tag section (concordance, sr-by-et, end-tag rows and tables) and shows the
+    single-start-loop read-structure diagram. Its strand-ratio histogram and text describe the
+    ``mr`` tag instead of ``sr`` (see :func:`select_strand_ratio_tag`). The HDF5 contents are
+    the same for all versions.
 
     Parameters
     ----------
     adapter_version : str | PpmseqAdapterVersions
-        adapter version; validated but no longer affects QC content.
+        adapter version; selects the report variant with or without end-tag content.
     subsampled_sam : str
         Path to the sorter-produced subsampled sam, bam, or cram file (requires demux
         --sample-nr-reads=N). Pysam picks the format from the extension.
     output_path : str
-        output folder for h5, json, and html.
+        output folder for h5 and html.
     output_basename : str, optional
         basename for output files; defaults to the SAM file basename.
     sorter_stats_csv : str, optional
@@ -1569,7 +1627,6 @@ def ppmseq_qc_analysis(
         output_basename = os.path.basename(subsampled_sam)
 
     output_statistics_h5 = os.path.join(output_path, f"{output_basename}{qc_filename_suffix}.h5")
-    output_statistics_json = os.path.join(output_path, f"{output_basename}{qc_filename_suffix}.json")
     output_report_html = Path(output_path) / f"{output_basename}{qc_filename_suffix}.html"
     output_report_ipynb = os.path.join(output_path, f"{output_basename}{qc_filename_suffix}.ipynb")
     output_strand_ratio_category_plot = os.path.join(output_path, f"{output_basename}.strand_ratio_category.png")
@@ -1595,15 +1652,19 @@ def ppmseq_qc_analysis(
     )
 
     df_reads = pd.read_hdf(output_statistics_h5, "subsampled_reads")
-    convert_h5_to_papyrus_json(output_statistics_h5, output_statistics_json)
-    # Two different semantics here:
+    has_end_tag = adapter_version_has_end_tag(adapter_version)
+    # The strand-ratio tag st was called from: mr for ppmSeq_plus, sr otherwise. ppmSeq_plus
+    # falls back to sr when no read carries mr; the fallback is named in the plot and report.
+    strand_ratio_tag = select_strand_ratio_tag(adapter_version, df_reads)
+    strand_ratio_tag_fallback = strand_ratio_tag != adapter_version_strand_ratio_tag(adapter_version)
+    # Two different semantics here, both on the tag the report plots:
     # - any_sr governs whether to generate the sr-only figures (3/4) at all.
     # - all_sr governs whether it is safe to suppress the UNDETERMINED start-axis bar/row
-    #   in the category + concordance plots. We only do that when every read has sr —
+    #   in the category + concordance plots. We only do that when every read has the tag —
     #   otherwise some reads could legitimately still have st=UNDETERMINED and we'd hide
     #   real data.
-    any_sr = has_sr_tag(df_reads)
-    all_sr = all_reads_have_sr_tag(df_reads)
+    any_sr = has_sr_tag(df_reads, tag=strand_ratio_tag)
+    all_sr = all_reads_have_sr_tag(df_reads, tag=strand_ratio_tag)
 
     plot_strand_ratio_category(
         adapter_version,
@@ -1612,25 +1673,32 @@ def ppmseq_qc_analysis(
         output_filename=output_strand_ratio_category_plot,
         sr_present=all_sr,
     )
-    plot_strand_ratio_category_concordnace(
-        adapter_version,
-        df_reads,
-        title=f"{output_basename} strand ratio category concordance",
-        output_filename=output_strand_ratio_category_concordance_plot,
-        sr_present=all_sr,
-    )
+    if has_end_tag:
+        plot_strand_ratio_category_concordnace(
+            adapter_version,
+            df_reads,
+            title=f"{output_basename} strand ratio category concordance",
+            output_filename=output_strand_ratio_category_concordance_plot,
+            sr_present=all_sr,
+        )
     if any_sr:
+        sr_hist_title = f"{output_basename} {STRAND_RATIO_TAG_DISPLAY_NAMES[strand_ratio_tag].lower()}"
+        if strand_ratio_tag_fallback:
+            sr_hist_title += f" (no {MR_TAG} tag found, showing {strand_ratio_tag})"
         plot_sr_histogram(
             df_reads,
-            title=f"{output_basename} strand ratio",
+            title=sr_hist_title,
             output_filename=output_sr_hist_plot,
+            tag=strand_ratio_tag,
         )
-        plot_sr_by_et(
-            df_reads,
-            title=f"{output_basename} strand ratio by et (end reached)",
-            output_filename=output_sr_by_et_plot,
-        )
-        output_visualization_files.extend([output_sr_hist_plot, output_sr_by_et_plot])
+        output_visualization_files.append(output_sr_hist_plot)
+        if has_end_tag:
+            plot_sr_by_et(
+                df_reads,
+                title=f"{output_basename} strand ratio by et (end reached)",
+                output_filename=output_sr_by_et_plot,
+            )
+            output_visualization_files.append(output_sr_by_et_plot)
     plot_read_length_overall(
         df_reads,
         title=f"{output_basename} read length",
@@ -1641,19 +1709,28 @@ def ppmseq_qc_analysis(
         template_notebook = BASE_PATH / REPORTS_DIR / "ppmSeq_qc_report.ipynb"
         adapter_value = adapter_version if isinstance(adapter_version, str) else adapter_version.value
         logo_path = BASE_PATH / REPORTS_DIR / "ug_logo.b64"
-        illustration_path = BASE_PATH / REPORTS_DIR / "ppmSeq_v1_illustration.png"
+        illustration_name = "ppmSeq_v1_illustration.png" if has_end_tag else "ppmSeq_plus_illustration.png"
+        illustration_path = BASE_PATH / REPORTS_DIR / illustration_name
         parameters = {
             "sample_name": output_basename,
             # The notebook still validates that adapter_version is supported so we keep
             # passing it through, but the report itself never displays it.
             "adapter_version": adapter_value,
+            # False drops every end-tag section from the report and renumbers the rest.
+            "has_end_tag": has_end_tag,
+            # Tag the strand-ratio histogram and its text describe (sr or mr), and whether
+            # ppmSeq_plus fell back to sr because no read carries mr.
+            "strand_ratio_tag": strand_ratio_tag,
+            "strand_ratio_tag_fallback": strand_ratio_tag_fallback,
             "statistics_h5": output_statistics_h5,
             "strand_ratio_category_png": output_strand_ratio_category_plot,
-            "strand_ratio_category_concordance_png": output_strand_ratio_category_concordance_plot,
+            "strand_ratio_category_concordance_png": (
+                output_strand_ratio_category_concordance_plot if has_end_tag else None
+            ),
             # When sr is absent the sr-dependent sections are dropped from the report.
             # Passing None here signals the notebook to skip them.
             "sr_hist_png": output_sr_hist_plot if any_sr else None,
-            "sr_by_et_png": output_sr_by_et_plot if any_sr else None,
+            "sr_by_et_png": output_sr_by_et_plot if any_sr and has_end_tag else None,
             "read_length_png": output_read_length_plot,
             "logo_file": str(logo_path),
             "illustration_file": str(illustration_path),
