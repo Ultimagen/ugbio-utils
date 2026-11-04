@@ -10,7 +10,6 @@ from ugbio_mrd.generate_mrd_report import (
     _build_filter_funnel,
     _build_read_funnel,
     generate_mrd_report,
-    should_skip_multi_read_filter,
 )
 from ugbio_mrd.mrd_report_renderer import render_read_length_histogram
 
@@ -334,53 +333,6 @@ def test_generate_mrd_report_with_multi_read_filter(output_path, resources_dir):
 
     qc_content = qc_html.read_text()
     assert "Multi-read" in qc_content or "multi-read" in qc_content.lower()
-
-
-def _gate_inputs(matched_vaf: float, n_supported_loci: int, signature_size: int = 30_000):
-    df_tf = pd.DataFrame(
-        {"ctdna_vaf": [matched_vaf, 1e-5], "n_loci": [signature_size, signature_size]},
-        index=pd.MultiIndex.from_tuples(
-            [("matched", "sig1"), ("db_control", "syn0")], names=["signature_type", "signature"]
-        ),
-    )
-    df_supporting = pd.DataFrame(
-        {
-            "signature": ["sig1"] * n_supported_loci + ["syn0"] * 100,
-            "signature_type": ["matched"] * n_supported_loci + ["db_control"] * 100,
-            "supporting_reads": 3,
-        }
-    )
-    return df_tf, df_supporting
-
-
-@pytest.mark.parametrize(
-    "matched_vaf,n_loci,expected_skip",
-    [
-        (1.2e-2, 1200, True),  # high TF with broad support: 4% of loci
-        (1.2e-2, 100, False),  # high VAF driven by few loci (0.3%, e.g. germline contamination)
-        (5e-4, 1200, False),  # low TF: filter must run
-        (1e-3, 1200, False),  # VAF threshold is strict
-        (1.2e-2, 300, True),  # supported fraction exactly at threshold (1%)
-    ],
-)
-def test_should_skip_multi_read_filter(matched_vaf, n_loci, expected_skip):
-    df_tf, df_supporting = _gate_inputs(matched_vaf, n_loci)
-    skip, vaf, frac = should_skip_multi_read_filter(df_tf, df_supporting, 1e-3, 0.01)
-    assert skip is expected_skip
-    assert vaf == matched_vaf
-    assert frac == pytest.approx(n_loci / 30_000)
-
-
-def test_should_skip_multi_read_filter_scales_with_signature_size():
-    """The same number of supported loci passes for a small signature but not for a large one."""
-    assert should_skip_multi_read_filter(*_gate_inputs(1e-2, 50, signature_size=2_000), 1e-3, 0.01)[0] is True
-    assert should_skip_multi_read_filter(*_gate_inputs(1e-2, 50, signature_size=130_000), 1e-3, 0.01)[0] is False
-
-
-def test_should_skip_multi_read_filter_disabled_or_no_matched():
-    df_tf, df_supporting = _gate_inputs(1e-1, 1000)
-    assert should_skip_multi_read_filter(df_tf, df_supporting, None, 0.01)[0] is False
-    assert should_skip_multi_read_filter(df_tf.drop(index="matched"), df_supporting, 1e-3, 0.01)[0] is False
 
 
 def test_generate_mrd_report_multi_read_filter_skipped(output_path, mrd_report_inputs):

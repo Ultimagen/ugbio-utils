@@ -25,10 +25,10 @@ BASE_PATH = Path(__file__).parent  # should be: src/mrd/ugbio_mrd
 # Pass None explicitly via MrdReportInputs to disable programmatically.
 DEFAULT_THRESH_NOISE_LQ_READS: float | None = None
 DEFAULT_THRESH_MULTI_READ_PVALUE: float = 0.01
-# The multi-read filter is skipped when the pre-filter matched VAF exceeds this AND at least
-# DEFAULT_MULTI_READ_SKIP_MIN_SUPPORTED_FRACTION of matched loci have support: at high TF real tumour
-# support is far more variable than Poisson and the filter strips true signal, while germline loci
-# would have to make up that fraction of the signature to open the gate on their own.
+# A signature (matched or control) is exempt from the multi-read filter when its own VAF exceeds this
+# AND at least DEFAULT_MULTI_READ_SKIP_MIN_SUPPORTED_FRACTION of its loci have support: at high TF real
+# tumour support is far more variable than Poisson and the filter strips true signal, while germline
+# loci would have to make up that fraction of the signature to open the gate on their own.
 DEFAULT_MULTI_READ_SKIP_MIN_VAF: float = 1e-3
 DEFAULT_MULTI_READ_SKIP_MIN_SUPPORTED_FRACTION: float = 0.01
 DEFAULT_READ_FILTER_QUERY: str = "filt>0 and snvq>60 and mapq>=60"
@@ -61,28 +61,17 @@ class MrdReportInputs:
     filter_funnel_json: str = None
 
 
-def should_skip_multi_read_filter(
-    df_tf: pd.DataFrame,
-    df_supporting_reads_per_locus: pd.DataFrame,
-    min_vaf: float | None,
-    min_supported_fraction: float,
-) -> tuple[bool, float, float]:
-    """Return ``(skip, matched_vaf, supported_fraction)`` for the multi-read filter gate.
-
-    The filter is skipped when the matched VAF is above ``min_vaf`` and the fraction of matched
-    signature loci with ≥ 1 supporting read is at least ``min_supported_fraction``.
-    ``min_vaf=None`` disables the gate.
-    """
-    try:
-        matched = df_tf.loc["matched"].iloc[0]
-    except KeyError:
-        return False, 0.0, 0.0
-    matched_vaf = float(matched["ctdna_vaf"])
-    n_loci = int(matched["n_loci"])
-    n_supported_loci = int((df_supporting_reads_per_locus["signature_type"] == "matched").sum())
-    supported_fraction = n_supported_loci / n_loci if n_loci > 0 else 0.0
-    skip = min_vaf is not None and matched_vaf > min_vaf and supported_fraction >= min_supported_fraction
-    return skip, matched_vaf, supported_fraction
+def _multi_read_skip_desc(skipped_signatures: list[dict], n_controls: int, min_vaf: float, min_frac: float) -> str:
+    """Describe which signatures were exempted by the high-TF rule (empty when the matched one was not)."""
+    matched = [s for s in skipped_signatures if s["signature_type"] == "matched"]
+    if not matched:
+        return ""
+    n_ctrl_skipped = len(skipped_signatures) - len(matched)
+    return (
+        f"Not applied to matched signature (high TF): VAF {matched[0]['ctdna_vaf']:.2e} > {min_vaf:.0e} "
+        f"with {matched[0]['supported_fraction']:.1%} of loci supported ≥ {min_frac:.1%}. "
+        f"The same rule is evaluated for each control signature: {n_ctrl_skipped} of {n_controls} met it"
+    )
 
 
 def _load_wdl_funnel(filter_funnel_json_path: str | None) -> tuple[list[dict], dict]:
@@ -521,20 +510,10 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             matched_snvq_zero_fraction=matched_snvq_zero_fraction,
         )
         logger.info("Multi-read filter: Bonferroni p-value threshold=%.4f", thresh_multi_read_pvalue)
-        multi_read_skipped, _skip_vaf, _skip_frac = should_skip_multi_read_filter(
-            df_tf_pre_multi_read,
-            df_supporting_pre_multi,
-            mrd_report_inputs.multi_read_skip_min_vaf,
-            mrd_report_inputs.multi_read_skip_min_supported_fraction,
-        )
-        if multi_read_skipped:
-            _min_frac = mrd_report_inputs.multi_read_skip_min_supported_fraction
-            multi_read_skipped_desc = (
-                f"Not applied to matched signature (high TF): VAF {_skip_vaf:.2e} > "
-                f"{mrd_report_inputs.multi_read_skip_min_vaf:.0e} with {_skip_frac:.1%} of loci supported "
-                f"≥ {_min_frac:.1%}"
-            )
-            logger.info("Multi-read filter %s", multi_read_skipped_desc)
+    _multi_read_skip_kwargs = {
+        "skip_min_vaf": mrd_report_inputs.multi_read_skip_min_vaf,
+        "skip_min_supported_fraction": mrd_report_inputs.multi_read_skip_min_supported_fraction,
+    }
     if thresh_multi_read_pvalue is not None:
         df_features_before_multi = df_features_filt
         _excluded_per_sig_noise = dict(excluded_per_sig) if excluded_per_sig else {}
@@ -559,7 +538,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
                 df_tf_iter,
                 df_signatures_filt,
                 thresh_multi_read_pvalue,
-                skip_matched=multi_read_skipped,
+                **_multi_read_skip_kwargs,
             )
             if len(df_features_filt_new) == len(df_features_filt):
                 logger.info("apply_multi_read_locus_filter: converged after %d iteration(s)", _iter)
@@ -590,6 +569,16 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             if len(_excl) > 0:
                 multi_read_excluded_per_type[_sig_type] = _excl
 
+        multi_read_skipped_desc = _multi_read_skip_desc(
+            multi_read_info.get("skipped_signatures", []),
+            n_controls=int((df_tf_pre_multi_read.index.get_level_values("signature_type") != "matched").sum()),
+            min_vaf=mrd_report_inputs.multi_read_skip_min_vaf or 0.0,
+            min_frac=mrd_report_inputs.multi_read_skip_min_supported_fraction,
+        )
+        multi_read_skipped = bool(multi_read_skipped_desc)
+        if multi_read_skipped:
+            logger.info("Multi-read filter: %s", multi_read_skipped_desc)
+
     df_tf_filt, df_supporting_reads_per_locus_filt = mrd.get_tf_from_filtered_data(
         df_features_filt,
         df_signatures_filt,
@@ -616,9 +605,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             f"max reads/locus: {_max_per_locus}"
         )
         if multi_read_skipped_desc:
-            multi_read_locus_filter_desc = (
-                f"{multi_read_skipped_desc}. Control signatures only: {multi_read_locus_filter_desc}"
-            )
+            multi_read_locus_filter_desc = f"{multi_read_skipped_desc}. {multi_read_locus_filter_desc}"
 
     # 2. Build filter funnels — only meaningful with a matched signature.
     #    - signature funnel (variant / loci perspective)
@@ -895,7 +882,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
                     df_tf_no_noise,
                     df_signatures_filt,
                     thresh_multi_read_pvalue,
-                    skip_matched=multi_read_skipped,
+                    **_multi_read_skip_kwargs,
                 )
                 if len(df_features_filt_no_noise_new) == len(df_features_filt_no_noise):
                     break
@@ -979,7 +966,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
                 _df_tf_ns,
                 df_signatures_filt,
                 thresh_multi_read_pvalue,
-                skip_matched=multi_read_skipped,
+                **_multi_read_skip_kwargs,
             )
             if len(_new_ns) == len(df_features_no_snvq_filt):
                 break
