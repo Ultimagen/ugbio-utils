@@ -455,6 +455,13 @@
     {% if filter_funnel %}
     <div class="section">
       <div class="section-title">Signature Filter Funnel</div>
+      {% if multi_read_skipped_note %}
+      <div style="margin-bottom:12px; padding:10px 14px; border-left:4px solid #E6A700; background:#FFF8E1; font-size:13px;">
+        <strong>Multi-read locus filter: {{ multi_read_skipped_note }}.</strong>
+        At high tumour fraction, per-locus support varies far beyond the Poisson model and the filter
+        would remove true tumour signal. Control signatures are still filtered.
+      </div>
+      {% endif %}
       <table class="filter-table">
         <tr><th>Step</th><th>Count</th><th>% Funnel</th><th>% Pass</th></tr>
         {% for row in filter_funnel %}

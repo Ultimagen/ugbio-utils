@@ -609,6 +609,28 @@ def test_apply_multi_read_locus_filter_removes_outlier_control_loci():
     assert info["n_filtered_loci"] == 0
 
 
+def test_apply_multi_read_locus_filter_skip_matched_keeps_matched_hot_locus():
+    """skip_matched=True leaves the matched signature untouched."""
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    df_features_filt, df_tf, df_signatures_filt = _make_multi_read_test_data()
+    df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.01, skip_matched=True)
+
+    assert len(df_out) == len(df_features_filt)
+    assert info["n_filtered_loci"] == 0
+
+
+def test_apply_multi_read_locus_filter_skip_matched_still_filters_controls():
+    """skip_matched=True must still remove outlier loci from control signatures."""
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    df_features_filt, df_tf, df_signatures_filt = _make_ctrl_filter_test_data()
+    _, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.01, skip_matched=True)
+
+    assert info["n_filtered_control_loci"] == 1
+    assert info["n_filtered_control_reads"] == 10
+
+
 def test_apply_multi_read_locus_filter_removes_outlier_db_control_loci():
     """Synthetic (db_control) loci with unexpectedly many reads must be removed.
 

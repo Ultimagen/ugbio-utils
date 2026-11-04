@@ -964,8 +964,13 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
     df_tf: pd.DataFrame,
     df_signatures_filt: pd.DataFrame,
     thresh_multi_read_pvalue: float,
+    *,
+    skip_matched: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     """Apply the Bonferroni-corrected Poisson outlier test uniformly across all signature types.
+
+    When ``skip_matched`` is True the matched signature is left untouched and only
+    control / db_control signatures are tested.
 
     For every ``(signature_type, signature)`` row in ``df_tf`` the function computes:
 
@@ -1085,6 +1090,8 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
 
     # --- Unified loop: one pass per (sig_type, sig_name) in df_tf ---
     for (sig_type, sig_name), sig_row in df_tf.iterrows():
+        if skip_matched and sig_type == "matched":
+            continue
         # Per-locus read counts for this signature (needed for both λ and outlier test)
         sig_rows = df_features_filt_out[
             (df_features_filt_out["signature_type"] == sig_type) & (df_features_filt_out["signature"] == sig_name)
