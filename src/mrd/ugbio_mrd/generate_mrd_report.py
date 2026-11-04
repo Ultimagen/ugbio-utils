@@ -538,6 +538,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
                 df_tf_iter,
                 df_signatures_filt,
                 thresh_multi_read_pvalue,
+                excluded_loci=excluded_per_sig,
                 **_multi_read_skip_kwargs,
             )
             if len(df_features_filt_new) == len(df_features_filt):
@@ -882,6 +883,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
                     df_tf_no_noise,
                     df_signatures_filt,
                     thresh_multi_read_pvalue,
+                    excluded_loci=_excluded_no_noise,
                     **_multi_read_skip_kwargs,
                 )
                 if len(df_features_filt_no_noise_new) == len(df_features_filt_no_noise):
