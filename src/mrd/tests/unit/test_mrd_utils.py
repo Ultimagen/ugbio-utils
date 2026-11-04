@@ -609,26 +609,90 @@ def test_apply_multi_read_locus_filter_removes_outlier_control_loci():
     assert info["n_filtered_loci"] == 0
 
 
-def test_apply_multi_read_locus_filter_skip_matched_keeps_matched_hot_locus():
-    """skip_matched=True leaves the matched signature untouched."""
+def _make_skip_rule_data(signatures):
+    """Build inputs for the high-TF skip rule.
+
+    ``signatures``: list of (sig_type, sig_name, n_loci, n_supported, ctdna_vaf).  Each supported
+    locus has 1 read, plus one extra hot locus (100 reads) that the Poisson filter removes
+    whenever it runs on that signature.
+    """
+    feats, sigs, tf_rows, tf_index = [], [], [], []
+    for sig_type, sig_name, n_loci, n_supported, vaf in signatures:
+        chrom = f"chr_{sig_name}"
+        sigs += [
+            {"chrom": chrom, "pos": i, "signature": sig_name, "signature_type": sig_type, "coverage": 100.0}
+            for i in range(n_loci)
+        ]
+        for i in range(n_supported - 1):
+            feats.append({"chrom": chrom, "pos": i, "signature": sig_name, "signature_type": sig_type})
+        feats += [{"chrom": chrom, "pos": n_loci - 1, "signature": sig_name, "signature_type": sig_type}] * 100
+        tf_index.append((sig_type, sig_name))
+        tf_rows.append({"ctdna_vaf": vaf, "supporting_reads": n_supported + 99, "corrected_coverage": n_loci * 100.0})
+    df_features = pd.DataFrame(feats).set_index(["chrom", "pos"])
+    df_signatures = pd.DataFrame(sigs).set_index(["chrom", "pos"])
+    df_tf = pd.DataFrame(tf_rows, index=pd.MultiIndex.from_tuples(tf_index, names=["signature_type", "signature"]))
+    return df_features, df_tf, df_signatures
+
+
+def _hot_locus_kept(df_out, sig_name, n_loci):
+    rows = df_out[df_out["signature"] == sig_name]
+    return (f"chr_{sig_name}", n_loci - 1) in set(rows.index)
+
+
+@pytest.mark.parametrize(
+    "vaf,n_supported,n_loci,expected_skip",
+    [
+        (1.2e-2, 1200, 30_000, True),  # high TF with broad support: 4% of loci
+        (1.2e-2, 100, 30_000, False),  # high VAF driven by few loci (0.3%, e.g. germline contamination)
+        (5e-4, 1200, 30_000, False),  # low TF: filter must run
+        (1e-3, 1200, 30_000, False),  # VAF threshold is strict
+        (1.2e-2, 300, 30_000, True),  # supported fraction exactly at threshold (1%)
+        (1e-2, 50, 2_000, True),  # same 50 supported loci: 2.5% of a small signature
+        (1e-2, 50, 130_000, False),  # ... but 0.04% of a large one
+    ],
+)
+def test_apply_multi_read_locus_filter_high_tf_skip_rule(vaf, n_supported, n_loci, expected_skip):
     from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
 
-    df_features_filt, df_tf, df_signatures_filt = _make_multi_read_test_data()
-    df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.01, skip_matched=True)
+    df_features, df_tf, df_signatures = _make_skip_rule_data([("matched", "m", n_loci, n_supported, vaf)])
+    df_out, info = apply_multi_read_locus_filter(
+        df_features, df_tf, df_signatures, 0.01, skip_min_vaf=1e-3, skip_min_supported_fraction=0.01
+    )
 
-    assert len(df_out) == len(df_features_filt)
-    assert info["n_filtered_loci"] == 0
+    assert _hot_locus_kept(df_out, "m", n_loci) is expected_skip
+    assert [s["signature"] for s in info["skipped_signatures"]] == (["m"] if expected_skip else [])
+    if expected_skip:
+        assert info["skipped_signatures"][0]["supported_fraction"] == pytest.approx(n_supported / n_loci)
 
 
-def test_apply_multi_read_locus_filter_skip_matched_still_filters_controls():
-    """skip_matched=True must still remove outlier loci from control signatures."""
+def test_apply_multi_read_locus_filter_skip_rule_applied_identically_to_controls():
+    """The rule is evaluated per signature: a control meeting it is exempt too; others are filtered."""
     from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
 
-    df_features_filt, df_tf, df_signatures_filt = _make_ctrl_filter_test_data()
-    _, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.01, skip_matched=True)
+    signatures = [
+        ("matched", "m", 30_000, 1200, 1.2e-2),
+        ("db_control", "syn_low", 30_000, 3, 1e-5),
+        ("db_control", "syn_high", 30_000, 1200, 1.2e-2),
+    ]
+    df_features, df_tf, df_signatures = _make_skip_rule_data(signatures)
+    df_out, info = apply_multi_read_locus_filter(
+        df_features, df_tf, df_signatures, 0.01, skip_min_vaf=1e-3, skip_min_supported_fraction=0.01
+    )
 
-    assert info["n_filtered_control_loci"] == 1
-    assert info["n_filtered_control_reads"] == 10
+    assert _hot_locus_kept(df_out, "m", 30_000)
+    assert _hot_locus_kept(df_out, "syn_high", 30_000)
+    assert not _hot_locus_kept(df_out, "syn_low", 30_000)
+    assert {s["signature"] for s in info["skipped_signatures"]} == {"m", "syn_high"}
+
+
+def test_apply_multi_read_locus_filter_skip_rule_disabled_by_default():
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    df_features, df_tf, df_signatures = _make_skip_rule_data([("matched", "m", 30_000, 1200, 1.2e-2)])
+    df_out, info = apply_multi_read_locus_filter(df_features, df_tf, df_signatures, 0.01)
+
+    assert not _hot_locus_kept(df_out, "m", 30_000)
+    assert info["skipped_signatures"] == []
 
 
 def test_apply_multi_read_locus_filter_removes_outlier_db_control_loci():
