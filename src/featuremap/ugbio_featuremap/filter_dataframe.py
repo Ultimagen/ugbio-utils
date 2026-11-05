@@ -235,8 +235,7 @@ def _parse_cli_filter(filter_spec: str) -> dict[str, Any]:
     parts = filter_spec.split(":")
     if len(parts) < CLI_FILTER_MIN_PARTS:
         raise ValueError(
-            f"Filter specification must have at least {CLI_FILTER_MIN_PARTS} parts separated by ':'. "
-            f"Got: {filter_spec}"
+            f"Filter specification must have at least {CLI_FILTER_MIN_PARTS} parts separated by ':'. Got: {filter_spec}"
         )
 
     # Parse key=value pairs
@@ -419,16 +418,22 @@ def _create_filter_columns(
 ) -> tuple[pl.LazyFrame, list[str]]:
     """Create binary columns for each filter."""
     filter_cols = []
+    used_cols: set[str] = set()
 
     logger.debug(f"Creating binary columns for {len(filters)} filters")
 
     for i, rule in enumerate(filters):
         name = _get_filter_name(rule)
-        col_name = f"{COL_PREFIX_FILTER}{name}"
-        if col_name in filter_cols:
-            # Two rules resolving to the same name (e.g. two unnamed rules with the same field+op) must not share
-            # a mask column: the second with_columns would overwrite the first and the final AND would drop it.
-            col_name = f"{col_name}__{i}"
+        base_col = f"{COL_PREFIX_FILTER}{name}"
+        col_name = base_col
+        # Two rules resolving to the same name (e.g. two unnamed rules with the same field+op) must not share
+        # a mask column: the second with_columns would overwrite the first and the final AND would drop it.
+        # Keep suffixing until unique: a generated suffix can itself match an explicit name (cut, cut__2, cut).
+        suffix = i
+        while col_name in used_cols:
+            col_name = f"{base_col}__{suffix}"
+            suffix += 1
+        used_cols.add(col_name)
         filter_cols.append(col_name)
 
         mask_expr = _mask_for_rule(rule)
@@ -808,8 +813,7 @@ def _build_cli() -> argparse.ArgumentParser:
         action="append",
         dest="filters",
         help=(
-            "Filter specification: name=value:field=value:op=value:value=value:type=value "
-            "(can be used multiple times)"
+            "Filter specification: name=value:field=value:op=value:value=value:type=value (can be used multiple times)"
         ),
     )
     ap.add_argument("--downsample", help="Downsample specification: method:size:seed (optional seed for random method)")

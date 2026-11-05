@@ -295,6 +295,21 @@ class TestCreateFilterColumns:
         assert result_df[filter_cols[0]].to_list() == [False, False, True, True, True]
         assert result_df[filter_cols[1]].to_list() == [True, False, True, False, False]
 
+    def test_generated_suffix_does_not_collide_with_explicit_name(self):
+        """Names cut, cut__2, cut: the third rule's suffixed column must not overwrite cut__2's mask."""
+        frame = pl.DataFrame({"x": [1, 2, 3, 4, 5]})
+        filters = [
+            {fd.KEY_NAME: "cut", fd.KEY_FIELD: "x", fd.KEY_OP: "ge", fd.KEY_VALUE: 2, fd.KEY_TYPE: fd.TYPE_QUALITY},
+            {fd.KEY_NAME: "cut__2", fd.KEY_FIELD: "x", fd.KEY_OP: "le", fd.KEY_VALUE: 4, fd.KEY_TYPE: fd.TYPE_QUALITY},
+            {fd.KEY_NAME: "cut", fd.KEY_FIELD: "x", fd.KEY_OP: "ge", fd.KEY_VALUE: 1, fd.KEY_TYPE: fd.TYPE_QUALITY},
+        ]
+        result_lf, filter_cols = fd._create_filter_columns(frame.lazy(), filters)
+        assert len(set(filter_cols)) == 3
+        result_df = result_lf.collect()
+        assert result_df[filter_cols[1]].to_list() == [True, True, True, True, False]
+        kept = result_df.filter(pl.all_horizontal(filter_cols))["x"].to_list()
+        assert kept == [2, 3, 4]
+
     def test_empty_filters(self):
         lf = pl.DataFrame({"x": [1, 2, 3]}).lazy()
         result_lf, filter_cols = fd._create_filter_columns(lf, [])

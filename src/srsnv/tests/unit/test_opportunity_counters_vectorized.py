@@ -127,3 +127,46 @@ def test_interval_list_counters_match_reference(tmp_path):
         ref_str += _ref_str_count(sub)
     assert homopolymer_run_length_histogram(str(il), str(fa)) == ref_hist
     assert count_str_loci_in_interval_list(str(il), str(fa)) == ref_str
+
+
+@pytest.mark.parametrize("seed", range(30))
+@pytest.mark.parametrize(("chunk_size", "lookahead"), [(1, 1), (5, 7), (13, 8), (64, 16)])
+def test_windowed_counters_match_reference(seed, chunk_size, lookahead):
+    """Tiny windows + short lookahead: repeats/runs crossing window ends must be counted exactly once."""
+    from ugbio_srsnv.srsnv_training import _count_str_loci_chunked, _homopolymer_hist_chunked  # noqa: PLC0415
+
+    rng = random.Random(seed)
+    seq = _random_seq(rng, rng.randint(0, 1500))
+    if seed % 3 == 0:  # a repeat much longer than window + lookahead forces the lookahead to grow
+        seq = seq[:100] + "ACG" * 200 + seq[100:]
+    codes = _seq_codes(seq)
+    got_str = _count_str_loci_chunked(lambda s, e: codes[s:e], codes.size, 2, 6, 2, chunk_size, lookahead)
+    assert got_str == _ref_str_count(seq)
+    counts = _homopolymer_hist_chunked(lambda s, e: codes[s:e], codes.size, chunk_size)
+    assert {k: int(v) for k, v in enumerate(counts) if v} == _ref_hmer_hist(seq)
+
+
+def test_interval_counters_memory_is_bounded_by_window(tmp_path):
+    """A single 8 Mb interval must not allocate interval-sized int64 arrays (chr1 needed ~15 GB)."""
+    import tracemalloc  # noqa: PLC0415
+
+    import numpy as np  # noqa: PLC0415
+
+    n = 8_000_000
+    rng = np.random.default_rng(0)
+    seq = np.frombuffer(b"ACGT", dtype=np.uint8)[rng.integers(0, 4, n)].tobytes()
+    fa = tmp_path / "big.fa"
+    with open(fa, "wb") as fh:
+        fh.write(b">chrBig\n")
+        for k in range(0, n, 1_000_000):
+            fh.write(seq[k : k + 1_000_000] + b"\n")
+    pysam.faidx(str(fa))
+    il = tmp_path / "big.interval_list"
+    il.write_text(f"@HD\tVN:1.6\n@SQ\tSN:chrBig\tLN:{n}\nchrBig\t1\t{n}\t+\t.\n")
+    for fn in (count_str_loci_in_interval_list, homopolymer_run_length_histogram):
+        tracemalloc.start()
+        fn(str(il), str(fa))
+        _cur, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        # ~85 MB with 1 Mb windows; the whole-interval scan allocated several int64 arrays of n (~0.5 GB here)
+        assert peak < 200_000_000, f"{fn.__name__} peak {peak / 1e6:.0f} MB"

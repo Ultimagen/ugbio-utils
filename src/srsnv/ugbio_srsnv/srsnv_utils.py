@@ -500,7 +500,7 @@ def recalibrate_snvq_per_class(
     min_lut_rows : int
         Minimum TP and minimum FP rows (within ``lut_mask``) a class needs to get its own LUT; sparser
         classes are skipped (NaN -> caller's global fallback) rather than fitting a degenerate table. Counted
-        on unweighted rows (support, not mass).
+        on unweighted rows with a finite MQUAL (support, not mass).
     sample_weight : np.ndarray | None
         Optional per-row importance weights (parallel to *mqual*); each class's survival curves are weighted
         with its own slice (see :func:`recalibrate_snvq`).
@@ -524,7 +524,11 @@ def recalibrate_snvq_per_class(
             continue
         sub_lut_mask = (lut_mask & m)[m] if lut_mask is not None else None
         sub_labels = labels[m][sub_lut_mask] if sub_lut_mask is not None else labels[m]
-        n_tp, n_fp = int(sub_labels.sum()), int((~sub_labels).sum())
+        sub_mqual = mqual[m][sub_lut_mask] if sub_lut_mask is not None else mqual[m]
+        # Only rows with a finite MQUAL support the LUT: an all-NaN side would make recalibrate_snvq
+        # take a NaN quantile and raise, aborting every class instead of falling back for this one.
+        scored = np.isfinite(sub_mqual)
+        n_tp, n_fp = int((sub_labels & scored).sum()), int((~sub_labels & scored).sum())
         if min(n_tp, n_fp) < min_lut_rows:
             logger.warning(
                 "recalibrate_snvq_per_class: class %s has %d TP / %d FP LUT rows (< %d); using global LUT",

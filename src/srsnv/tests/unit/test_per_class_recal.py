@@ -208,6 +208,24 @@ class TestIntervalCounters:
         assert np.isnan(snvq[:30]).all()  # caller falls back to the global LUT
         assert not np.isnan(snvq[30:]).any()
 
+    def test_nan_scored_rows_do_not_count_as_lut_support(self):
+        # A class with 150 TP + 150 FP rows whose FP MQUALs are all NaN has no FP support: it must fall back
+        # (NaN SNVQ, no LUT) instead of reaching recalibrate_snvq and aborting every class on a NaN quantile.
+        mqual, label = _synth(n=8000)
+        rng = np.random.default_rng(1)
+        extra_mq = np.concatenate([rng.uniform(0, 40, 150), np.full(150, np.nan)])
+        extra_lab = np.concatenate([np.ones(150, bool), np.zeros(150, bool)])
+        mqual = np.concatenate([mqual, extra_mq])
+        label = np.concatenate([label, extra_lab])
+        cls = np.array(["snv"] * len(mqual), dtype=object)
+        cls[-300:] = "non_hmer_indel"
+        snvq, luts = recalibrate_snvq_per_class(
+            mqual, label, cls, prefactor_by_class={"snv": 1e-3, "non_hmer_indel": 1e-3}
+        )
+        assert "non_hmer_indel" not in luts and "snv" in luts
+        assert np.isnan(snvq[-300:]).all()
+        assert not np.isnan(snvq[:-300]).any()
+
 
 class TestWeightedSurvivalNaN:
     def test_nan_never_survives_but_counts_in_denominator(self):
