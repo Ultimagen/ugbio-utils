@@ -1559,3 +1559,49 @@ class TestAnyOfCompositeEdgeCases:
             mask = out.select(pl.all_horizontal(cols)).collect().to_series().to_list()
             expected = [True, False, False] if filters[0][fd.KEY_OP] == fd.OP_ANY_OF else [True, True, False]
             assert mask == expected
+
+
+def test_stats_keep_rules_with_duplicate_names_apart(tmp_path):
+    """Two unnamed rules with the same field+op (fallback name ``score_gt``) must each get their own funnel
+    entry (with their OWN value) and single_effect count. Previously the 2nd funnel entry was labelled with the
+    1st rule's value and single_effect kept only one of the two counts."""
+    pl.DataFrame({"score": list(range(10))}).write_parquet(tmp_path / "in.parquet")
+    cfg = {
+        "filters": [
+            {"field": "score", "op": "gt", "value": 2, "type": "quality"},
+            {"field": "score", "op": "gt", "value": 5, "type": "quality"},
+        ]
+    }
+    (tmp_path / "cfg.json").write_text(json.dumps(cfg))
+    fd.filter_parquet(
+        str(tmp_path / "in.parquet"),
+        str(tmp_path / "out.parquet"),
+        None,
+        str(tmp_path / "cfg.json"),
+        str(tmp_path / "stats.json"),
+    )
+    stats = fd.read_filtering_stats_json(tmp_path / "stats.json")
+    funnel = stats["filters"]
+    assert [(f["name"], f["rows"], f.get("value")) for f in funnel] == [
+        ("raw", 10, None),
+        ("score_gt", 7, 2),
+        ("score_gt__1", 4, 5),
+    ]
+    assert stats["single_effect"] == {"score_gt": 7, "score_gt__1": 4}
+    assert pl.read_parquet(tmp_path / "out.parquet")["score"].to_list() == [6, 7, 8, 9]
+
+
+def test_stats_rule_named_like_a_reserved_stat_keeps_its_type(tmp_path):
+    """A user rule named "downsample" is a filter entry (type/field/op/value), not the downsample stat."""
+    pl.DataFrame({"score": list(range(10))}).write_parquet(tmp_path / "in.parquet")
+    cfg = {"filters": [{"name": "downsample", "field": "score", "op": "ge", "value": 4, "type": "quality"}]}
+    (tmp_path / "cfg.json").write_text(json.dumps(cfg))
+    fd.filter_parquet(
+        str(tmp_path / "in.parquet"),
+        str(tmp_path / "out.parquet"),
+        None,
+        str(tmp_path / "cfg.json"),
+        str(tmp_path / "stats.json"),
+    )
+    entry = fd.read_filtering_stats_json(tmp_path / "stats.json")["filters"][1]
+    assert entry == {"name": "downsample", "rows": 6, "type": "quality", "field": "score", "op": "ge", "value": 4}

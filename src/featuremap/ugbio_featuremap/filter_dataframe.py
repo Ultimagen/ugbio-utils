@@ -568,28 +568,35 @@ def _calculate_statistics(
     """Calculate filter statistics using binary columns."""
     logger.debug("Calculating filter statistics")
 
-    # Funnel statistics
-    funnel = [(STAT_RAW, total_rows)]
+    # Per-filter stat names: the (de-duplicated) mask column name without its prefix. This equals
+    # _get_filter_name(rule) unless two rules share a name, in which case the later one carries the same
+    # "__<n>" suffix as its mask column, so its funnel entry and single_effect count are not merged with
+    # (or labelled as) the earlier rule's.
+    names = [
+        col.removeprefix(COL_PREFIX_FILTER) if col.startswith(COL_PREFIX_FILTER) else _get_filter_name(rule)
+        for col, rule in zip(filter_cols, filters, strict=False)
+    ]
+
+    # Funnel statistics: (name, rows, rule)
+    funnel: list[tuple[str, int, dict[str, Any] | None]] = [(STAT_RAW, total_rows, None)]
 
     # Calculate cumulative filter effects
     cumulative_mask = pl.lit(value=True)
-    for _i, (col, rule) in enumerate(zip(filter_cols, filters, strict=False)):
-        name = _get_filter_name(rule)
+    for col, name, rule in zip(filter_cols, names, filters, strict=False):
         cumulative_mask = cumulative_mask & pl.col(col)
         count = featuremap_dataframe.select(cumulative_mask.sum()).collect().item()
-        funnel.append((name, count))
+        funnel.append((name, count, rule))
 
     # Add downsample to funnel if present
     if KEY_DOWNSAMPLE in cfg:
         # Get the count after all filters
         filtered_count = funnel[-1][1]
         final_count = _downsample_final_count(featuremap_dataframe, filter_cols, cfg, filtered_count)
-        funnel.append((STAT_DOWNSAMPLE, final_count))
+        funnel.append((STAT_DOWNSAMPLE, final_count, None))
 
     # Single effect statistics
     single_effect = {}
-    for col, rule in zip(filter_cols, filters, strict=False):
-        name = _get_filter_name(rule)
+    for col, name in zip(filter_cols, names, strict=False):
         count = featuremap_dataframe.select(pl.col(col).sum()).collect().item()
         single_effect[name] = count
 
@@ -626,10 +633,10 @@ def _calculate_statistics(
 
     # Add filter types to the statistics
     filters_with_types = []
-    for name, rows in funnel:
-        if name == STAT_RAW:
+    for name, rows, rule in funnel:
+        if rule is None and name == STAT_RAW:
             filters_with_types.append({KEY_NAME: name, STAT_ROWS: rows, KEY_TYPE: TYPE_RAW})
-        elif name == STAT_DOWNSAMPLE:
+        elif rule is None:  # downsample
             # include method / seed from the downsample section
             ds_cfg = cfg.get(KEY_DOWNSAMPLE, {})
             entry = {
@@ -642,10 +649,6 @@ def _calculate_statistics(
             entry = {k: v for k, v in entry.items() if v is not None}
             filters_with_types.append(entry)
         else:
-            rule = next(
-                (r for r in filters if _get_filter_name(r) == name),
-                {},
-            )
             entry = {
                 KEY_NAME: name,
                 STAT_ROWS: rows,
