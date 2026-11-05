@@ -19,6 +19,7 @@ from ugbio_featuremap.featuremap_to_dataframe import (
     MIN_WINDOW_BP,
     POS,
     REF,
+    SAMPLE_WEIGHT_COL,
     TARGET_RECORDS_PER_WINDOW,
     X_ALT,
     _build_explicit_schema,
@@ -185,42 +186,23 @@ def test_roundtrip(tmp_path: Path, input_featuremap: Path):
     assert featuremap_dataframe.height == rn_len
 
 
-# ------------- REF/ALT default categories ---------------------------------
+# ------------- REF/ALT string alleles -------------------------------------
 def test_ref_alt_defaults(tmp_path: Path, input_featuremap: Path):
+    """String allele columns must preserve the alleles from the input VCF."""
     out = tmp_path / "def.parquet"
     featuremap_to_dataframe.vcf_to_parquet(
         str(input_featuremap), str(out), drop_info=set(), drop_format={"GT", "AD"}, jobs=1
     )
     featuremap_dataframe = pl.read_parquet(out)
 
-    # REF includes IUPAC ambiguity codes
-    assert set(featuremap_dataframe["REF"].dtype.categories) == {
-        "",
-        "A",
-        "C",
-        "G",
-        "T",
-        "R",
-        "Y",
-        "K",
-        "M",
-        "S",
-        "W",
-        "B",
-        "D",
-        "H",
-        "V",
-        "N",
-    }
-
-    # ALT includes just the four bases (+"")
-    assert set(featuremap_dataframe["ALT"].dtype.categories) == {
-        "",
-        "A",
-        "C",
-        "G",
-        "T",
-    }
+    assert featuremap_dataframe["REF"].dtype == pl.String
+    assert featuremap_dataframe["ALT"].dtype == pl.String
+    alleles = subprocess.check_output(
+        ["bcftools", "query", "-f", "%REF\t%ALT\n", str(input_featuremap)],
+        text=True,
+    )
+    expected = {tuple(line.split("\t")) for line in alleles.splitlines()}
+    assert set(featuremap_dataframe.select("REF", "ALT").iter_rows()) == expected
 
 
 # ------------- tiny unit tests per helper ---------------------------------
@@ -256,9 +238,8 @@ def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
     # Check specific column types
     assert featuremap_dataframe["CHROM"].dtype == pl.Utf8
     assert featuremap_dataframe["POS"].dtype == pl.Int64
-    # REF and ALT are Enum types
-    assert isinstance(featuremap_dataframe["REF"].dtype, pl.Enum)
-    assert isinstance(featuremap_dataframe["ALT"].dtype, pl.Enum)
+    assert featuremap_dataframe["REF"].dtype == pl.String
+    assert featuremap_dataframe["ALT"].dtype == pl.String
     assert featuremap_dataframe["VAF"].dtype == pl.Float64
     assert featuremap_dataframe["RN"].dtype == pl.Utf8
 
@@ -1193,7 +1174,10 @@ def test_downsampling_basic(tmp_path: Path, input_featuremap: Path) -> None:
 
     assert downsampled_df.height == downsample_count, f"Expected {downsample_count} rows, got {downsampled_df.height}"
     assert downsampled_df.height < full_row_count, "Downsampled dataset should be smaller than full dataset"
-    assert set(downsampled_df.columns) == set(full_df.columns), "Downsampling should preserve all columns"
+    assert SAMPLE_WEIGHT_COL not in full_df.columns
+    assert set(downsampled_df.columns) == set(full_df.columns) | {SAMPLE_WEIGHT_COL}
+    assert downsampled_df[SAMPLE_WEIGHT_COL].dtype == pl.Float32
+    np.testing.assert_allclose(downsampled_df[SAMPLE_WEIGHT_COL].to_numpy(), full_row_count / downsample_count)
 
 
 def test_downsampling_seed_reproducibility(tmp_path: Path, input_featuremap: Path) -> None:
@@ -1404,7 +1388,10 @@ def test_multi_sample_with_downsampling(tmp_path: Path) -> None:
     df_ds = pl.read_parquet(out_ds)
 
     assert df_ds.height == downsample_n, f"Expected {downsample_n} rows, got {df_ds.height}"
-    assert set(df_ds.columns) == set(df_full.columns), "Downsampling should preserve all columns"
+    assert SAMPLE_WEIGHT_COL not in df_full.columns
+    assert set(df_ds.columns) == set(df_full.columns) | {SAMPLE_WEIGHT_COL}
+    assert df_ds[SAMPLE_WEIGHT_COL].dtype == pl.Float32
+    np.testing.assert_allclose(df_ds[SAMPLE_WEIGHT_COL].to_numpy(), df_full.height / downsample_n)
     # Seed reproducibility
     out_ds2 = tmp_path / "downsampled2.parquet"
     featuremap_to_dataframe.vcf_to_parquet(

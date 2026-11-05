@@ -151,21 +151,23 @@ def test_no_weight_column_when_nothing_dropped(tmp_path):
     assert "_sampling_stratum" not in res.columns
 
 
-def test_selection_unchanged_by_stratum_tag(tmp_path):
-    """The kept rows must be exactly the rows the sampler kept before weights existed (tag is column-only)."""
+@pytest.mark.parametrize("case", list(CASES))
+@pytest.mark.parametrize("n_parts", [1, 3])
+def test_selection_unchanged_by_stratum_tag(tmp_path, case, n_parts):
+    """Attaching weights must preserve every sampled value and row order."""
     frame = _frame()
     out_a = str(tmp_path / "a.parquet")
     (tmp_path / "a").mkdir()
     (tmp_path / "b").mkdir()
-    kw = {"duplex_oversample_priority": list(DUPLEX_PRIORITY_FP), "duplex_group_min_fraction": 0.1}
-    _merge_parquet_files_dispatch(_write_parts(tmp_path / "a", frame), out_a, 3000, 3, None, **kw)
+    kw = CASES[case]
+    _merge_parquet_files_dispatch(_write_parts(tmp_path / "a", frame, n_parts), out_a, 3000, 3, **kw)
     out_b = str(tmp_path / "b.parquet")
     _merge_parquet_files_lazy(
-        _write_parts(tmp_path / "b", frame), out_b, downsample_reads=3000, downsample_seed=3, **kw
+        _write_parts(tmp_path / "b", frame, n_parts), out_b, downsample_reads=3000, downsample_seed=3, **kw
     )
-    a = pl.read_parquet(out_a)["RN"].sort().to_list()
-    b = pl.read_parquet(out_b)["RN"].sort().to_list()
-    assert a == b
+    a = pl.read_parquet(out_a)
+    b = pl.read_parquet(out_b).drop(SAMPLE_WEIGHT_COL)
+    assert a.equals(b)
 
 
 def test_per_class_counts_include_hmer_bins(tmp_path):

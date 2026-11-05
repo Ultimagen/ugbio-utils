@@ -1365,7 +1365,7 @@ def _attach_sample_weight(output_path: str, pre_counts: dict[str, int]) -> None:
     tmp = output_path + ".w.parquet"
     (
         pl.scan_parquet(output_path)
-        .join(weights.lazy(), on=_STRATUM_COL, how="left")
+        .join(weights.lazy(), on=_STRATUM_COL, how="left", maintain_order="left")
         .drop(_STRATUM_COL)
         .sink_parquet(tmp)
     )
