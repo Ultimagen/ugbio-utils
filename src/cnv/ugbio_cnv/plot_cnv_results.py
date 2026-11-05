@@ -37,6 +37,22 @@ def smooth_wl(df_reads_count, wl=100000, bin_size=1000) -> pd.DataFrame:
     return df_smooth_wl
 
 
+def extract_copy_number(info_string: str) -> float | None:
+    """
+    Copy number of a call from its INFO string: the smaller of CopyNumber and CN (e.g. ControlFREEC calls),
+    or CN_MEAN (depth CNV caller) when neither is present. None if the call has no copy number.
+    """
+    values = {}
+    for item in info_string.split(";"):
+        key, _, value = item.partition("=")
+        if key in ("CopyNumber", "CN", "CN_MEAN") and value not in ("", "."):
+            values[key] = float(value.split(",")[0])
+    primary = [values[k] for k in ("CopyNumber", "CN") if k in values]
+    if primary:
+        return min(primary)
+    return values.get("CN_MEAN")
+
+
 def plot_coverage(
     sample_name, df_chr_graphic, out_directory, df_germline_cov_norm_100k, df_tumor_cov_norm_100k=None
 ) -> str:
@@ -288,7 +304,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     parser.add_argument("--sample_name", help="sample name", required=True, type=str)
     parser.add_argument(
         "--vcf-like",
-        help="input CNV calls are in VCF-like format (e.g cn.mops,cnvpytor)",
+        help="input CNV calls are in VCF-like format (e.g. a CNV VCF converted to BED)",
         action="store_true",
         required=False,
     )
@@ -361,20 +377,6 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     ##### plot CNV calls #####
     ##########################
     # load UG calls
-    def extract_copy_number(info_string):
-        spstr = info_string.split(";")
-        spstr_copynumber = [x for x in spstr if x.startswith("CopyNumber=")]
-        copynumber_value = None
-        if len(spstr_copynumber) == 1:
-            copynumber_value = spstr_copynumber[0].replace("CopyNumber=", "")
-            copynumber_value = None if copynumber_value == "." else float(copynumber_value)
-        spstr_cn = [x for x in spstr if x.startswith("CN=")]
-        cn_value = None
-        if len(spstr_cn) == 1:
-            cn_value = spstr_cn[0].replace("CN=", "")
-            cn_value = None if cn_value == "." else float(cn_value)
-        return min([v for v in [copynumber_value, cn_value] if v is not None])
-
     if args.duplication_cnv_calls:
         if os.path.getsize(args.duplication_cnv_calls) > 0:
             df_dup = pd.read_csv(args.duplication_cnv_calls, sep="\t", header=None, dtype={0: str})

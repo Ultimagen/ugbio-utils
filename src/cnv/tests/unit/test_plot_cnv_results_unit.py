@@ -252,3 +252,17 @@ Y\t2000\t3000\t28
         assert out_calls_fig.size() > 0
         assert out_coverage_fig.size() > 0
         assert out_dup_del_fig.size() > 0
+
+
+@pytest.mark.parametrize(
+    ("info", "expected"),
+    [
+        ("SVTYPE=DEL;CopyNumber=1.2;CN=1", 1.0),  # cn.mops / CNVpytor: the smaller of the two
+        ("SVTYPE=DUP;CopyNumber=3.5", 3.5),
+        ("SVTYPE=DEL;CN_MEAN=1.04;BASE_CN=2;FILTER=PASS", 1.04),  # depth CNV caller
+        ("SVTYPE=DEL;CopyNumber=.;CN_MEAN=0.9", 0.9),
+        ("SVTYPE=DEL;FILTER=PASS", None),
+    ],
+)
+def test_extract_copy_number(info, expected):
+    assert plot_cnv_results.extract_copy_number(info) == expected

@@ -66,12 +66,6 @@ When the module has its own strict/conflicting version constraints, it's still m
 - **pypgx**: hardcodes `python:3.11-slim-bookworm` in both stages (no `BASE_IMAGE`/`BASE_BUILD_IMAGE`), pins `numpy<2` + `pandas<2.0` to avoid a proven ABI mismatch crash. Doesn't need bcftools/samtools from `ugbio_base` for its own build step, and pypgx/pypgx-bundle (third-party GitHub clones) have their own strict version/ABI constraints independent of `ugbio_base`'s Python version.
 - **omics**, **single_cell**, **cloud_utils** are also self-contained (`python:3.11-bookworm`/`slim-bookworm`), mostly because they don't need `ugbio_base`'s bio CLI tools either — this is a legitimate, not accidental, choice per module.
 
-### Exception Still Pinned to an Old Base Entirely
-
-This is not a "which base" choice, it's a "can't upgrade yet" blocker:
-
-- **cnv**: pinned to `ugbio_base:1.7.0` (bullseye) hardcoded, no `BASE_BUILD_IMAGE` — blocked by a `libparasail8` ABI incompatibility on bookworm. See `src/cnv/DATA-9903-jalign-bookworm-migration.md` before attempting to migrate this.
-
 ## DO
 
 - DO use multi-stage with `ugbio_base_build` for the build stage, `ugbio_base` for runtime — this is what actually removes gcc/pip/dev-headers/source from the CVE-scanned final image.

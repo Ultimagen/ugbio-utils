@@ -5,8 +5,8 @@ requires-python = ">=3.11"
 dependencies = [
     "ugbio_core[vcfbed,parquet]",
     "seaborn>=0.13.2,<1.0.0",
-    "cnvpytor==1.3.1",
     "setuptools>=75.8.0,<82.0.0",
+    "numba>=0.60.0",
 ]
 description = "Ultima Genomics CNV utils"
 authors = [
@@ -26,18 +26,17 @@ plot_cnv_results = "ugbio_cnv.plot_cnv_results:main"
 bicseq2_post_processing = "ugbio_cnv.bicseq2_post_processing:main"
 annotate_FREEC_segments = "ugbio_cnv.annotate_FREEC_segments:main"
 plot_FREEC_neutral_AF = "ugbio_cnv.plot_FREEC_neutral_AF:main"
-run_cnvpytor = "ugbio_cnv.run_cnvpytor:main"
-combine_cnmops_cnvpytor_cnv_calls = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main"
-combine_cnv_vcfs = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_concat"
-annotate_vcf_with_regions = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_annotate_regions"
-analyze_cnv_breakpoint_reads = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_analyze_breakpoints"
-merge_cnv_sv = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_merge_cnv_sv"
-run_jalign = "ugbio_cnv.run_jalign:main"
-add_cipos_to_vcf = "ugbio_cnv.add_cipos:main"
-refine_cnv_breakpoints = "ugbio_cnv.breakpoint_refinement:main"
+analyze_cnv_breakpoint_reads = "ugbio_cnv.analyze_cnv_breakpoint_reads:main"
+merge_cnv_sv = "ugbio_cnv.merge_cnv_sv:main"
 reformat_parascopy_bed = "ugbio_cnv.reformat_parascopy_bed:main"
 lpa_caller = "ugbio_cnv.lpa_caller:main"
 estimate_ploidy = "ugbio_cnv.estimate_ploidy:main"
+build_depth_annotation = "ugbio_cnv.depth_annotation:main"
+call_depth_cnvs = "ugbio_cnv.depth_cnv_caller:main"
+split_read_cnv_candidates = "ugbio_cnv.split_read_candidates:main"
+pair_cnv_candidates = "ugbio_cnv.pair_candidates:main"
+filter_nested_cnv_candidates = "ugbio_cnv.split_read_candidates:main_nested"
+snap_cnv_breakpoints = "ugbio_cnv.breakpoint_snapping:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true
