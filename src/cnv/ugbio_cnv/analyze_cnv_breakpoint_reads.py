@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from statistics import median
 
 import pysam
-from ugbio_cnv.jalign import create_bam_header
 from ugbio_core.dna_sequence_utils import CIGAR_OPS, get_reference_alignment_end, parse_cigar_string
 from ugbio_core.logger import logger
 
@@ -116,6 +115,39 @@ class _FragmentEvidence:
 
     split: _EvidenceVotes = field(default_factory=_EvidenceVotes)
     pair: _EvidenceVotes = field(default_factory=_EvidenceVotes)
+
+
+def create_bam_header(reads_header: pysam.AlignmentHeader) -> pysam.AlignmentHeader:
+    """Create a BAM header with the evidence read groups (REF1, REF2, DUP, DEL) added.
+
+    Parameters
+    ----------
+    reads_header : pysam.AlignmentHeader
+        Input alignment header to copy and extend
+
+    Returns
+    -------
+    pysam.AlignmentHeader
+        BAM header with REF1, REF2, DUP, and DEL read groups added
+    """
+    header_dict = reads_header.to_dict()
+    # Add read groups if not present
+    if "RG" not in header_dict:
+        header_dict["RG"] = []
+
+    # Ensure all required read groups are present
+    existing_rg_ids = {rg["ID"] for rg in header_dict.get("RG", [])}
+    for rgid in ["REF1", "REF2", "DUP", "DEL"]:
+        if rgid not in existing_rg_ids:
+            header_dict["RG"].append(
+                {
+                    "ID": rgid,
+                    "SM": "SAMPLE",
+                    "PL": "ULTIMA",
+                }
+            )
+
+    return pysam.AlignmentHeader.from_dict(header_dict)
 
 
 def has_right_soft_clip(cigar_tuples: list[tuple[int, int]] | None) -> bool:

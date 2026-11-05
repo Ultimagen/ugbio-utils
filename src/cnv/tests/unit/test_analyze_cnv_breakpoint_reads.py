@@ -1309,8 +1309,8 @@ def test_pair_fields_are_written_for_paired_input(pe_bam_factory, dummy_fasta_fi
 def test_pair_only_support_is_written_under_the_pair_read_group(pe_bam_factory, dummy_fasta_file):
     """Pair-only fragments enter the evidence BAM, but under their own read group, never DUP/DEL.
 
-    breakpoint_refinement selects reads by RG == DUP/DEL and would read breakpoints off the mates'
-    incidental soft clips instead of a real junction.
+    Readers of the evidence BAM that select split reads by RG == DUP/DEL would otherwise read breakpoints off the
+    mates' incidental soft clips instead of a real junction.
     """
     bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
 

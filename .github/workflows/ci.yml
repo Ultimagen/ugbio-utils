@@ -150,5 +150,4 @@ jobs:
         working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
         run: |
           export PATH=/home/linuxbrew/.linuxbrew/bin/:$PATH
-          uv run cnvpytor -download #needed for test_run_cnvpytor
-          uv run pytest --durations=0 src/ --ignore src/cnv/cnmops
+          uv run pytest --durations=0 src/

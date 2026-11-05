@@ -23,3 +23,7 @@
 # consensus test resources: large sorter JSON and gzipped bedGraph fixtures
 src/consensus/tests/resources/*.json filter=lfs diff=lfs merge=lfs -text
 src/consensus/tests/resources/*.bedGraph.gz filter=lfs diff=lfs merge=lfs -text
+
+# depth CNV caller test resources: mosdepth 100 bp depth tracks and their indexes
+src/cnv/tests/resources/depth_cnv/*.bed.gz filter=lfs diff=lfs merge=lfs -text
+src/cnv/tests/resources/depth_cnv/*.csi filter=lfs diff=lfs merge=lfs -text

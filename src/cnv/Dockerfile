@@ -1,173 +1,40 @@
 # BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE)
 ARG BASE_IMAGE
+ARG BASE_BUILD_IMAGE
 ARG OUT_DIR=/tmp/ugbio
-
-FROM python:3.11-bookworm AS build
+FROM $BASE_BUILD_IMAGE AS build
 
 ARG OUT_DIR
 ARG MODULE_DIR=cnv
 RUN mkdir -p $OUT_DIR
 
+# Create virtual environment for pip install
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY ./src/ ./src/
 
-#build ugbio_core + module
-RUN python -m pip install build
+# build module
+RUN pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
+
+# Install wheels — C extensions compile here, not in runtime.
+# pywfa and pyabpoa (truvari, used by merge_cnv_sv) are built without -march=native, so the image runs on hosts
+# without AVX-512 (a native build exits with SIGILL there)
+RUN PYWFA_MARCH=x86-64-v3 pip install --no-binary pywfa "pywfa>=0.6.0"
+RUN AVX2=1 pip install ${OUT_DIR}/*.whl
+RUN pip install pytest
 
 ##################################################################
 FROM $BASE_IMAGE
 
-ARG DEBIAN_FRONTEND=noninteractive
-ENV TZ=Etc/UTC
-
-# Install basic dependencies; upgrade first to pick up security fixes missing from the base image
-# (e.g. ugbio_base:1.8.6 ships perl 5.36.0-7+deb12u3, CRITICAL CVE-2026-13221/-42496/-8376, fixed in deb12u4)
-RUN apt-get update && apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
-    g++ \
-    gfortran \
-    procps \
-    curl \
-    libcurl4-openssl-dev \
-    libxml2-dev \
-    libssl-dev \
-    bzip2 \
-    xz-utils \
-    libreadline-dev \
-    libpcre2-dev \
-    tar \
-    bzip2 \
-    libncurses5-dev \
-    libncursesw5-dev \
-    libopenblas-dev \
-    libstdc++-12-dev \
-    libhdf5-dev \
-    libparasail8 \
-    tzdata \
-    && apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && apt-get autoclean
-
-
-# Download and install R
-# Install R from CRAN's pre-compiled Debian packages
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    dirmngr \
-    gnupg \
-    apt-transport-https \
-    ca-certificates \
-    software-properties-common && \
-    gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
-    gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' | tee /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
-    echo "deb https://cloud.r-project.org/bin/linux/debian bookworm-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-    r-base=4.5.3-1~bookwormcran.0 \
-    r-base-dev=4.5.3-1~bookwormcran.0 && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install samtools
-ARG SAMTOOLS_VERSION=1.17
-
-RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
-    tar -vxjf samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
-    cd samtools-${SAMTOOLS_VERSION} && \
-    make -j $(nproc) && \
-    make install && \
-    cd .. && \
-    rm -rf samtools-${SAMTOOLS_VERSION}.tar.bz2 samtools-${SAMTOOLS_VERSION}
-
-## install ug-cn.mops (branch: ug.master):
-RUN cd /opt && \
-    if [ -d "cn.mops/.git" ]; then \
-        cd cn.mops && git pull; \
-    else \
-        git clone --branch ug.master https://github.com/Ultimagen/cn.mops.git cn.mops; \
-    fi
-
-
-# Install R packages using apt-get where available (pre-compiled binaries from Debian)
-# This is much faster than compiling from source
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    r-cran-cpp11 \
-    r-cran-crayon \
-    r-cran-formatr \
-    r-cran-jsonlite \
-    r-cran-magrittr \
-    r-cran-r6 \
-    r-cran-rcurl \
-    r-cran-snow && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install remaining R packages that aren't available as Debian packages
-# Using BiocManager for Bioconductor packages and install.packages for CRAN packages
-RUN R -e "install.packages(c('argparse', 'BiocManager', 'bitops', 'codetools', 'findpython', 'futile.logger', 'futile.options', 'lambda.r'), repos='https://cloud.r-project.org/', Ncpus=4)"
-
-# Install Bioconductor packages - using Ncpus for parallel compilation
-RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase', 'GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'rhdf5', 'rhdf5filters', 'Rhtslib', 'Rsamtools', 'GenomicAlignments', 'BSgenome', 'VariantAnnotation'), ask=FALSE, Ncpus=4)"
-
-# Remove unnecessary files
-RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
-
-# Install cn.mops packages from local
-RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
-
-# Download para_jalign binary from private jalign repository.
-# The bookworm build links the distro libparasail8 (parasail 2.6) and uses its striped kernels,
-# since the parasail 2.6 diag kernels return corrupted scores/cigars (DATA-9903)
-ARG JALIGN_VERSION=1.4.2
-RUN --mount=type=secret,id=github_token \
-    if [ ! -f /run/secrets/github_token ]; then \
-        echo "ERROR: Authentication required to download dependencies" && exit 1; \
-    fi && \
-    GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
-    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bookworm-x64" && \
-    echo "Looking for asset: ${ASSET_NAME}" && \
-    curl -sL \
-        -H "Accept: application/vnd.github+json" \
-        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-        -H "X-GitHub-Api-Version: 2022-11-28" \
-        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" \
-        -o /tmp/release_data.json && \
-    ASSET_URL=$(cat /tmp/release_data.json | \
-        jq -r ".assets[] | select(.name == \"${ASSET_NAME}\") | .url" | head -1) && \
-    echo "Asset URL: ${ASSET_URL}" && \
-    if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then \
-        echo "ERROR: Could not find asset '${ASSET_NAME}' in release ${JALIGN_VERSION}" && \
-        echo "Available assets:" && \
-        cat /tmp/release_data.json | jq -r '.assets[].name' && \
-        exit 1; \
-    fi && \
-    curl -sLf \
-        -H "Accept: application/octet-stream" \
-        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-        -H "X-GitHub-Api-Version: 2022-11-28" \
-        "${ASSET_URL}" \
-        -o /opt/para_jalign && \
-    chmod +x /opt/para_jalign && \
-    rm /tmp/release_data.json
-
-ARG OUT_DIR
-
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
-COPY --from=build ${OUT_DIR} ${OUT_DIR}
-
-# Build pywfa and pyabpoa without -march=native, so the image runs on hosts without AVX-512
-RUN PYWFA_MARCH=x86-64-v3 pip install --no-binary pywfa "pywfa>=0.6.0"
-RUN AVX2=1 pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
-
-#download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
-ENV PYTOR_DATA_DIR=/usr/share/cnvpytor_data
-RUN mkdir -p $PYTOR_DATA_DIR
-RUN cnvpytor -download
+# Copy pre-built virtual environment from build stage (no compilation in runtime)
+COPY --from=build /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 USER ugbio
 
 WORKDIR /home/ugbio
-
-COPY --from=build ./src/cnv/cnmops ./src/cnv/cnmops

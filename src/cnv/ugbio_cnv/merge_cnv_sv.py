@@ -1,6 +1,8 @@
 """Utilities for merging CNV and SV VCF files."""
 
+import argparse
 import os
+import sys
 from os.path import join as pjoin
 
 import pysam
@@ -21,7 +23,7 @@ def _flatten_cnv_sources(sources_series):
     2. Flattens into a single list
     3. Removes duplicates and sorts
 
-    Example: ["cn.mops", ["cnvpytor", "gridss"]] -> ["cn.mops", "cnvpytor", "gridss"]
+    Example: ["depth", ["split_read", "gridss"]] -> ["depth", "gridss", "split_read"]
     """
     all_sources = []
     for source in sources_series:
@@ -52,7 +54,7 @@ def _aggregate_removed_variants(removed_vcf: str) -> dict[float, dict]:
     - Removed variants get a MatchId field pointing to the CollapseId
 
     This function groups removed variants by MatchId and aggregates:
-    - CNV_SOURCE: All source tools (cn.mops, cnvpytor, gridss, etc.)
+    - CNV_SOURCE: All source tools (depth, split_read, gridss, etc.)
     - IDs: All variant IDs that were removed
 
     Parameters
@@ -64,7 +66,7 @@ def _aggregate_removed_variants(removed_vcf: str) -> dict[float, dict]:
     -------
     dict[float, dict]
         Dictionary mapping CollapseId -> {cnv_source: [...], id: [...]}
-        Example: {1.0: {"cnv_source": ["cn.mops", "gridss"], "id": ["CNV_1", "CNV_2"]}}
+        Example: {1.0: {"cnv_source": ["depth", "gridss"], "id": ["CNV_1", "CNV_2"]}}
     """
     # Load removed variants with CNV_SOURCE and MatchId fields
     removed_df = vcftools.get_vcf_df(removed_vcf, custom_info_fields=["CNV_SOURCE", "MatchId"])
@@ -382,3 +384,64 @@ def merge_cnv_sv_vcfs(
     logger.info(f"Successfully created merged CNV+SV VCF: {output_vcf}")
 
     return output_vcf
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="merge_cnv_sv", description="Merge CNV and SV calls, preferring higher-quality SV calls on overlap"
+    )
+    parser.add_argument("--cnv_vcf", help="Input CNV VCF file", required=True, type=str)
+    parser.add_argument("--sv_vcf", help="Input SV VCF file (e.g., from GRIDSS)", required=True, type=str)
+    parser.add_argument("--output_vcf", help="Output merged VCF file", required=True, type=str)
+    parser.add_argument("--fasta_index", help="Reference genome FASTA index (.fai) file", required=True, type=str)
+    parser.add_argument(
+        "--min_sv_length", help="Minimum absolute SVLEN for SV calls to include (default: 1000)", type=int, default=1000
+    )
+    parser.add_argument(
+        "--max_sv_length",
+        help="Maximum absolute SVLEN for SV calls to include (default: 5000000, 5Mb)",
+        type=int,
+        default=5000000,
+    )
+    parser.add_argument(
+        "--min_sv_qual",
+        help="Minimum QUAL score for SV calls to include (default: 0, no minimum)",
+        type=float,
+        default=0,
+    )
+    parser.add_argument(
+        "--distance",
+        help="Distance threshold for collapsing overlapping variants (default: 0, exact overlaps only)",
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--pctsize",
+        help="Minimum size similarity (0.0-1.0) for collapsing (default: 0.5, require 50%% match)",
+        type=float,
+        default=0.5,
+    )
+    return parser.parse_args(argv)
+
+
+def run(argv: list[str]):
+    args = parse_args(argv[1:])
+    merge_cnv_sv_vcfs(
+        cnv_vcf=args.cnv_vcf,
+        sv_vcf=args.sv_vcf,
+        output_vcf=args.output_vcf,
+        fasta_index=args.fasta_index,
+        min_sv_length=args.min_sv_length,
+        max_sv_length=args.max_sv_length,
+        min_sv_qual=args.min_sv_qual,
+        distance=args.distance,
+        pctsize=args.pctsize,
+    )
+
+
+def main():
+    run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()
