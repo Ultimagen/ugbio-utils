@@ -1,0 +1,245 @@
+"""Unit tests for per-class SNVQ recalibration primitives (srsnv_utils + srsnv_training)."""
+
+import subprocess
+
+import numpy as np
+import pytest
+from ugbio_srsnv.srsnv_training import (
+    _count_bases_in_interval_list,
+    count_homopolymer_runs_in_interval_list,
+    count_str_loci_in_interval_list,
+    homopolymer_run_length_histogram,
+)
+from ugbio_srsnv.srsnv_utils import (
+    recalibrate_snvq,
+    recalibrate_snvq_per_class,
+    smooth_lut_monotone,
+    weighted_survival,
+)
+
+
+def _synth(n=20000, seed=0, tp_shift=8.0):
+    """Synthetic MQUAL: TP shifted high, FP low; returns (mqual, label-bool)."""
+    rng = np.random.default_rng(seed)
+    tp = np.clip(rng.normal(55, 12, n), 0, 100)
+    fp = np.clip(rng.normal(20, 12, n) + tp_shift - 8.0, 0, 100)
+    mqual = np.concatenate([tp, fp])
+    label = np.concatenate([np.ones(n, bool), np.zeros(n, bool)])
+    return mqual, label
+
+
+class TestPrefactorOverride:
+    def test_override_matches_manual_formula(self):
+        mqual, label = _synth()
+        pref = 3e-4
+        snvq, x, y = recalibrate_snvq(mqual, label, snvq_prefactor_override=pref, lut_mask=None)
+        # recompute y from survival and compare
+        tp = mqual[label]
+        fp = mqual[~label]
+        tpr = np.array([(tp >= m).mean() for m in x])
+        fpr = np.array([(fp >= m).mean() for m in x])
+        y_exp = -10 * np.log10(np.clip(pref * (fpr / tpr), 1e-12, 1))
+        np.testing.assert_allclose(y, y_exp, atol=1e-9)
+        assert y.min() >= 0
+
+    def test_override_skips_stats(self):
+        # no pos/neg/raw/coverage/n_bases provided -> must not raise
+        mqual, label = _synth()
+        snvq, x, y = recalibrate_snvq(mqual, label, snvq_prefactor_override=1e-3)
+        assert snvq.shape == mqual.shape
+
+    def test_higher_prefactor_lowers_snvq(self):
+        mqual, label = _synth()
+        _, _, y_lo = recalibrate_snvq(mqual, label, snvq_prefactor_override=1e-4)
+        _, _, y_hi = recalibrate_snvq(mqual, label, snvq_prefactor_override=1e-2)
+        # a bigger error density -> lower SNVQ at matched MQUAL
+        assert np.nanmean(y_hi) < np.nanmean(y_lo)
+
+
+class TestSampleWeight:
+    def test_unit_weights_identical(self):
+        mqual, label = _synth()
+        mask = np.random.default_rng(3).random(len(mqual)) < 0.7
+        a = recalibrate_snvq(mqual, label, snvq_prefactor_override=1e-3, lut_mask=mask)
+        b = recalibrate_snvq(
+            mqual, label, snvq_prefactor_override=1e-3, lut_mask=mask, sample_weight=np.ones(len(mqual))
+        )
+        for x, y in zip(a, b, strict=True):
+            np.testing.assert_allclose(x, y, rtol=0, atol=1e-9)  # cumsum vs mean round-off
+
+    def test_weighted_survival_matches_hand_computed(self):
+        v = np.array([1.0, 2.0, 2.0, 5.0])
+        w = np.array([1.0, 3.0, 1.0, 5.0])
+        np.testing.assert_allclose(weighted_survival(v, w, np.array([0.0, 2.0, 3.0, 6.0])), [1.0, 0.9, 0.5, 0.0])
+
+    def test_weights_equal_duplicating_rows(self):
+        """Integer weights == repeating rows (the defining property of an importance weight)."""
+        mqual, label = _synth(n=3000)
+        rng = np.random.default_rng(5)
+        w = rng.integers(1, 4, len(mqual))
+        _, xw, yw = recalibrate_snvq(mqual, label, snvq_prefactor_override=1e-3, sample_weight=w)
+        _, xd, yd = recalibrate_snvq(np.repeat(mqual, w), np.repeat(label, w), snvq_prefactor_override=1e-3)
+        n = min(len(xw), len(xd))
+        np.testing.assert_allclose(yw[:n], yd[:n], atol=1e-9)
+
+    def test_upweighting_low_fp_raises_snvq(self):
+        """Up-weighting FPs in the low-MQUAL tail (as oversampling-correction does) lowers FPR -> higher SNVQ."""
+        mqual, label = _synth()
+        w = np.where(~label & (mqual < 20), 5.0, 1.0)
+        _, x0, y0 = recalibrate_snvq(mqual, label, snvq_prefactor_override=1e-3)
+        _, x1, y1 = recalibrate_snvq(mqual, label, snvq_prefactor_override=1e-3, sample_weight=w)
+        m = 40.0
+        assert np.interp(m, x1, y1) > np.interp(m, x0, y0)
+
+    def test_per_class_slices_weights(self):
+        mqual, label = _synth(n=8000)
+        cls = np.array(["snv", "hmer_indel"] * (len(mqual) // 2))
+        w = np.where(cls == "snv", 1.0, 2.0)
+        sw, lw = recalibrate_snvq_per_class(
+            mqual, label, cls, prefactor_by_class={"snv": 1e-3, "hmer_indel": 1e-3}, sample_weight=w
+        )
+        s1, l1 = recalibrate_snvq_per_class(mqual, label, cls, prefactor_by_class={"snv": 1e-3, "hmer_indel": 1e-3})
+        # a constant weight within a class cancels in its survival curves
+        np.testing.assert_allclose(sw, s1, atol=1e-9)
+
+
+class TestMonotone:
+    def test_monotone_and_cap(self):
+        x = np.arange(6, dtype=float)
+        y = np.array([10.0, 8.0, 20.0, 19.0, 50.0, 30.0])
+        _, ys = smooth_lut_monotone(x, y)
+        assert np.all(np.diff(ys) >= 0)
+        assert ys.tolist() == [10, 10, 20, 20, 50, 50]
+        _, yc = smooth_lut_monotone(x, y, cap=25.0)
+        assert yc.max() <= 25.0
+
+
+class TestPerClass:
+    def test_per_class_luts_and_fallback(self):
+        mqual_s, lab_s = _synth(n=15000, seed=1)
+        mqual_h, lab_h = _synth(n=15000, seed=2)
+        mqual = np.concatenate([mqual_s, mqual_h])
+        label = np.concatenate([lab_s, lab_h])
+        cls = np.array(["snv"] * len(mqual_s) + ["hmer_indel"] * len(mqual_h))
+        snvq, luts = recalibrate_snvq_per_class(
+            mqual,
+            label,
+            cls,
+            prefactor_by_class={"snv": 1e-4, "hmer_indel": 1e-2},  # hmer penalized harder
+        )
+        assert set(luts) == {"snv", "hmer_indel"}
+        assert not np.isnan(snvq).any()
+        # same MQUAL grid, higher-prefactor class scores lower
+        m = 55.0
+        snv_q = np.interp(m, luts["snv"][0], luts["snv"][1])
+        hmer_q = np.interp(m, luts["hmer_indel"][0], luts["hmer_indel"][1])
+        assert hmer_q < snv_q
+
+    def test_absent_class_is_nan(self):
+        mqual, label = _synth(n=8000)
+        cls = np.array(["snv"] * len(mqual))
+        snvq, luts = recalibrate_snvq_per_class(
+            mqual, label, cls, prefactor_by_class={"snv": 1e-3, "non_hmer_indel": 1e-3}
+        )
+        assert "non_hmer_indel" not in luts  # no rows -> skipped
+        assert not np.isnan(snvq).any()
+
+    def test_monotone_cap_applied_per_class(self):
+        mqual, label = _synth(n=8000)
+        cls = np.array(["hmer_indel"] * len(mqual))
+        snvq, luts = recalibrate_snvq_per_class(
+            mqual,
+            label,
+            cls,
+            prefactor_by_class={"hmer_indel": 1e-6},
+            smoothing="monotone",
+            caps_by_class={"hmer_indel": 40.0},
+        )
+        assert max(luts["hmer_indel"][1]) <= 40.0 + 1e-9
+        assert np.nanmax(snvq) <= 40.0 + 1e-9
+
+
+class TestIntervalCounters:
+    @pytest.fixture
+    def tiny_ref(self, tmp_path):
+        # chr1: AAAA CG TTT AC-AC-AC ...  -> known homopolymer runs + one STR
+        seq = "AAAACGTTTACACACGGG"  # runs: AAAA(4) C G TTT(3) A C A C A C GGG(3); STR ACACAC(unit AC x3)
+        fa = tmp_path / "ref.fa"
+        fa.write_text(">chr1\n" + seq + "\n")
+        subprocess.run(["samtools", "faidx", str(fa)], check=True)
+        il = tmp_path / "r.interval_list"
+        il.write_text("@HD\tVN:1.0\nchr1\t1\t18\t+\tr1\n")
+        return str(fa), str(il), len(seq)
+
+    def test_base_count(self, tiny_ref):
+        _fa, il, n = tiny_ref
+        assert _count_bases_in_interval_list(il) == n
+
+    def test_hmer_runs(self, tiny_ref):
+        fa, il, _n = tiny_ref
+        # min_run=2 -> AAAA, TTT, GGG = 3 ; min_run=1 -> every maximal run
+        assert count_homopolymer_runs_in_interval_list(il, fa, min_run=2) == 3
+        assert count_homopolymer_runs_in_interval_list(il, fa, min_run=4) == 1  # only AAAA
+        assert count_homopolymer_runs_in_interval_list(il, fa, min_run=1) >= 3
+
+    def test_run_length_histogram(self, tiny_ref):
+        fa, il, n = tiny_ref
+        hist = homopolymer_run_length_histogram(il, fa)
+        assert hist[4] == 1 and hist[3] == 2  # AAAA; TTT + GGG
+        assert sum(length * c for length, c in hist.items()) == n  # runs tile the sequence
+        assert count_homopolymer_runs_in_interval_list(il, fa, min_run=2) == sum(c for k, c in hist.items() if k >= 2)
+
+    def test_str_loci(self, tiny_ref):
+        fa, il, _n = tiny_ref
+        # ACACAC = unit "AC" x3 -> 1 STR locus (>=2 copies)
+        assert count_str_loci_in_interval_list(il, fa, min_unit=2, max_unit=6, min_copies=2) == 1
+
+    def test_sparse_class_falls_back(self):
+        mqual, label = _synth(n=8000)
+        # object dtype: a fixed-width "<U3" array (from "snv") would truncate "non_hmer_indel" to "non", so the
+        # class would never match and the min_lut_rows fallback would not actually be exercised.
+        cls = np.array(["snv"] * len(mqual), dtype=object)
+        cls[:30] = "non_hmer_indel"  # 30 TP rows, 0 FP -> below min_lut_rows
+        assert (cls == "non_hmer_indel").sum() == 30
+        snvq, luts = recalibrate_snvq_per_class(
+            mqual, label, cls, prefactor_by_class={"snv": 1e-3, "non_hmer_indel": 1e-3}
+        )
+        assert "non_hmer_indel" not in luts
+        assert np.isnan(snvq[:30]).all()  # caller falls back to the global LUT
+        assert not np.isnan(snvq[30:]).any()
+
+    def test_nan_scored_rows_do_not_count_as_lut_support(self):
+        # A class with 150 TP + 150 FP rows whose FP MQUALs are all NaN has no FP support: it must fall back
+        # (NaN SNVQ, no LUT) instead of reaching recalibrate_snvq and aborting every class on a NaN quantile.
+        mqual, label = _synth(n=8000)
+        rng = np.random.default_rng(1)
+        extra_mq = np.concatenate([rng.uniform(0, 40, 150), np.full(150, np.nan)])
+        extra_lab = np.concatenate([np.ones(150, bool), np.zeros(150, bool)])
+        mqual = np.concatenate([mqual, extra_mq])
+        label = np.concatenate([label, extra_lab])
+        cls = np.array(["snv"] * len(mqual), dtype=object)
+        cls[-300:] = "non_hmer_indel"
+        snvq, luts = recalibrate_snvq_per_class(
+            mqual, label, cls, prefactor_by_class={"snv": 1e-3, "non_hmer_indel": 1e-3}
+        )
+        assert "non_hmer_indel" not in luts and "snv" in luts
+        assert np.isnan(snvq[-300:]).all()
+        assert not np.isnan(snvq[:-300]).any()
+
+
+class TestWeightedSurvivalNaN:
+    def test_nan_never_survives_but_counts_in_denominator(self):
+        # [1, NaN] with unit weights: S(2) = 0 (not 0.5), S(0) = 0.5, matching (v >= x).mean().
+        v = np.array([1.0, np.nan])
+        x = np.array([0.0, 2.0])
+        np.testing.assert_allclose(weighted_survival(v, np.ones(2), x), [(v >= t).mean() for t in x])
+        np.testing.assert_allclose(weighted_survival(v, np.ones(2), x), [0.5, 0.0])
+
+    def test_unit_weights_match_unweighted_with_missing_scores(self):
+        mqual, label = _synth(n=4000)
+        mqual = mqual.copy()
+        mqual[::37] = np.nan  # missing scores on both TP and FP rows
+        a = recalibrate_snvq(mqual, label, snvq_prefactor_override=1e-3)
+        b = recalibrate_snvq(mqual, label, snvq_prefactor_override=1e-3, sample_weight=np.ones(len(mqual)))
+        for x, y in zip(a[1:], b[1:], strict=True):  # x_lut, y_lut
+            np.testing.assert_allclose(x, y, rtol=0, atol=1e-9)
