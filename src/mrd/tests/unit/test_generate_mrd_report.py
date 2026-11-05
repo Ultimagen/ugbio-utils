@@ -9,6 +9,7 @@ from ugbio_mrd.generate_mrd_report import (
     MrdReportInputs,
     _build_filter_funnel,
     _build_read_funnel,
+    _multi_read_skip_desc,
     generate_mrd_report,
 )
 from ugbio_mrd.mrd_report_renderer import render_read_length_histogram
@@ -353,6 +354,49 @@ def test_generate_mrd_report_multi_read_filter_skipped(output_path, mrd_report_i
     )
     df_post = pd.read_hdf(output_path / "test_report.ctdna_vaf.h5", "df_ctdna_vaf_filt_signature_filt_featuremap")
     assert df_pre.loc["matched", "supporting_reads"].iloc[0] == df_post.loc["matched", "supporting_reads"].iloc[0]
+
+
+def _skipped(sig_type, name):
+    return {"signature_type": sig_type, "signature": name, "ctdna_vaf": 2e-3, "supported_fraction": 0.03}
+
+
+def test_multi_read_skip_desc_reports_matched_and_controls():
+    matched_skipped, note = _multi_read_skip_desc(
+        [_skipped("matched", "m"), _skipped("db_control", "s1")], n_controls=30, min_vaf=1e-3, min_frac=0.01
+    )
+    assert matched_skipped is True
+    assert "Not applied to matched signature" in note
+    assert "1 of 30" in note
+
+
+def test_multi_read_skip_desc_reports_control_only_exemptions():
+    """Controls skipped while matched is filtered must still be reported, and matched stays 'not skipped'."""
+    matched_skipped, note = _multi_read_skip_desc(
+        [_skipped("db_control", "s1"), _skipped("control", "c1")], n_controls=30, min_vaf=1e-3, min_frac=0.01
+    )
+    assert matched_skipped is False
+    assert "Matched signature filtered normally" in note
+    assert "2 of 30" in note
+
+
+def test_multi_read_skip_desc_empty_when_nothing_skipped():
+    assert _multi_read_skip_desc([], n_controls=30, min_vaf=1e-3, min_frac=0.01) == (False, "")
+
+
+def test_generate_mrd_report_no_snvq_multi_read_gate_uses_no_snvq_recall(mrd_report_inputs, monkeypatch):
+    """The no-SNVQ analysis must feed its multi-read gate a TF built with the no-SNVQ recall."""
+    mrd_report_inputs.thresh_multi_read_pvalue = 0.05
+    recalls = {}
+    original = generate_mrd_report_module.mrd.get_tf_from_filtered_data
+
+    def _spy(*args, **kwargs):
+        recalls.setdefault(kwargs.get("title"), kwargs.get("snvq_recall"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(generate_mrd_report_module.mrd, "get_tf_from_filtered_data", _spy)
+    generate_mrd_report(mrd_report_inputs)
+
+    assert recalls["No SNVQ (pre multi-read)"] == recalls["No SNVQ filter reads, filtered signatures"]
 
 
 @pytest.fixture

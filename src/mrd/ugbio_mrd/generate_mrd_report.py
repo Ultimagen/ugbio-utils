@@ -61,17 +61,30 @@ class MrdReportInputs:
     filter_funnel_json: str = None
 
 
-def _multi_read_skip_desc(skipped_signatures: list[dict], n_controls: int, min_vaf: float, min_frac: float) -> str:
-    """Describe which signatures were exempted by the high-TF rule (empty when the matched one was not)."""
+def _multi_read_skip_desc(
+    skipped_signatures: list[dict], n_controls: int, min_vaf: float, min_frac: float
+) -> tuple[bool, str]:
+    """Return ``(matched_skipped, note)`` describing signatures exempted by the high-TF rule.
+
+    The note is empty only when no signature (matched or control) met the rule.
+    """
     matched = [s for s in skipped_signatures if s["signature_type"] == "matched"]
-    if not matched:
-        return ""
     n_ctrl_skipped = len(skipped_signatures) - len(matched)
-    return (
-        f"Not applied to matched signature (high TF): VAF {matched[0]['ctdna_vaf']:.2e} > {min_vaf:.0e} "
-        f"with {matched[0]['supported_fraction']:.1%} of loci supported ≥ {min_frac:.1%}. "
-        f"The same rule is evaluated for each control signature: {n_ctrl_skipped} of {n_controls} met it"
-    )
+    if not matched and not n_ctrl_skipped:
+        return False, ""
+    rule = f"VAF > {min_vaf:.0e} and ≥ {min_frac:.1%} of loci supported"
+    if matched:
+        note = (
+            f"Not applied to matched signature (high TF): VAF {matched[0]['ctdna_vaf']:.2e} > {min_vaf:.0e} "
+            f"with {matched[0]['supported_fraction']:.1%} of loci supported ≥ {min_frac:.1%}. "
+            f"The same rule is evaluated for each control signature: {n_ctrl_skipped} of {n_controls} met it"
+        )
+    else:
+        note = (
+            f"Matched signature filtered normally (high-TF rule not met). The rule ({rule}) exempted "
+            f"{n_ctrl_skipped} of {n_controls} control signatures from the filter"
+        )
+    return bool(matched), note
 
 
 def _load_wdl_funnel(filter_funnel_json_path: str | None) -> tuple[list[dict], dict]:
@@ -570,14 +583,13 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             if len(_excl) > 0:
                 multi_read_excluded_per_type[_sig_type] = _excl
 
-        multi_read_skipped_desc = _multi_read_skip_desc(
+        multi_read_skipped, multi_read_skipped_desc = _multi_read_skip_desc(
             multi_read_info.get("skipped_signatures", []),
             n_controls=int((df_tf_pre_multi_read.index.get_level_values("signature_type") != "matched").sum()),
             min_vaf=mrd_report_inputs.multi_read_skip_min_vaf or 0.0,
             min_frac=mrd_report_inputs.multi_read_skip_min_supported_fraction,
         )
-        multi_read_skipped = bool(multi_read_skipped_desc)
-        if multi_read_skipped:
+        if multi_read_skipped_desc:
             logger.info("Multi-read filter: %s", multi_read_skipped_desc)
 
     df_tf_filt, df_supporting_reads_per_locus_filt = mrd.get_tf_from_filtered_data(
@@ -960,7 +972,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             df_signatures_filt,
             plot_results=False,
             title="No SNVQ (pre multi-read)",
-            snvq_recall=snvq_recall,
+            snvq_recall=snvq_recall_no_snvq,
         )
         while True:
             _new_ns, _ = mrd.apply_multi_read_locus_filter(
@@ -978,7 +990,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
                 df_signatures_filt,
                 plot_results=False,
                 title="No SNVQ (multi-read iter)",
-                snvq_recall=snvq_recall,
+                snvq_recall=snvq_recall_no_snvq,
             )
 
     df_tf_unfilt2, df_supporting_reads_per_locus_unfilt2 = mrd.get_tf_from_filtered_data(
@@ -1048,6 +1060,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         multi_read_excluded_per_type=multi_read_excluded_per_type,
         df_supporting_pre_multi_read=df_supporting_pre_multi,
         multi_read_skipped_note=multi_read_skipped_desc,
+        multi_read_matched_skipped=multi_read_skipped,
     )
     qc_html_path.write_text(qc_html)
 
