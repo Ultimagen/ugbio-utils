@@ -58,7 +58,6 @@ from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 from ugbio_core.logger import logger as log
 from ugbio_core.vcf_utils import get_vcf_sample_names
@@ -150,10 +149,17 @@ DUPLEX_PRIORITY_FP = [
     DUPLEX_GROUP_SSC,
     DUPLEX_GROUP_SINGLETON,
 ]
-# Special --duplex-oversample-priority value: instead of the duplex_group tier ladder, fill the budget by
-# per-(CS + variant) ALT-matching read COUNT (descending) so concordant FP (several reads of a molecule carry
-# the same ALT) are enriched. The per-duplex_group min-fraction floor still applies (non-starvation).
-DUPLEX_PRIORITY_CS_ALT_COUNT = "cs_alt_count"
+
+
+def _validate_duplex_oversample_priority(duplex_oversample_priority: list[str] | None) -> None:
+    """Raise ``ValueError`` if ``duplex_oversample_priority`` names anything but a duplex_group tier."""
+    if not duplex_oversample_priority:
+        return
+    unknown = [t for t in duplex_oversample_priority if t not in DUPLEX_PRIORITY_FP]
+    if unknown:
+        raise ValueError(
+            f"Unknown duplex_oversample_priority tier(s) {unknown}; valid tiers: {', '.join(DUPLEX_PRIORITY_FP)}"
+        )
 
 
 def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> None:
@@ -908,32 +914,6 @@ def _add_duplex_group_column(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.drop("_is_fwd", "_is_rev", "_is_consensus", "_ds_full")
 
 
-def _count_stratum_expr(*, stratify: bool) -> pl.Expr:
-    """Count-priority pre-sample stratum: 1 = indel / 0 = SNV when balancing indel vs SNV, else 0 for all rows."""
-    if not stratify:
-        return pl.lit(0, dtype=pl.Int8).alias("_strat")
-    return pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False).cast(pl.Int8).alias("_strat")
-
-
-def _count_cutoff(hist: dict[int, int], want: int) -> tuple[int, float]:
-    """Global cut-off ``(t, f)`` for keeping the ``want`` highest-count rows of a ``{count: n_rows}`` histogram.
-
-    Rows with count > ``t`` are all kept; of the rows with count == ``t``, those whose uniform [0, 1) tiebreak is
-    >= ``1 - f`` are kept, where ``f`` slightly over-covers the remaining need (exact-trimmed afterwards).
-    ``want <= 0`` keeps nothing; ``want >= sum(hist)`` keeps everything.
-    """
-    if not hist:
-        return 0, 0.0
-    cum = 0
-    for cc in sorted(hist, reverse=True):
-        n = hist[cc]
-        if cum + n >= want:
-            need = want - cum
-            return cc, (min(1.0, need / n * 1.05 + 1000.0 / n) if need > 0 else 0.0)
-        cum += n
-    return min(hist), 1.0  # want exceeds the supply: keep every row
-
-
 def _part_seed(seed: int | None, i: int) -> int | None:
     """Per-part-file sampling seed: ``seed + i``, or ``None`` (unseeded / random) when no seed was given."""
     return None if seed is None else seed + i
@@ -944,23 +924,14 @@ def _balanced_sample(
     n: int,
     indel_snv_balance_fraction: float | None,
     seed: int,
-    *,
-    count_col: str | None = None,
 ) -> pl.DataFrame:
-    """Pick ``n`` rows from ``frame``; if a balance fraction is given, keep ~that fraction of indel rows.
-
-    ``count_col`` (optional): when set, pick the highest-``count_col`` rows within each stratum (ties broken by
-    the ``_tie`` column) instead of a uniform random sample. This is the concordance-oversampling selector —
-    it preserves the indel/SNV balance while preferring high per-(CS + variant) ALT-match-count reads.
-    """
+    """Pick ``n`` rows from ``frame``; if a balance fraction is given, keep ~that fraction of indel rows."""
     if frame.height <= n:
         return frame
 
     def _take(sub: pl.DataFrame, k: int) -> pl.DataFrame:
         if sub.height <= k:
             return sub
-        if count_col is not None:
-            return sub.sort(by=[count_col, "_tie"], descending=[True, True]).head(k)
         return sub.sample(n=k, seed=seed)
 
     if indel_snv_balance_fraction is None:
@@ -991,8 +962,6 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
     duplex_oversample_priority: list[str],
     indel_snv_balance_fraction: float | None,
     min_group_fraction: float | None = None,
-    *,
-    within_group_count_priority: bool = False,
 ) -> None:
     """Downsample to ``downsample_reads`` while preserving reads by ``duplex_group`` priority.
 
@@ -1007,48 +976,18 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
     This prevents a flooded high-priority tier (e.g. duplex_pe_full after dropping the dup filter) from
     starving lower tiers such as SSC. With ``min_group_fraction`` unset the behavior is byte-identical to the
     strict top-down fill (a single boundary group is subsampled; lower groups dropped).
-
-    ``within_group_count_priority`` (opt-in, FP concordance oversampling): keep the SAME tier ladder + floor,
-    but whenever a group has to be subsampled (a floored/boundary tier), keep its highest per-(CS + variant)
-    ALT-match COUNT reads first instead of a uniform random sample. Fully-kept tiers are unaffected (every row
-    stays). This enriches concordant FP WITHIN each tier without changing the tier mix (so it does not flood the
-    duplex tiers the way the bare ``cs_alt_count`` mode does). ``indel_snv_balance_fraction`` is still honored:
-    the top-count selection is applied WITHIN each indel/SNV stratum, so the balance target is preserved while
-    concordant reads are preferred within each type.
     """
     seed = downsample_seed if downsample_seed is not None else 0
 
     # Pass 1: annotate each part with duplex_group (per-part is safe — molecules don't span regions) and
     # tally global per-group counts (and per-(group, indel/SNV) counts, used to pre-sample each stratum at its
-    # own rate when balancing). For within-group count priority also attach the per-(CS + variant)
-    # ALT-match count ``_cc`` (safe per-part: a molecule's reads never span parts) + a random tiebreak ``_tie``.
+    # own rate when balancing).
     balance = indel_snv_balance_fraction is not None
     annotated_files: list[str] = []
     counts: dict[str, int] = {}
     indel_counts: dict[str, int] = {}
-    # count priority: per-(group, stratum) histogram {_cc: n} (stratum 1 = indel, 0 = SNV / everything when not
-    # balancing), used to find the global count cut-off so the per-part pre-sample keeps the true global top rows.
-    cc_hist: dict[tuple[str, int], dict[int, int]] = {}
-    stratify = False
-    for i, f in enumerate(parquet_files):
+    for f in parquet_files:
         part = _add_duplex_group_column(pl.read_parquet(f))
-        if within_group_count_priority:
-            mol_keys = [
-                c
-                for c in (COL_CHROM, COL_POS, "REF", "ALT", COL_X_IC, "X_IL", "X_INDEL_SEQ", COL_CS)
-                if c in part.columns
-            ]
-            conc = pl.len().over(mol_keys) if (COL_CS in part.columns and mol_keys) else pl.lit(1)
-            # Uniform [0, 1) tiebreak: comparable ACROSS parts. A per-part int_range permutation (0..h-1) would make
-            # rows of larger parts win every cross-part tie in the global top-count trim (region-size bias).
-            tie = np.random.default_rng(seed + i).random(part.height)
-            part = part.with_columns(conc.alias("_cc"), pl.Series("_tie", tie, dtype=pl.Float64))
-            stratify = balance and COL_X_IC in part.columns
-            for grp, st, cc, n in (
-                part.group_by([DUPLEX_GROUP_COL, _count_stratum_expr(stratify=stratify), "_cc"]).len().iter_rows()
-            ):
-                hist = cc_hist.setdefault((grp, int(st)), {})
-                hist[int(cc)] = hist.get(int(cc), 0) + int(n)
         tmp = f + ".dg.parquet"
         part.write_parquet(tmp)
         annotated_files.append(tmp)
@@ -1089,12 +1028,12 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
         f"full_keep={full_groups} partial={partial_groups} keep_n={keep_n}"
     )
 
-    # Per-(partial group, indel/SNV) pre-sample fractions when balancing without count priority. A single uniform
+    # Per-(partial group, indel/SNV) pre-sample fractions when balancing. A single uniform
     # group fraction would decimate the (rare) indel stratum before the balanced exact-trim, so the realized indel
     # fraction would stay at its natural rate instead of the target. Pre-sample each stratum at the rate its
     # balanced target needs (same targets as _balanced_sample), so the trim can reach the target.
     stratum_frac: dict[str, tuple[float, float]] = {}
-    if balance and not within_group_count_priority:
+    if balance:
         for g in partial_groups:
             n_ind = indel_counts.get(g, 0)
             n_snv = counts[g] - n_ind
@@ -1106,24 +1045,6 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
                 min(1.0, want_snv / n_snv * 1.05 + 1000.0 / n_snv) if n_snv else 0.0,
             )
 
-    # Count priority: per-(partial group, stratum) global cut-off (t, f): keep every row with _cc > t and the
-    # rows with _cc == t whose uniform tiebreak is in the top fraction f. The union over parts then contains the
-    # global top-count rows of each stratum, so the exact-trim below selects the true global top (a per-part
-    # "top frac of this part" pre-sample would drop high-count rows of parts that hold more than frac of them).
-    cc_cut: dict[tuple[str, int], tuple[int, float]] = {}
-    if within_group_count_priority:
-        for g in partial_groups:
-            n_by_s = {st: sum(h.values()) for (gg, st), h in cc_hist.items() if gg == g}
-            if stratify:
-                n_ind, n_snv = n_by_s.get(1, 0), n_by_s.get(0, 0)
-                want_ind = min(round(indel_snv_balance_fraction * keep_n[g]), n_ind)
-                want_snv = min(keep_n[g] - want_ind, n_snv)
-                want = {1: min(n_ind, keep_n[g] - want_snv), 0: want_snv}  # refill indels if SNV-scarce
-            else:
-                want = {0: keep_n[g]}
-            for st, w in want.items():
-                cc_cut[(g, st)] = _count_cutoff(cc_hist.get((g, st), {}), w)
-
     # Pass 2: collect fully-kept groups in full, and a memory-bounded per-part pre-sample of each partial group.
     kept: list[pl.DataFrame] = []
     for i, tmp in enumerate(annotated_files):
@@ -1134,21 +1055,7 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
             b = part.filter(pl.col(DUPLEX_GROUP_COL) == g)
             if b.height:
                 frac = min(1.0, keep_n[g] / counts[g] * 1.05 + 1000.0 / counts[g])
-                if within_group_count_priority:
-                    # Keep the candidates above this stratum's global count cut-off (bounded by ~1.05x the
-                    # target); the global exact-trim below then picks the true top-count rows across parts. When
-                    # balancing, the cut-off is per indel/SNV stratum so neither type is starved before the trim.
-                    st_col = _count_stratum_expr(stratify=stratify)
-                    for (gg, st), (t, f) in cc_cut.items():
-                        if gg != g:
-                            continue
-                        kept.append(
-                            b.filter(
-                                (st_col == st)
-                                & ((pl.col("_cc") > t) | ((pl.col("_cc") == t) & (pl.col("_tie") >= 1.0 - f)))
-                            )
-                        )
-                elif g in stratum_frac and COL_X_IC in b.columns:
+                if g in stratum_frac and COL_X_IC in b.columns:
                     frac_ind, frac_snv = stratum_frac[g]
                     pred = pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False)
                     kept.append(b.filter(pred).sample(fraction=frac_ind, seed=seed + i))
@@ -1161,85 +1068,21 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
     else:
         merged = _add_duplex_group_column(pl.read_parquet(annotated_files[0])).head(0)
 
-    # Exact-trim each partial group to its target; leave full-kept groups intact. With count priority keep the
-    # highest per-(CS + variant) ALT-match count rows; otherwise balanced/uniform sample.
+    # Exact-trim each partial group to its target (balanced/uniform sample); leave full-kept groups intact.
     for g in partial_groups:
         gdf = merged.filter(pl.col(DUPLEX_GROUP_COL) == g)
         rest_df = merged.filter(pl.col(DUPLEX_GROUP_COL) != g)
-        if within_group_count_priority:
-            gdf = _balanced_sample(gdf, keep_n[g], indel_snv_balance_fraction, seed, count_col="_cc")
-        else:
-            gdf = _balanced_sample(gdf, keep_n[g], indel_snv_balance_fraction, seed)
+        gdf = _balanced_sample(gdf, keep_n[g], indel_snv_balance_fraction, seed)
         merged = pl.concat([rest_df, gdf], how="vertical")
 
-    # Drop the helper column(s), shuffle deterministically so groups interleave, write.
-    merged = merged.drop([DUPLEX_GROUP_COL, "_cc", "_tie"], strict=False).sample(fraction=1.0, shuffle=True, seed=seed)
+    # Drop the helper column, shuffle deterministically so groups interleave, write.
+    merged = merged.drop(DUPLEX_GROUP_COL).sample(fraction=1.0, shuffle=True, seed=seed)
     realized = merged.height
     log.info(f"Duplex priority-preserve realized: {realized} rows (target {budget})")
     merged.write_parquet(output_path)
 
     for f in annotated_files:
         Path(f).unlink(missing_ok=True)
-    for f in parquet_files:
-        Path(f).unlink(missing_ok=True)
-
-
-def _cs_alt_count_downsample(  # noqa: PLR0913, PLR0917
-    parquet_files: list[str],
-    output_path: str,
-    downsample_reads: int,
-    downsample_seed: int | None,
-    indel_snv_balance_fraction: float | None,  # noqa: ARG001 - count priority dominates; kept for call parity
-    min_group_fraction: float | None = None,
-) -> None:
-    """Downsample to ``downsample_reads`` preferring reads with the highest per-(CS + variant) ALT-match COUNT.
-
-    The ``cs_alt_count`` priority mode (FP concordance oversampling). Each read's ``concordance_count`` is the
-    size of its molecule-and-variant group — CS + ``(CHROM, POS, REF, ALT, X_IC, X_IL, X_INDEL_SEQ)`` — i.e. how
-    many reads of that molecule carry this ALT in the featuremap. Concordant errors (both strands / several
-    reads agree) have higher counts than singleton errors, so filling the budget highest-count-first enriches
-    concordant FP WITHOUT duplicating any row. Keys on CS, never MI (MI is per-strand on this unpaired-PE data).
-
-    ``min_group_fraction`` (0..1, optional) keeps the per-``duplex_group`` non-starvation FLOOR: each present
-    group is guaranteed its own top-count ``min(round(min_group_fraction * budget), count)`` reads before the
-    remaining budget is filled globally by count — so singleton/ssc are not starved by the duplex enrichment.
-    Note: ``indel_snv_balance_fraction`` is intentionally not applied here (count priority takes precedence).
-    """
-    seed = downsample_seed if downsample_seed is not None else 0
-    frame = pl.concat([_add_duplex_group_column(pl.read_parquet(f)) for f in parquet_files], how="vertical")
-    total = frame.height
-    budget = min(downsample_reads, total)
-    mol_keys = [
-        c for c in (COL_CHROM, COL_POS, "REF", "ALT", COL_X_IC, "X_IL", "X_INDEL_SEQ", COL_CS) if c in frame.columns
-    ]
-    conc = pl.len().over(mol_keys) if (COL_CS in frame.columns and mol_keys) else pl.lit(1)
-    frame = frame.with_columns(
-        conc.alias("_cc"),
-        pl.int_range(pl.len()).shuffle(seed=seed).alias("_tie"),  # deterministic random tiebreak within equal counts
-    )
-    helpers = [DUPLEX_GROUP_COL, "_cc", "_tie"]
-    if total <= budget:
-        frame.drop(helpers).write_parquet(output_path)
-        for f in parquet_files:
-            Path(f).unlink(missing_ok=True)
-        return
-    # Per-duplex_group floor: within each group, rank top-count-first and mark the top floor_g rows guaranteed.
-    floor = round(min_group_fraction * budget) if min_group_fraction else 0
-    frame = frame.sort(by=[DUPLEX_GROUP_COL, "_cc", "_tie"], descending=[False, True, True]).with_columns(
-        pl.int_range(pl.len()).over(DUPLEX_GROUP_COL).alias("_grp_idx")
-    )
-    frame = frame.with_columns(
-        (pl.col("_grp_idx") < pl.min_horizontal(pl.lit(floor), pl.len().over(DUPLEX_GROUP_COL))).alias("_is_floor")
-    )
-    # Final keep: floor rows first (guaranteed), then globally by concordance count (desc); keep exactly budget.
-    kept = (
-        frame.sort(by=["_is_floor", "_cc", "_tie"], descending=[True, True, True])
-        .head(budget)
-        .drop([*helpers, "_grp_idx", "_is_floor"])
-        .sample(fraction=1.0, shuffle=True, seed=seed)  # interleave so groups aren't blocked in output order
-    )
-    log.info(f"cs_alt_count downsample: total={total} budget={budget} floor_per_group={floor} realized={kept.height}")
-    kept.write_parquet(output_path)
     for f in parquet_files:
         Path(f).unlink(missing_ok=True)
 
@@ -1387,15 +1230,14 @@ SAMPLE_WEIGHT_COL = "sample_weight"
 _STRATUM_COL = "_sampling_stratum"
 
 
-def _annotate_sampling_strata(parquet_files: list[str], *, use_duplex_group: bool, use_count: bool) -> dict[str, int]:
+def _annotate_sampling_strata(parquet_files: list[str], *, use_duplex_group: bool) -> dict[str, int]:
     """Tag every pre-downsample row with its sampling stratum (in place) and return the stratum counts.
 
     The stratum is everything the downsampler conditions on: the recalibration cell (variant class + hmer
     run-length bin, which also covers the indel/SNV balance) and — when the duplex priority ladder runs — the
-    molecule-level ``duplex_group`` and, for the ``cs_alt_count`` modes, the exact per-(CS + variant) ALT-match
-    count. It must be computed BEFORE downsampling: ``duplex_group`` and the count are molecule-level windows
-    that change once reads are dropped. Within a stratum every sampler is random (count ties are broken by a
-    random tiebreak), so ``n_pre / n_post`` per stratum is an exact importance weight (finer strata stay unbiased).
+    molecule-level ``duplex_group``. It must be computed BEFORE downsampling: ``duplex_group`` is a molecule-level
+    window that changes once reads are dropped. Within a stratum every sampler is random, so ``n_pre / n_post``
+    per stratum is an exact importance weight (finer strata stay unbiased).
     """
     counts: dict[str, int] = {}
     for f in parquet_files:
@@ -1404,17 +1246,6 @@ def _annotate_sampling_strata(parquet_files: list[str], *, use_duplex_group: boo
         if use_duplex_group:
             part = _add_duplex_group_column(part)
             parts.append(pl.col(DUPLEX_GROUP_COL))
-        if use_count:
-            mol_keys = [
-                c
-                for c in (COL_CHROM, COL_POS, "REF", "ALT", COL_X_IC, "X_IL", "X_INDEL_SEQ", COL_CS)
-                if c in part.columns
-            ]
-            cc = pl.len().over(mol_keys) if (COL_CS in part.columns and mol_keys) else pl.lit(1)
-            # EXACT count, not a capped bucket: the samplers rank by the exact count, so within a capped "4+"
-            # bucket the kept rows would skew to higher counts and a per-bucket n_pre/n_post weight could not
-            # undo that. With exact-count strata every within-stratum selection is a random tiebreak.
-            parts.append(cc.cast(pl.Utf8))
         part = part.with_columns(pl.concat_str(parts, separator="/").alias(_STRATUM_COL))
         if use_duplex_group:
             part = part.drop(DUPLEX_GROUP_COL)
@@ -1471,10 +1302,11 @@ def _merge_parquet_files_lazy(  # noqa: PLR0913
 
     ``per_class_counts_json``: pre-downsample per-class / per-hmer-bin row counts (recalibration numerators).
     When the downsample actually drops rows, the output gets a per-row ``sample_weight`` (pre/post count of the
-    row's sampling stratum) so recalibration can undo the oversampling (duplex priority, indel/SNV balance,
-    cs_alt_count). Sampling itself is unchanged: the stratum tag is an extra column and every sampler selects
+    row's sampling stratum) so recalibration can undo the oversampling (duplex priority, indel/SNV balance).
+    Sampling itself is unchanged: the stratum tag is an extra column and every sampler selects
     rows by seed, independent of the column set. See :func:`_merge_parquet_files_dispatch` for the strategies.
     """
+    _validate_duplex_oversample_priority(duplex_oversample_priority)
     if per_class_counts_json and parquet_files:
         _write_per_class_counts(parquet_files, per_class_counts_json)
 
@@ -1484,8 +1316,7 @@ def _merge_parquet_files_lazy(  # noqa: PLR0913
         if total_rows > downsample_reads:
             schema_names = pl.scan_parquet(parquet_files[0]).collect_schema().names()
             use_dg = bool(duplex_oversample_priority) and COL_CS in schema_names
-            use_cc = use_dg and DUPLEX_PRIORITY_CS_ALT_COUNT in (duplex_oversample_priority or [])
-            pre_counts = _annotate_sampling_strata(parquet_files, use_duplex_group=use_dg, use_count=use_cc)
+            pre_counts = _annotate_sampling_strata(parquet_files, use_duplex_group=use_dg)
 
     _merge_parquet_files_dispatch(
         parquet_files,
@@ -1540,34 +1371,15 @@ def _merge_parquet_files_dispatch(  # noqa: PLR0912, PLR0915, C901
         if COL_CS in schema_names:
             total_rows = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
             if total_rows > downsample_reads:
-                # cs_alt_count handling, keyed on whether it accompanies a tier ladder:
-                #   * ladder + cs_alt_count (e.g. "duplex_pe_full,duplex,ssc,singleton,cs_alt_count"): keep the
-                #     tier fill + floor, but prefer high per-(CS+variant) ALT-match count reads WITHIN each
-                #     subsampled tier (FP concordance oversampling without flooding the duplex tiers).
-                #   * bare cs_alt_count (no tier groups): fill the whole budget by count (the aggressive mode).
-                #   * no cs_alt_count: the plain tier ladder.
-                tier_groups = [g for g in duplex_oversample_priority if g != DUPLEX_PRIORITY_CS_ALT_COUNT]
-                has_count = DUPLEX_PRIORITY_CS_ALT_COUNT in duplex_oversample_priority
-                if has_count and not tier_groups:
-                    _cs_alt_count_downsample(
-                        parquet_files,
-                        output_path,
-                        downsample_reads,
-                        downsample_seed,
-                        indel_snv_balance_fraction,
-                        duplex_group_min_fraction,
-                    )
-                else:
-                    _priority_preserve_downsample(
-                        parquet_files,
-                        output_path,
-                        downsample_reads,
-                        downsample_seed,
-                        tier_groups,
-                        indel_snv_balance_fraction,
-                        duplex_group_min_fraction,
-                        within_group_count_priority=has_count,
-                    )
+                _priority_preserve_downsample(
+                    parquet_files,
+                    output_path,
+                    downsample_reads,
+                    downsample_seed,
+                    duplex_oversample_priority,
+                    indel_snv_balance_fraction,
+                    duplex_group_min_fraction,
+                )
                 return
 
     # Stratified (indel/SNV-balanced) downsample: opt-in and only when it can change the
@@ -2003,6 +1815,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
         of the output (see `_merge_parquet_files_lazy`). No-op if unset or if there is no
         X_IC column / no indels / the dataset fits within downsample_reads.
     """
+    _validate_duplex_oversample_priority(duplex_oversample_priority)
     log.info(f"Input: {vcf}")
     log.info(f"Output: {out}")
     log.info(f"List mode: {list_mode}")
@@ -2641,7 +2454,9 @@ def main(argv: list[str] | None = None) -> None:
             "priority first (e.g. 'duplex_pe_full,duplex,ssc,singleton'). When set, the downsample fills the "
             "--downsample-reads budget top-down by tier (keep-all of a higher tier before any of a lower tier; "
             "only the boundary tier is subsampled), enriching full-PE-duplex / duplex reads over ssc. No-op if "
-            "unset, if the CS column is absent (non-duplex run), or if the data already fits the budget."
+            "unset, if the CS column is absent (non-duplex run), or if the data already fits the budget. Valid tiers: "
+            + ", ".join(DUPLEX_PRIORITY_FP)
+            + "."
         ),
     )
     parser.add_argument(
@@ -2673,6 +2488,10 @@ def main(argv: list[str] | None = None) -> None:
         if args.duplex_oversample_priority
         else None
     )
+    try:
+        _validate_duplex_oversample_priority(duplex_oversample_priority)
+    except ValueError as e:
+        parser.error(str(e))
 
     # Parse expand columns
     expand_columns: dict[str, int] | None = None

@@ -1,6 +1,6 @@
 """Sampling weights emitted by the training-set downsample (featuremap_to_dataframe._merge_parquet_files_lazy).
 
-The downsample oversamples on purpose (duplex priority ladder + floor, indel/SNV balance, cs_alt_count). Each kept
+The downsample oversamples on purpose (duplex priority ladder + floor, indel/SNV balance). Each kept
 row gets ``sample_weight = n_pre / n_post`` of its sampling stratum, so recalibration can undo the oversampling.
 Invariant tested on every path: for every stratum — and therefore for any coarser grouping such as the variant
 cell or the dx (duplex) group — the weights of the kept rows sum exactly to the pre-downsample row count.
@@ -12,7 +12,6 @@ import numpy as np
 import polars as pl
 import pytest
 from ugbio_featuremap.featuremap_to_dataframe import (
-    DUPLEX_PRIORITY_CS_ALT_COUNT,
     DUPLEX_PRIORITY_FP,
     SAMPLE_WEIGHT_COL,
     _annotate_sampling_strata,
@@ -80,7 +79,7 @@ def _stratum_labels(tmp_path, frame, **kwargs):
     (tmp_path / "lbl").mkdir()
     files = _write_parts(tmp_path / "lbl", frame)
     prio = kwargs.get("duplex_oversample_priority") or []
-    _annotate_sampling_strata(files, use_duplex_group=bool(prio), use_count=DUPLEX_PRIORITY_CS_ALT_COUNT in prio)
+    _annotate_sampling_strata(files, use_duplex_group=bool(prio))
     return pl.concat([pl.read_parquet(f, columns=["RN", "_sampling_stratum"]) for f in files])
 
 
@@ -91,11 +90,6 @@ CASES = {
         "duplex_group_min_fraction": 0.1,
         "indel_snv_balance_fraction": 0.5,
     },
-    "priority+cs_alt_count": {
-        "duplex_oversample_priority": [*DUPLEX_PRIORITY_FP, DUPLEX_PRIORITY_CS_ALT_COUNT],
-        "duplex_group_min_fraction": 0.1,
-    },
-    "cs_alt_count": {"duplex_oversample_priority": [DUPLEX_PRIORITY_CS_ALT_COUNT], "duplex_group_min_fraction": 0.1},
     "stratified": {"indel_snv_balance_fraction": 0.5},
     "uniform": {},
 }
@@ -123,15 +117,12 @@ def test_weights_restore_pre_downsample_counts(tmp_path, case):
     )
     j = pre_s.join(post_s, on="_sampling_stratum", how="inner")
     np.testing.assert_allclose(j[SAMPLE_WEIGHT_COL].to_numpy(), j["len"].to_numpy(), rtol=1e-5)
-    lost = pre_s.height - j.height
+    assert pre_s.height == j.height  # with a floor / random sampling no stratum is dropped entirely
 
     pre, post = _with_keys(frame), _with_keys(res)
-    if lost == 0:
-        _assert_weights_restore(pre, post, "_cell")  # cell is part of every stratum key
-        assert np.isclose(res[SAMPLE_WEIGHT_COL].cast(pl.Float64).sum(), frame.height, rtol=1e-5)
-    else:
-        assert "cs_alt_count" in case  # only the count modes drop whole strata here (deterministic by count)
-    if "priority" in case and lost == 0:
+    _assert_weights_restore(pre, post, "_cell")  # cell is part of every stratum key
+    assert np.isclose(res[SAMPLE_WEIGHT_COL].cast(pl.Float64).sum(), frame.height, rtol=1e-5)
+    if "priority" in case:
         _assert_weights_restore(pre, post, "_dup")  # dx==1 <=> duplex_pe_full, a stratum component
     elif not kwargs.get("duplex_oversample_priority"):
         # DS is not a sampling key on these paths: weighted duplex share is only statistically restored.
@@ -197,16 +188,3 @@ def test_dropped_stratum_is_reported(tmp_path, caplog):
     assert SAMPLE_WEIGHT_COL in res.columns
     assert res[SAMPLE_WEIGHT_COL].cast(pl.Float64).sum() < frame.height  # lost mass
     assert any("dropped" in r.getMessage() and "sampling strata" in r.getMessage() for r in caplog.records)
-
-
-def test_count_strata_use_exact_count(tmp_path):
-    """cs_alt_count strata must be keyed on the EXACT per-(CS + variant) count (the samplers rank by it), not a
-    capped 4+ bucket: rows of a count-6 molecule and of a count-4 molecule land in different strata."""
-    rows = []
-    for m, n_reads in (("a", 6), ("b", 4), ("c", 1)):
-        for r in range(n_reads):
-            rows.append({"CHROM": "chr1", "POS": 10 + ord(m), "REF": "C", "ALT": "T", "CS": m, "RN": f"{m}{r}"})
-    f = str(tmp_path / "p0.parquet")
-    pl.DataFrame(rows).write_parquet(f)
-    counts = _annotate_sampling_strata([f], use_duplex_group=False, use_count=True)
-    assert counts == {"snv/6": 6, "snv/4": 4, "snv/1": 1}

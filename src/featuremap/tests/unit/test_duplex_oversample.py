@@ -11,20 +11,23 @@ Covers:
 - _merge_parquet_files_lazy gate: no-op when priority unset or when the CS column is absent.
 """
 
+from pathlib import Path
+
 import polars as pl
+import pytest
 from ugbio_featuremap.featuremap_to_dataframe import (
     DUPLEX_GROUP_COL,
     DUPLEX_GROUP_DUPLEX,
     DUPLEX_GROUP_DUPLEX_PE_FULL,
     DUPLEX_GROUP_SINGLETON,
     DUPLEX_GROUP_SSC,
-    DUPLEX_PRIORITY_CS_ALT_COUNT,
     DUPLEX_PRIORITY_FP,
     _add_duplex_group_column,
     _balanced_sample,
     _merge_parquet_files_lazy,
     _priority_preserve_downsample,
 )
+from ugbio_featuremap.featuremap_to_dataframe import main as featuremap_to_dataframe_main
 
 
 def _row(chrom, pos, ref, alt, cs, nf, nr, dx=None, x_ic=None, po=None):
@@ -197,166 +200,6 @@ def test_merge_gate_noop_when_priority_unset(tmp_path):
     assert DUPLEX_GROUP_COL not in res.columns
 
 
-def test_cs_alt_count_prefers_high_count_molecules(tmp_path):
-    # One concordant molecule: 10 reads, same CS + pos + ALT, both strands -> concordance_count == 10.
-    # 100 singleton errors: distinct CS, concordance_count == 1 each. Budget 15, no floor.
-    rows = []
-    for k in range(10):
-        rows.append(_row("chr1", 500, "C", "T", "cs_hi", 3 if k % 2 == 0 else 0, 0 if k % 2 == 0 else 3, dx=None))
-    for j in range(100):
-        rows.append(_row("chr2", 1000 + j, "C", "T", f"cs_s{j}", 0, 0, dx=None))  # singleton, count 1
-    for i, r in enumerate(rows):  # unique per-read id so identical consensus rows stay distinct
-        r["RN"] = f"r{i}"
-    files = _write_parts(tmp_path, [rows])
-    out = str(tmp_path / "out.parquet")
-    _merge_parquet_files_lazy(
-        files,
-        out,
-        downsample_reads=15,
-        downsample_seed=1,
-        duplex_oversample_priority=[DUPLEX_PRIORITY_CS_ALT_COUNT],
-    )
-    res = pl.read_parquet(out)
-    assert res.height == 15
-    # the whole high-count molecule is retained (count fill keeps the 10 highest-count reads first)
-    assert res.filter(pl.col("CS") == "cs_hi").height == 10
-    # no row duplication
-    assert res.height == res.unique().height
-
-
-def test_tier_ladder_with_within_group_count_priority(tmp_path):
-    # Tier ladder + cs_alt_count modifier: the ladder/floor are unchanged, but when a tier must be subsampled
-    # its highest per-(CS+variant) ALT-match-count reads are kept first (concordant-first within the group).
-    # One ssc tier only (so it is the boundary): "hi" molecule = 10 one-strand reads (count 10); five "mid"
-    # molecules = 2 reads each (count 2); twenty "lo" molecules = 1 read each (count 1). Budget 15 -> the whole
-    # count-10 molecule is kept first, then count-2 reads; count-1 singletons of the tier are dropped.
-    rows = [_row("chr1", 500, "C", "T", "hi", 3, 0, dx=None) for _ in range(10)]
-    for j in range(5):
-        rows += [_row("chr1", 600 + j, "C", "T", f"mid{j}", 3, 0, dx=None) for _ in range(2)]
-    rows += [_row("chr1", 800 + j, "C", "T", f"lo{j}", 3, 0, dx=None) for j in range(20)]
-    for i, r in enumerate(rows):  # unique per-read id so identical consensus rows stay distinct
-        r["RN"] = f"r{i}"
-    files = _write_parts(tmp_path, [rows])
-    out = str(tmp_path / "out.parquet")
-    _merge_parquet_files_lazy(
-        files,
-        out,
-        downsample_reads=15,
-        downsample_seed=1,
-        duplex_oversample_priority=[DUPLEX_GROUP_SSC, DUPLEX_PRIORITY_CS_ALT_COUNT],
-    )
-    res = pl.read_parquet(out)
-    assert res.height == 15
-    assert res.filter(pl.col("CS") == "hi").height == 10  # highest-count molecule kept whole first
-    assert res.height == res.unique().height  # no row duplication
-    assert "_cc" not in res.columns and "_tie" not in res.columns  # helper cols dropped
-
-
-def test_within_group_count_priority_preserves_indel_snv_balance(tmp_path):
-    # Count priority must still honor indel_snv_balance_fraction: the top-count pick is applied WITHIN each
-    # indel/SNV stratum. One ssc tier: snv has a count-10 molecule + 40 singletons; indel (ins) has a count-10
-    # molecule + 40 singletons. Budget 20, balance 0.5 -> 10 indel + 10 snv, and each side keeps its count-10
-    # molecule whole (concordant-first within type).
-    rows = [_row("chr1", 500, "C", "T", "snv_hi", 3, 0, dx=None) for _ in range(10)]
-    rows += [_row("chr1", 1000 + j, "C", "T", f"snv_lo{j}", 3, 0, dx=None) for j in range(40)]
-    rows += [_row("chr1", 600, "C", "CA", "ind_hi", 3, 0, dx=None, x_ic="ins") for _ in range(10)]
-    rows += [_row("chr1", 2000 + j, "C", "CA", f"ind_lo{j}", 3, 0, dx=None, x_ic="ins") for j in range(40)]
-    for i, r in enumerate(rows):
-        r["RN"] = f"r{i}"
-    files = _write_parts(tmp_path, [rows])
-    out = str(tmp_path / "out.parquet")
-    _merge_parquet_files_lazy(
-        files,
-        out,
-        downsample_reads=20,
-        downsample_seed=1,
-        indel_snv_balance_fraction=0.5,
-        duplex_oversample_priority=[DUPLEX_GROUP_SSC, DUPLEX_PRIORITY_CS_ALT_COUNT],
-    )
-    res = pl.read_parquet(out)
-    assert res.height == 20
-    indel = res.filter(pl.col("X_IC").is_in(["ins", "del"])).height
-    assert indel == 10  # balance 0.5 honored
-    assert res.filter(pl.col("CS") == "snv_hi").height == 10  # high-count kept within SNV stratum
-    assert res.filter(pl.col("CS") == "ind_hi").height == 10  # high-count kept within indel stratum
-
-
-def test_within_group_count_priority_keeps_tier_order_and_floor(tmp_path):
-    # Count priority must not flood the duplex tiers: the tier ladder + floor still govern the mix. Budget 20,
-    # floor 0.1 -> ssc floor = 2. duplex_pe_full (10) kept whole, duplex (10) kept whole, ssc is the boundary.
-    rows = [_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, dx=1) for j in range(10)]  # duplex_pe_full
-    for j in range(5):
-        rows += [
-            _row("chr1", 2000 + j, "C", "T", f"d{j}", 3, 0, dx=None, po="F1R2"),
-            _row("chr1", 2000 + j, "C", "T", f"d{j}", 0, 3, dx=None, po="F2R1"),
-        ]  # duplex
-    rows += [_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, dx=None) for j in range(100)]  # ssc
-    for i, r in enumerate(rows):
-        r["RN"] = f"r{i}"
-    files = _write_parts(tmp_path, [rows])
-    out = str(tmp_path / "out.parquet")
-    _merge_parquet_files_lazy(
-        files,
-        out,
-        downsample_reads=20,
-        downsample_seed=1,
-        duplex_oversample_priority=[
-            DUPLEX_GROUP_DUPLEX_PE_FULL,
-            DUPLEX_GROUP_DUPLEX,
-            DUPLEX_GROUP_SSC,
-            DUPLEX_GROUP_SINGLETON,
-            DUPLEX_PRIORITY_CS_ALT_COUNT,
-        ],
-        duplex_group_min_fraction=0.1,
-    )
-    res = _add_duplex_group_column(pl.read_parquet(out))
-    counts = dict(res.group_by(DUPLEX_GROUP_COL).len().iter_rows())
-    assert res.height == 20
-    # Ladder preserved: duplex_pe_full + duplex kept whole (10 each would overflow -> floor leaves room). The
-    # top tiers are not flooded beyond their true counts, ssc keeps at least its floor.
-    assert counts.get(DUPLEX_GROUP_DUPLEX_PE_FULL, 0) == 10
-    assert counts.get(DUPLEX_GROUP_SSC, 0) >= 2  # floor honored
-
-
-def test_cs_alt_count_floor_keeps_low_count_class(tmp_path):
-    # One concordant molecule with count 20 (duplex); 50 singletons (count 1). Budget 15.
-    rows = [
-        _row("chr1", 500, "C", "T", "cs_hi", 3 if k % 2 == 0 else 0, 0 if k % 2 == 0 else 3, dx=None) for k in range(20)
-    ]
-    rows += [_row("chr2", 1000 + j, "C", "T", f"cs_s{j}", 0, 0, dx=None) for j in range(50)]
-    files = _write_parts(tmp_path, [rows])
-
-    # Without a floor: pure count fill keeps 15 of the count-20 reads; singletons starved to 0.
-    out0 = str(tmp_path / "out0.parquet")
-    _merge_parquet_files_lazy(
-        files.copy(),
-        out0,
-        downsample_reads=15,
-        downsample_seed=1,
-        duplex_oversample_priority=[DUPLEX_PRIORITY_CS_ALT_COUNT],
-    )
-    r0 = _add_duplex_group_column(pl.read_parquet(out0))
-    c0 = dict(r0.group_by(DUPLEX_GROUP_COL).len().iter_rows())
-    assert r0.height == 15
-    assert c0.get(DUPLEX_GROUP_SINGLETON, 0) == 0
-
-    # With a 0.2 floor: the singleton duplex_group is guaranteed >= round(0.2*15)=3 (non-starvation).
-    files2 = _write_parts(tmp_path, [rows])
-    out1 = str(tmp_path / "out1.parquet")
-    _merge_parquet_files_lazy(
-        files2,
-        out1,
-        downsample_reads=15,
-        downsample_seed=1,
-        duplex_oversample_priority=[DUPLEX_PRIORITY_CS_ALT_COUNT],
-        duplex_group_min_fraction=0.2,
-    )
-    r1 = _add_duplex_group_column(pl.read_parquet(out1))
-    c1 = dict(r1.group_by(DUPLEX_GROUP_COL).len().iter_rows())
-    assert r1.height == 15
-    assert c1.get(DUPLEX_GROUP_SINGLETON, 0) >= 3
-
-
 def test_paired_po_strand_not_nf_nr():
     """Paired consensus data: the two mates of ONE strand have opposite nf/nr (alignment orientation) but the same
     po -> single-strand (ssc), not duplex. Both po orientations flagging (no dx) -> duplex; dx==1 -> duplex_pe_full."""
@@ -402,7 +245,7 @@ def test_ds_is_ignored():
     assert _add_duplex_group_column(frame)[DUPLEX_GROUP_COL].to_list() == [DUPLEX_GROUP_SSC]
 
 
-def test_priority_preserve_partial_group_honors_balance_without_count_priority(tmp_path):
+def test_priority_preserve_partial_group_honors_balance(tmp_path):
     # Regression: the plain tier ladder pre-sampled a partial group at ONE uniform rate (~10% here), so the rare
     # indel stratum was decimated before the balanced exact-trim and the realized indel count stayed near its
     # natural 2% (~40 of 400). One ssc tier (the boundary group): 400 indel + 19600 SNV rows across 2 parts;
@@ -431,48 +274,40 @@ def test_priority_preserve_partial_group_honors_balance_without_count_priority(t
     assert res.filter(pl.col("X_IC").is_in(["ins", "del"])).height == 400
 
 
-def test_within_group_count_tiebreak_is_not_biased_to_large_parts(tmp_path):
-    # Regression: the count-priority tiebreak was a per-part 0..h-1 permutation, so in the global top-count trim
-    # rows of the larger part won every cross-part tie. All rows here have count 1 (one read per molecule); part A
-    # holds 10% of the ssc tier, so ~10% of the kept rows should come from it (it got 0 with the biased tiebreak).
-    def _rows(start, n):
-        return [_row("chr1", start + j, "C", "T", f"m{start + j}", 3, 0) for j in range(n)]
+@pytest.mark.parametrize(
+    "priority",
+    [["cs_alt_count"], [*DUPLEX_PRIORITY_FP, "cs_alt_count"], [DUPLEX_GROUP_SSC, "bogus"]],
+)
+def test_unknown_priority_tier_is_rejected(tmp_path, priority):
+    # The removed cs_alt_count mode (and any other non-tier value) must fail loudly, naming the valid tiers, rather
+    # than being silently ignored by the tier ladder.
+    rows = [_row("chr1", j, "C", "T", f"m{j}", 3, 0) for j in range(50)]
+    files = _write_parts(tmp_path, [rows])
+    out = str(tmp_path / "out.parquet")
+    with pytest.raises(ValueError, match="duplex_pe_full, duplex, ssc, singleton") as exc:
+        _merge_parquet_files_lazy(
+            files, out, downsample_reads=10, downsample_seed=1, duplex_oversample_priority=priority
+        )
+    assert priority[-1] in str(exc.value)
+    assert not Path(out).exists()
 
-    files = _write_parts(tmp_path, [_rows(0, 200), _rows(10_000, 1800)])
+
+def test_unknown_priority_tier_rejected_by_cli(capsys):
+    with pytest.raises(SystemExit) as exc:
+        featuremap_to_dataframe_main(
+            ["--input", "in.vcf.gz", "--output", "out.parquet", "--duplex-oversample-priority", "duplex,cs_alt_count"]
+        )
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "cs_alt_count" in err
+    assert "duplex_pe_full, duplex, ssc, singleton" in err
+
+
+def test_valid_priority_tiers_accepted(tmp_path):
+    rows = [_row("chr1", j, "C", "T", f"m{j}", 3, 0) for j in range(50)]
+    files = _write_parts(tmp_path, [rows])
     out = str(tmp_path / "out.parquet")
     _merge_parquet_files_lazy(
-        files,
-        out,
-        downsample_reads=500,
-        downsample_seed=7,
-        duplex_oversample_priority=[DUPLEX_GROUP_SSC, DUPLEX_PRIORITY_CS_ALT_COUNT],
+        files, out, downsample_reads=10, downsample_seed=1, duplex_oversample_priority=list(DUPLEX_PRIORITY_FP)
     )
-    res = pl.read_parquet(out)
-    assert res.height == 500
-    n_small = res.filter(pl.col("POS") < 10_000).height
-    assert 20 <= n_small <= 90  # expectation 50 (10%)
-
-
-def test_within_group_count_priority_keeps_global_top_when_concentrated_in_one_part(tmp_path):
-    # Regression: the count-priority pre-sample kept only the top ~frac of EACH part, so a part holding more than
-    # frac of the high-count rows lost some of them to lower-count rows of other parts. Part A: 75 count-4
-    # molecules (300 rows) + 700 single reads; part B: 9000 single reads. Budget 500 of 10000 (frac ~15%) -> the
-    # global top-500 by count must contain all 300 count-4 rows (old code kept ~153).
-    rows_a = []
-    for m in range(75):
-        rows_a += [{**_row("chr1", m, "C", "T", f"hi{m}", 3, 0), "RN": f"hi{m}_{r}"} for r in range(4)]
-    rows_a += [{**_row("chr1", 1_000 + j, "C", "T", f"a{j}", 3, 0), "RN": f"a{j}"} for j in range(700)]
-    rows_b = [{**_row("chr1", 100_000 + j, "C", "T", f"b{j}", 3, 0), "RN": f"b{j}"} for j in range(9000)]
-    files = _write_parts(tmp_path, [rows_a, rows_b])
-    out = str(tmp_path / "out.parquet")
-    _merge_parquet_files_lazy(
-        files,
-        out,
-        downsample_reads=500,
-        downsample_seed=3,
-        duplex_oversample_priority=[DUPLEX_GROUP_SSC, DUPLEX_PRIORITY_CS_ALT_COUNT],
-    )
-    res = pl.read_parquet(out)
-    assert res.height == 500
-    assert res.filter(pl.col("CS").str.starts_with("hi")).height == 300
-    assert res.unique(subset="RN").height == 500
+    assert pl.read_parquet(out).height == 10
