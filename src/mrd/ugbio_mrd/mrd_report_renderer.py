@@ -1363,6 +1363,8 @@ def render_qc_report(  # noqa: PLR0912, PLR0913, PLR0915, C901
     df_supporting_pre_multi_read: pd.DataFrame | None = None,
     df_features_no_snvq_filt: pd.DataFrame | None = None,
     multi_read_skipped_note: str = "",
+    *,
+    multi_read_matched_skipped: bool = False,
 ) -> str:
     """
     Render the MRD QC report as a self-contained HTML string.
@@ -1643,7 +1645,7 @@ def render_qc_report(  # noqa: PLR0912, PLR0913, PLR0915, C901
             "with_filter": _det_row(
                 detection,
                 "Primary result (filter not applied to matched)"
-                if multi_read_skipped_note
+                if multi_read_matched_skipped
                 else "With multi-read filter (primary result)",
             ),
             "without_filter": _det_row(detection_pre_multi_read, "Without multi-read filter"),
