@@ -1285,8 +1285,8 @@ def test_non_hmer_by_class_single_group_and_skips(tmp_path):
     rep2.plot_non_hmer_indel_by_class()
     stats = pd.read_hdf(rep2.output_h5_filename, "non_hmer_indel_class_stats")
     assert set(stats["read_group"]) == {"all"}
-    # |X_IL| clipped to [1, 12]: X_IL==0 is clipped up to 1
-    assert stats["indel_length"].between(1, 12).all()
+    # |X_IL| clipped to [1, 20]: X_IL==0 is clipped up to 1
+    assert stats["indel_length"].between(1, 20).all()
     tp = rep2.data_df[(rep2.data_df["variant_type"] == "non_hmer_indel") & rep2.data_df["label"]]
     assert stats["count"].sum() == len(tp)
     assert len(figs2[0].axes[0].get_lines()) == stats["indel_class"].nunique()
@@ -1498,3 +1498,19 @@ def test_hmer_indel_context_plot_sparse_groups(tmp_path):
     assert len(a_ins_quality.get_lines()) == 1 + 1 + 9
     c_ins_quality = axes[4]  # band 2 (hmer C) has no rows for any group -> no step lines
     assert len(c_ins_quality.get_lines()) == 1 + 9
+
+
+def test_non_hmer_indel_by_class_keeps_lengths_up_to_20(tmp_path):
+    fm = _add_indels(_base_df(800), hmer=False)
+    nh = fm.index[(fm["variant_type"] == "non_hmer_indel") & fm["label"].astype(bool)]
+    assert len(nh) >= 3
+    fm.loc[nh[0], "X_IL"] = 15
+    fm.loc[nh[1], "X_IL"] = -20
+    fm.loc[nh[2], "X_IL"] = 27  # beyond the synthesis maximum: lumped into the 20 bin
+    rep = _report(fm, tmp_path)
+    _capture_figs(rep)
+    rep.plot_non_hmer_indel_by_class()
+    stats = pd.read_hdf(rep.output_h5_filename, "non_hmer_indel_class_stats")
+    lengths = set(stats["indel_length"])
+    assert {15, 20} <= lengths
+    assert stats["indel_length"].max() == 20

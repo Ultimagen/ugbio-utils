@@ -74,6 +74,7 @@ from ugbio_srsnv.trinuc_histogram_plotting import calc_and_plot_trinuc_hist
 # featuremap_df column names. TODO: make more generic?
 ML_PROB_1_TEST = "prob_orig"  # TODO: Maybe prob_recal?
 ML_QUAL_1_TEST = "MQUAL"
+NONHMER_INDEL_MAX_LEN = 20  # |X_IL| plot cap; matches snvfind --nonhmer-indel-max-len upper bound
 ML_LOGIT_TEST = "ML_logit_test"
 LABEL = "label"
 QUAL = FeatureMapFields.SNVQ.value
@@ -4059,10 +4060,10 @@ class SRSNVReport:
         """Non-homopolymer-indel TP SNVQ + count by indel class (ins/del) and indel length.
 
         The non-hmer analogue of ``plot_hmer_indel_by_class``: bins TP non-hmer-indel rows by indel
-        length ``|X_IL|`` (clipped 1..12) and plots median SNVQ and TP count vs length, one line per
-        indel class (ins/del) × read-group. Writes the per-(read_group, indel_class, indel_length)
-        table to the QC h5 under ``non_hmer_indel_class_stats``. Self-skips when there are no non-hmer
-        TP rows / the required columns are missing.
+        length ``|X_IL|`` (clipped 1..20, the snvfind non-hmer synthesis maximum) and plots median SNVQ
+        and TP count vs length, one line per indel class (ins/del) × read-group. Writes the
+        per-(read_group, indel_class, indel_length) table to the QC h5 under ``non_hmer_indel_class_stats``.
+        Self-skips when there are no non-hmer TP rows / the required columns are missing.
         """
         if any(c not in self.data_df.columns for c in (VARIANT_TYPE, X_IC, X_IL)):
             logger.info("plot_non_hmer_indel_by_class: variant_type / X_IC / X_IL missing; skipping")
@@ -4072,7 +4073,7 @@ class SRSNVReport:
         if ind.empty:
             logger.info("plot_non_hmer_indel_by_class: no non-hmer-indel TP rows; skipping")
             return
-        indel_len = pd.to_numeric(ind[X_IL], errors="coerce").abs().clip(lower=1, upper=12)
+        indel_len = pd.to_numeric(ind[X_IL], errors="coerce").abs().clip(lower=1, upper=NONHMER_INDEL_MAX_LEN)
         base = pd.DataFrame(
             {
                 "indel_length": indel_len.to_numpy(),
