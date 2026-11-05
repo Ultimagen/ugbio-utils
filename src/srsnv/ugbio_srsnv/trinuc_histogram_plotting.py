@@ -394,7 +394,8 @@ def calc_trinuc_stats(  # noqa: C901, PLR0912, PLR0913, PLR0915
     trinuc_to_int = {trinuc: i for i, trinuc in enumerate(trinuc_symmetric_ref_alt)}
     working_df["trinuc_context_with_alt_int"] = working_df[trinuc_col].map(trinuc_to_int)
 
-    if labels is None:
+    all_reads = labels is None
+    if all_reads:
         working_df[label_col] = "all reads"
         labels = ["all reads"]
 
@@ -423,7 +424,8 @@ def calc_trinuc_stats(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
     # Calculate quality stats if requested
     if include_quality and qual_col in working_df.columns:
-        qual_cond = working_df[label_col]
+        # quality stats are over the positive (label True) reads; without labels, over all reads
+        qual_cond = pd.Series(data=True, index=working_df.index) if all_reads else working_df[label_col]
         required_qual_cols = [qual_col, "trinuc_context_with_alt_int"]
         if is_mixed_col in working_df.columns:
             required_qual_cols.append(is_mixed_col)

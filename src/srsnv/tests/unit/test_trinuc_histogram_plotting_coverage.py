@@ -86,6 +86,15 @@ def test_plot_trinuc_qual_defaults_create_axis(group_df):
     assert len(ax.texts) == 0
 
 
+def test_calc_trinuc_stats_no_labels_with_quality(group_df):
+    # Regression: with labels=None the label column holds the string "all reads" and was used as a boolean row
+    # mask for the quality stats -> KeyError. Without labels the quality stats are over all reads.
+    stats = calc_trinuc_stats(group_df, trinuc_col="tcwa", labels=None, include_quality=True, collapsed=True)
+    assert "mixed=all median_qual" in stats.columns
+    labelled = calc_trinuc_stats(group_df, trinuc_col="tcwa", labels=[True], include_quality=True, collapsed=True)
+    assert stats["mixed=all median_qual"].notna().sum() >= labelled["mixed=all median_qual"].notna().sum()
+
+
 def test_calc_trinuc_stats_cycle_skip_and_no_labels(group_df):
     stats = calc_trinuc_stats(
         group_df,
