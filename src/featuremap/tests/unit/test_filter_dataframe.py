@@ -1495,3 +1495,52 @@ class TestValidateStatsDictAdditional:
             "combinations": {"111": 500, "110": 200, "100": 100, "000": 100, "101": 50, "010": 30, "011": 20},
         }
         fd._validate_stats_dict(data, where="")  # Should not raise
+
+
+class TestAnyOfCompositeEdgeCases:
+    """Nested any_of composites and collisions between unnamed composite rules."""
+
+    @staticmethod
+    def _or(field_a, field_b, **extra):
+        return {
+            fd.KEY_OP: fd.OP_ANY_OF,
+            fd.KEY_TYPE: fd.TYPE_QUALITY,
+            fd.KEY_FILTERS: [
+                {fd.KEY_FIELD: field_a, fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+                {fd.KEY_FIELD: field_b, fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+            ],
+            **extra,
+        }
+
+    def test_nested_any_of_validates_and_masks(self):
+        inner = self._or("nf", "nr")
+        inner.pop(fd.KEY_TYPE)  # sub-rules carry no type
+        outer = {
+            fd.KEY_OP: fd.OP_ANY_OF,
+            fd.KEY_TYPE: fd.TYPE_QUALITY,
+            fd.KEY_FILTERS: [inner, {fd.KEY_FIELD: "dx", fd.KEY_OP: "eq", fd.KEY_VALUE: 1}],
+        }
+        fd.validate_filter_config({fd.KEY_FILTERS: [outer]})  # must not raise "missing required 'field'"
+        lf = pl.DataFrame({"nf": [0, 2, 0, 0], "nr": [0, 0, 0, 0], "dx": [0, 0, 1, None]}).lazy()
+        assert lf.select(fd._mask_for_rule(outer)).collect().to_series().to_list() == [False, True, True, False]
+
+    def test_nested_any_of_subrule_errors_still_raised(self):
+        bad_inner = {fd.KEY_OP: fd.OP_ANY_OF, fd.KEY_FILTERS: [{fd.KEY_OP: "gt", fd.KEY_VALUE: 0}]}
+        outer = {fd.KEY_OP: fd.OP_ANY_OF, fd.KEY_TYPE: fd.TYPE_QUALITY, fd.KEY_FILTERS: [bad_inner]}
+        with pytest.raises(ValueError, match="missing required 'field'"):
+            fd.validate_filter_config({fd.KEY_FILTERS: [outer]})
+
+    def test_unnamed_any_of_rules_get_distinct_names(self):
+        assert fd._get_filter_name(self._or("nf", "nr")) != fd._get_filter_name(self._or("a", "b"))
+
+    def test_two_unnamed_rules_both_applied(self):
+        # Two rules resolving to the same name must not share (and overwrite) one mask column.
+        lf = pl.DataFrame({"nf": [1, 1, 0], "nr": [0, 0, 0], "a": [1, 0, 1], "b": [0, 0, 0]}).lazy()
+        same_a = {fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: 0, fd.KEY_TYPE: fd.TYPE_QUALITY}
+        same_b = {fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: -1, fd.KEY_TYPE: fd.TYPE_QUALITY}
+        for filters in ([self._or("nf", "nr"), self._or("a", "b")], [same_a, same_b]):
+            out, cols = fd._create_filter_columns(lf, filters)
+            assert len(set(cols)) == len(cols)
+            mask = out.select(pl.all_horizontal(cols)).collect().to_series().to_list()
+            expected = [True, False, False] if filters[0][fd.KEY_OP] == fd.OP_ANY_OF else [True, True, False]
+            assert mask == expected

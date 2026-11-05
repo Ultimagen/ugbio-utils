@@ -179,3 +179,27 @@ def test_stratified_via_merge_multipart(tmp_path: Path) -> None:
     assert result_df.height == 3000
     frac = result_df.filter(_indel_pred()).height / result_df.height
     assert frac == pytest.approx(0.25, abs=0.02)
+
+
+# ---------------------------------------------------------------------------
+# Unseeded downsample (downsample_seed=None, the CLI / vcf_to_parquet default)
+# ---------------------------------------------------------------------------
+def test_uniform_multipart_downsample_without_seed(tmp_path: Path) -> None:
+    # Regression: the per-part sampling seed was `downsample_seed + i`, a TypeError for the default seed=None.
+    parts = [_write_part(tmp_path / f"p{i}.parquet", 0, 500, f"p{i}") for i in range(3)]
+    out = tmp_path / "out.parquet"
+    _merge_parquet_files_lazy(parts, str(out), downsample_reads=600, downsample_seed=None)
+    result_df = pl.read_parquet(out)
+    assert result_df.height == 600
+    assert result_df.unique().height == 600  # no duplication
+
+
+def test_stratified_multipart_downsample_without_seed(tmp_path: Path) -> None:
+    parts = [_write_part(tmp_path / f"p{i}.parquet", 50, 500, f"p{i}") for i in range(3)]
+    out = tmp_path / "out.parquet"
+    _merge_parquet_files_lazy(
+        parts, str(out), downsample_reads=400, downsample_seed=None, indel_snv_balance_fraction=0.25
+    )
+    result_df = pl.read_parquet(out)
+    assert result_df.height == 400
+    assert result_df.filter(_indel_pred()).height == 100  # 0.25 * 400, indels available (150)

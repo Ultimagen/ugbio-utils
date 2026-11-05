@@ -176,7 +176,8 @@ def test_per_class_counts_include_hmer_bins(tmp_path):
     out = str(tmp_path / "out.parquet")
     counts_json = str(tmp_path / "counts.json")
     _merge_parquet_files_lazy(files, out, per_class_counts_json=counts_json)
-    counts = json.loads(open(counts_json).read())
+    with open(counts_json) as fh:
+        counts = json.load(fh)
     bins = {k: v for k, v in counts.items() if k.startswith("hmer_indel|")}
     assert bins, counts
     assert sum(bins.values()) == counts["hmer_indel"]
@@ -196,3 +197,16 @@ def test_dropped_stratum_is_reported(tmp_path, caplog):
     assert SAMPLE_WEIGHT_COL in res.columns
     assert res[SAMPLE_WEIGHT_COL].cast(pl.Float64).sum() < frame.height  # lost mass
     assert any("dropped" in r.getMessage() and "sampling strata" in r.getMessage() for r in caplog.records)
+
+
+def test_count_strata_use_exact_count(tmp_path):
+    """cs_alt_count strata must be keyed on the EXACT per-(CS + variant) count (the samplers rank by it), not a
+    capped 4+ bucket: rows of a count-6 molecule and of a count-4 molecule land in different strata."""
+    rows = []
+    for m, n_reads in (("a", 6), ("b", 4), ("c", 1)):
+        for r in range(n_reads):
+            rows.append({"CHROM": "chr1", "POS": 10 + ord(m), "REF": "C", "ALT": "T", "CS": m, "RN": f"{m}{r}"})
+    f = str(tmp_path / "p0.parquet")
+    pl.DataFrame(rows).write_parquet(f)
+    counts = _annotate_sampling_strata([f], use_duplex_group=False, use_count=True)
+    assert counts == {"snv/6": 6, "snv/4": 4, "snv/1": 1}

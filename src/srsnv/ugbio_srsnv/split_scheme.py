@@ -33,7 +33,6 @@ from ugbio_srsnv.srsnv_utils import (
     CONSENSUS_GROUP_SINGLE,
     CONSENSUS_GROUPS,
     CS_N_CROSSING,
-    ET,
     FS,
     IS_CONSENSUS,
     IS_MIXED,
@@ -269,7 +268,9 @@ def _mixed_display_fq_conditions(data_df: pd.DataFrame) -> dict:
 
 MIXED_SCHEME = SplitScheme(
     mode=ReportMode.MIXED,
-    detect=lambda cols: (ST in cols and ET in cols) or all(c in cols for c in (AS, AE, TS, TE)),
+    # ST alone suffices: start-only ppmSeq (e.g. ppmSeq_plus_v8_9) emits st but no et; the tag handler then
+    # treats the end tag as missing, keeping the start-tag (display + trinuc, BIOIN-3125) split.
+    detect=lambda cols: ST in cols or all(c in cols for c in (AS, AE, TS, TE)),
     add_columns=_mixed_add_columns,
     tag_axis="ppmSeq tag",
     ppmseq_crosstab=True,

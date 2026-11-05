@@ -124,7 +124,7 @@ def plot_trinuc_hist(  # noqa: C901
     return ax, bars
 
 
-def _resolve_qual_group_specs(stats_df, group_specs=None):
+def _resolve_qual_group_specs(stats_df, group_specs=None, qual_colors=None):
     """Resolve which quality group columns to plot, plus their labels and colors.
 
     Returns a list of ``(col_prefix, display_label, color)``.
@@ -134,7 +134,8 @@ def _resolve_qual_group_specs(stats_df, group_specs=None):
       N-group (consensus) path drives an arbitrary ordered set of read groups.
     - Otherwise the historical ppmSeq auto-detection is used: plot ``mixed=True``/``mixed=False``
       if both present, else ``mixed=all``. Labels/colors match the original hardcoded values, so
-      mixed-mode output is unchanged.
+      mixed-mode output is unchanged. A caller-supplied ``qual_colors`` ``{prefix: color}`` overrides the
+      default colors exactly as before (prefixes missing from it are drawn black).
     """
     if group_specs is not None:
         return [
@@ -154,7 +155,8 @@ def _resolve_qual_group_specs(stats_df, group_specs=None):
         prefixes = []
     default_colors = {"mixed=all": "tab:blue", "mixed=True": "tab:green", "mixed=False": "tab:red"}
     default_labels = {"mixed=all": "All reads", "mixed=True": "Mixed reads", "mixed=False": "Non-mixed reads"}
-    return [(p, default_labels[p], default_colors[p]) for p in prefixes]
+    colors = default_colors if qual_colors is None else {p: qual_colors.get(p, "black") for p in prefixes}
+    return [(p, default_labels[p], colors[p]) for p in prefixes]
 
 
 def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
@@ -188,7 +190,8 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
     order : str
         Trinucleotide ordering
     qual_colors : dict, optional
-        (Deprecated / unused when ``group_specs`` is given.) Colors for quality lines.
+        ``{col_prefix: color}`` for the ppmSeq auto-detected groups (ignored when ``group_specs`` is given,
+        which carries its own colors).
     group_specs : list, optional
         Ordered list of ``(col_prefix, display_label, color)`` selecting which groups to plot and
         how to label/color them. When None, ppmSeq auto-detection is used (unchanged behavior).
@@ -213,7 +216,7 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
     lines = {}
 
     # Resolve which group columns to plot, with labels and colors (ppmSeq auto-detect or N-group).
-    resolved_specs = _resolve_qual_group_specs(stats_df, group_specs)
+    resolved_specs = _resolve_qual_group_specs(stats_df, group_specs, qual_colors)
     mixed_categories = [prefix for prefix, _, _ in resolved_specs]
 
     # Create extended x_values for step plotting (like in calc_and_plot_trinuc_plot)

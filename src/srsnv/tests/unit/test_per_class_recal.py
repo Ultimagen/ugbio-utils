@@ -196,11 +196,32 @@ class TestIntervalCounters:
 
     def test_sparse_class_falls_back(self):
         mqual, label = _synth(n=8000)
-        cls = np.array(["snv"] * len(mqual))
+        # object dtype: a fixed-width "<U3" array (from "snv") would truncate "non_hmer_indel" to "non", so the
+        # class would never match and the min_lut_rows fallback would not actually be exercised.
+        cls = np.array(["snv"] * len(mqual), dtype=object)
         cls[:30] = "non_hmer_indel"  # 30 TP rows, 0 FP -> below min_lut_rows
+        assert (cls == "non_hmer_indel").sum() == 30
         snvq, luts = recalibrate_snvq_per_class(
             mqual, label, cls, prefactor_by_class={"snv": 1e-3, "non_hmer_indel": 1e-3}
         )
         assert "non_hmer_indel" not in luts
         assert np.isnan(snvq[:30]).all()  # caller falls back to the global LUT
         assert not np.isnan(snvq[30:]).any()
+
+
+class TestWeightedSurvivalNaN:
+    def test_nan_never_survives_but_counts_in_denominator(self):
+        # [1, NaN] with unit weights: S(2) = 0 (not 0.5), S(0) = 0.5, matching (v >= x).mean().
+        v = np.array([1.0, np.nan])
+        x = np.array([0.0, 2.0])
+        np.testing.assert_allclose(weighted_survival(v, np.ones(2), x), [(v >= t).mean() for t in x])
+        np.testing.assert_allclose(weighted_survival(v, np.ones(2), x), [0.5, 0.0])
+
+    def test_unit_weights_match_unweighted_with_missing_scores(self):
+        mqual, label = _synth(n=4000)
+        mqual = mqual.copy()
+        mqual[::37] = np.nan  # missing scores on both TP and FP rows
+        a = recalibrate_snvq(mqual, label, snvq_prefactor_override=1e-3)
+        b = recalibrate_snvq(mqual, label, snvq_prefactor_override=1e-3, sample_weight=np.ones(len(mqual)))
+        for x, y in zip(a[1:], b[1:], strict=True):  # x_lut, y_lut
+            np.testing.assert_allclose(x, y, rtol=0, atol=1e-9)

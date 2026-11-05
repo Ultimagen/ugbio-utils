@@ -166,7 +166,8 @@ def detect_report_mode(data_df: pd.DataFrame) -> ReportMode:
     """
     cols = data_df.columns
     v5_tags_present = AS in cols and AE in cols and TS in cols and TE in cols
-    if (ST in cols and ET in cols) or v5_tags_present:
+    # ST alone suffices: start-only ppmSeq libraries (e.g. ppmSeq_plus_v8_9) emit st but no et (BIOIN-3125).
+    if ST in cols or v5_tags_present:
         return ReportMode.MIXED
     if FS in cols and RS in cols:
         return ReportMode.CONSENSUS
@@ -206,8 +207,7 @@ def add_pe_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFram
     Parameters
     ----------
     data_df : pd.DataFrame
-        The featuremap dataframe, expected to contain ``dx`` and the ``cs_n_crossing`` /
-        ``cs_family_size`` CS-family stats.
+        The featuremap dataframe, expected to contain ``dx`` and the ``cs_n_crossing`` CS-family stat.
 
     Returns
     -------
@@ -243,9 +243,10 @@ def _assign_pe_duplex_group(data_df: pd.DataFrame) -> None:
     (both strands) per end. ``cs_n_pe_pairs`` can't distinguish simplex SE/PE (it is 0 for a single
     strand, which has no fwd/rev mate), so the crossing count is the discriminator.
 
-    No-op when ``cs_n_crossing``/``cs_family_size`` are absent (non-pe-duplex data).
+    No-op when ``cs_n_crossing`` is absent (non-pe-duplex data). Only ``cs_n_crossing`` (+ ``dx``) is read, so
+    ``cs_family_size`` is not required -- the PE-duplex scheme is detected from ``cs_n_crossing`` alone.
     """
-    if CS_N_CROSSING not in data_df.columns or CS_FAMILY_SIZE not in data_df.columns:
+    if CS_N_CROSSING not in data_df.columns:
         return
     cross = pd.to_numeric(data_df[CS_N_CROSSING], errors="coerce").fillna(0)
     mate = (
@@ -391,14 +392,22 @@ def _probability_rescaling(
 
 
 def weighted_survival(values: np.ndarray, weights: np.ndarray, x: np.ndarray) -> np.ndarray:
-    """Weighted survival ``S(x) = sum(w[v >= x]) / sum(w)`` evaluated on grid *x* (vectorized)."""
+    """Weighted survival ``S(x) = sum(w[v >= x]) / sum(w)`` evaluated on grid *x* (vectorized).
+
+    NaN values never survive a threshold but keep their weight in the denominator, matching the unweighted
+    ``(v >= x).mean()`` (NaN >= x is False) so unit weights reproduce the unweighted curve exactly.
+    """
     values = np.asarray(values, dtype=float)
     weights = np.asarray(weights, dtype=float)
     if values.size == 0:
         return np.full(np.shape(x), np.nan)
-    order = np.argsort(values, kind="stable")
-    v, cw = values[order], np.concatenate([[0.0], np.cumsum(weights[order])])
-    return 1.0 - cw[np.searchsorted(v, np.asarray(x, dtype=float), side="left")] / cw[-1]
+    total = weights.sum()
+    finite = ~np.isnan(values)
+    order = np.argsort(values[finite], kind="stable")
+    v = values[finite][order]
+    cw = np.concatenate([[0.0], np.cumsum(weights[finite][order])])
+    surviving = cw[-1] - cw[np.searchsorted(v, np.asarray(x, dtype=float), side="left")]
+    return surviving / total
 
 
 def recalibrate_snvq(  # noqa: PLR0915
@@ -475,8 +484,6 @@ def recalibrate_snvq(  # noqa: PLR0915
 
     if snvq_prefactor_override is not None:
         snvq_prefactor = float(snvq_prefactor_override)
-        prior_train_error = prior_train_error if prior_train_error is not None else float("nan")
-        prior_real_error = float("nan")
     else:
         pos_stats = kwargs["pos_stats"]
         neg_stats = kwargs["neg_stats"]
@@ -1651,6 +1658,12 @@ class HandlePPMSeqTagsInFeatureMapDataFrame:
             elif self._v5_tags_in_featuremap():
                 # ST, ET no in featermap_df, AS, AE, TS, TE are. Adds ST, ET to featuremap_df
                 self._add_ppmseq_tags_to_featuremap()
+                self._set_cram_tags()
+            elif ST in self.featuremap_df:
+                # Start-only ppmSeq (st, no et; BIOIN-3125): the end tag is missing on every read. Add an all-NaN
+                # ET so is_mixed_start keeps the start split and is_mixed_end / et_fillna follow the NaN rules.
+                self.log("Start-only ppmSeq tags (st, no et): treating the end tag as missing on all reads")
+                self.featuremap_df[ET] = np.nan
                 self._set_cram_tags()
             else:
                 self.start_tag_col = None

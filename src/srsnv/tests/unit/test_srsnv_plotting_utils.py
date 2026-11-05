@@ -176,8 +176,6 @@ def test_prepare_report_with_existing_resources(tmpdir, resources_dir):
         assert "prob_fold_0" in df.columns, "Generated test data should have prob_fold_0 column"
 
         with open(metadata_path) as f:
-            import json  # noqa: PLC0415
-
             metadata = json.load(f)
         assert "model_paths" in metadata, "Generated metadata should have model_paths"
         assert "filtering_stats" in metadata, "Generated metadata should have filtering_stats"
@@ -1198,3 +1196,21 @@ def test_calc_pe_concordance_summary_table(consensus_resources, real_models_calc
         # non-empty: at least one concordant cell has reads
         conc = table[table["concordance"] == "concordant"]
         assert (conc["n_TP"].to_numpy() + conc["n_FP"].to_numpy()).sum() > 0
+
+
+def test_trinuc_plot_input_is_snv_only():
+    """The SNV trinuc-context plot must not see indel rows: a reverse-strand indel context (e.g. A+CC+T+C) is
+    truncated to 4 characters by the seq-direction helper and becomes a valid-looking SNV trinuc (GGTA)."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from ugbio_srsnv.srsnv_utils import get_trinuc_context_with_alt_fwd_vectorized  # noqa: PLC0415
+
+    # the contamination mechanism this guards against
+    assert get_trinuc_context_with_alt_fwd_vectorized(pd.Series(["ACCTC"]), pd.Series([False]))[0] == "GGTA"
+
+    data_df = pd.DataFrame({"variant_type": ["snv", "hmer_indel", "non_hmer_indel", "snv"], "x": [1, 2, 3, 4]})
+    snv = SRSNVReport._snv_rows(SimpleNamespace(data_df=data_df))
+    assert snv["x"].tolist() == [1, 4]
+    # SNV-only runs (no variant_type column) are passed through unchanged
+    no_vt = data_df.drop(columns=["variant_type"])
+    assert SRSNVReport._snv_rows(SimpleNamespace(data_df=no_vt)) is no_vt

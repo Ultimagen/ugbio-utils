@@ -102,8 +102,17 @@ _COMPOSITE_OPS = {OP_ANY_OF}
 
 
 def _get_filter_name(rule: dict[str, Any]) -> str:
-    """Derive a filter name from a rule, falling back to field/op if no explicit name."""
-    return rule.get(KEY_NAME) or f"{rule.get(KEY_FIELD, '_'.join(rule.get(KEY_FIELDS, [])))}_{rule[KEY_OP]}"
+    """Derive a filter name from a rule, falling back to field/op if no explicit name.
+
+    An unnamed composite (``any_of``) rule has no ``field``; its fallback name is built from its sub-rules
+    (e.g. ``any_of(nf_gt|nr_gt)``) so two different unnamed composites do not collide on ``_any_of``.
+    """
+    if rule.get(KEY_NAME):
+        return rule[KEY_NAME]
+    if rule[KEY_OP] in _COMPOSITE_OPS and isinstance(rule.get(KEY_FILTERS), list):
+        subs = "|".join(_get_filter_name(sub) for sub in rule[KEY_FILTERS] if isinstance(sub, dict) and KEY_OP in sub)
+        return f"{rule[KEY_OP]}({subs})"
+    return f"{rule.get(KEY_FIELD, '_'.join(rule.get(KEY_FIELDS, [])))}_{rule[KEY_OP]}"
 
 
 def _validate_filter_op(rule: dict[str, Any], index: int) -> None:
@@ -132,7 +141,17 @@ def _validate_any_of(rule: dict[str, Any], index: int) -> None:
             raise ValueError(f"Filter {index} '{OP_ANY_OF}' sub-rule {j} must be a dictionary")
         if KEY_OP not in sub:
             raise ValueError(f"Filter {index} '{OP_ANY_OF}' sub-rule {j} missing required '{KEY_OP}' key")
-        if sub[KEY_OP] != OP_ANY_NOT_NULL and KEY_FIELD not in sub:
+        if sub[KEY_OP] in _COMPOSITE_OPS:
+            # Nested composite (any_of inside any_of): it has no field; validate its own sub-rules recursively.
+            _validate_any_of(sub, index)
+            continue
+        if sub[KEY_OP] == OP_ANY_NOT_NULL:
+            if not isinstance(sub.get(KEY_FIELDS), list) or len(sub[KEY_FIELDS]) == 0:
+                raise ValueError(
+                    f"Filter {index} '{OP_ANY_OF}' sub-rule {j} with '{OP_ANY_NOT_NULL}' op requires a non-empty "
+                    f"'{KEY_FIELDS}' list"
+                )
+        elif KEY_FIELD not in sub:
             raise ValueError(f"Filter {index} '{OP_ANY_OF}' sub-rule {j} missing required '{KEY_FIELD}' key")
         _validate_filter_op(sub, index)
 
@@ -403,9 +422,13 @@ def _create_filter_columns(
 
     logger.debug(f"Creating binary columns for {len(filters)} filters")
 
-    for rule in filters:
+    for i, rule in enumerate(filters):
         name = _get_filter_name(rule)
         col_name = f"{COL_PREFIX_FILTER}{name}"
+        if col_name in filter_cols:
+            # Two rules resolving to the same name (e.g. two unnamed rules with the same field+op) must not share
+            # a mask column: the second with_columns would overwrite the first and the final AND would drop it.
+            col_name = f"{col_name}__{i}"
         filter_cols.append(col_name)
 
         mask_expr = _mask_for_rule(rule)

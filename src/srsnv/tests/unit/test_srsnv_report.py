@@ -35,7 +35,6 @@ from ugbio_srsnv.srsnv_report import (
     compute_is_cycle_skip_column,
     prepare_report,
 )
-from ugbio_srsnv.srsnv_utils import ReportMode  # noqa: F401  (kept for other tests)
 
 # ──────────────────────── _ModelWithTrainingResults ──────────────────────
 

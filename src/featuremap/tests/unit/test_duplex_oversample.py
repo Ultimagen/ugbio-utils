@@ -384,3 +384,79 @@ def test_ds_is_ignored():
     """DS (family size on the new CRAMs) must not drive the duplex classification."""
     frame = pl.DataFrame([{**_row("chr1", 100, "C", "T", "m", 3, 0, dx=None, po="F1R2"), "DS": 2}])
     assert _add_duplex_group_column(frame)[DUPLEX_GROUP_COL].to_list() == [DUPLEX_GROUP_SSC]
+
+
+def test_priority_preserve_partial_group_honors_balance_without_count_priority(tmp_path):
+    # Regression: the plain tier ladder pre-sampled a partial group at ONE uniform rate (~10% here), so the rare
+    # indel stratum was decimated before the balanced exact-trim and the realized indel count stayed near its
+    # natural 2% (~40 of 400). One ssc tier (the boundary group): 400 indel + 19600 SNV rows across 2 parts;
+    # budget 1000, balance 0.5 -> want 500 indels but only 400 exist -> all 400 indels kept + 600 SNVs.
+    def _rows(start, n, x_ic):
+        return [_row("chr1", start + j, "C", "CA" if x_ic else "T", f"m{start + j}", 3, 0, x_ic=x_ic) for j in range(n)]
+
+    files = _write_parts(
+        tmp_path,
+        [
+            _rows(0, 200, "ins") + _rows(1_000, 9_800, None),
+            _rows(100_000, 200, "del") + _rows(200_000, 9_800, None),
+        ],
+    )
+    out = str(tmp_path / "out.parquet")
+    _priority_preserve_downsample(
+        files,
+        out,
+        downsample_reads=1000,
+        downsample_seed=1,
+        duplex_oversample_priority=DUPLEX_PRIORITY_FP,
+        indel_snv_balance_fraction=0.5,
+    )
+    res = pl.read_parquet(out)
+    assert res.height == 1000
+    assert res.filter(pl.col("X_IC").is_in(["ins", "del"])).height == 400
+
+
+def test_within_group_count_tiebreak_is_not_biased_to_large_parts(tmp_path):
+    # Regression: the count-priority tiebreak was a per-part 0..h-1 permutation, so in the global top-count trim
+    # rows of the larger part won every cross-part tie. All rows here have count 1 (one read per molecule); part A
+    # holds 10% of the ssc tier, so ~10% of the kept rows should come from it (it got 0 with the biased tiebreak).
+    def _rows(start, n):
+        return [_row("chr1", start + j, "C", "T", f"m{start + j}", 3, 0) for j in range(n)]
+
+    files = _write_parts(tmp_path, [_rows(0, 200), _rows(10_000, 1800)])
+    out = str(tmp_path / "out.parquet")
+    _merge_parquet_files_lazy(
+        files,
+        out,
+        downsample_reads=500,
+        downsample_seed=7,
+        duplex_oversample_priority=[DUPLEX_GROUP_SSC, DUPLEX_PRIORITY_CS_ALT_COUNT],
+    )
+    res = pl.read_parquet(out)
+    assert res.height == 500
+    n_small = res.filter(pl.col("POS") < 10_000).height
+    assert 20 <= n_small <= 90  # expectation 50 (10%)
+
+
+def test_within_group_count_priority_keeps_global_top_when_concentrated_in_one_part(tmp_path):
+    # Regression: the count-priority pre-sample kept only the top ~frac of EACH part, so a part holding more than
+    # frac of the high-count rows lost some of them to lower-count rows of other parts. Part A: 75 count-4
+    # molecules (300 rows) + 700 single reads; part B: 9000 single reads. Budget 500 of 10000 (frac ~15%) -> the
+    # global top-500 by count must contain all 300 count-4 rows (old code kept ~153).
+    rows_a = []
+    for m in range(75):
+        rows_a += [{**_row("chr1", m, "C", "T", f"hi{m}", 3, 0), "RN": f"hi{m}_{r}"} for r in range(4)]
+    rows_a += [{**_row("chr1", 1_000 + j, "C", "T", f"a{j}", 3, 0), "RN": f"a{j}"} for j in range(700)]
+    rows_b = [{**_row("chr1", 100_000 + j, "C", "T", f"b{j}", 3, 0), "RN": f"b{j}"} for j in range(9000)]
+    files = _write_parts(tmp_path, [rows_a, rows_b])
+    out = str(tmp_path / "out.parquet")
+    _merge_parquet_files_lazy(
+        files,
+        out,
+        downsample_reads=500,
+        downsample_seed=3,
+        duplex_oversample_priority=[DUPLEX_GROUP_SSC, DUPLEX_PRIORITY_CS_ALT_COUNT],
+    )
+    res = pl.read_parquet(out)
+    assert res.height == 500
+    assert res.filter(pl.col("CS").str.starts_with("hi")).height == 300
+    assert res.unique(subset="RN").height == 500

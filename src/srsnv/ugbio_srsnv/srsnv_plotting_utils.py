@@ -2919,7 +2919,7 @@ class SRSNVReport:
 
         # Call the new plotting function
         fig, stats_df = calc_and_plot_trinuc_hist(
-            self.data_df,
+            self._snv_rows(),
             trinuc_col=TRINUC_CONTEXT_WITH_ALT,
             label_col=LABEL,
             labels=[True, False],
@@ -2938,6 +2938,17 @@ class SRSNVReport:
         stats_df.to_hdf(self.output_h5_filename, key="trinuc_stats", mode="a")
 
         self._save_plt(output_filename=output_filename, fig=fig)
+
+    def _snv_rows(self) -> pd.DataFrame:
+        """SNV rows of the report dataframe (all rows when there is no ``variant_type`` column).
+
+        SNV-only figures (the trinuc-context plot) must not see indel rows: an indel's REF/ALT are multi-base, and
+        the seq-direction trinuc helper reads only the first 4 characters of a reverse-strand context, which can
+        turn an indel into a valid-looking SNV trinuc (e.g. A+CC+T+C -> GGTA) and contaminate the SNV stats.
+        """
+        if VARIANT_TYPE not in self.data_df.columns:
+            return self.data_df
+        return self.data_df[self.data_df[VARIANT_TYPE] == VARIANT_TYPE_SNV]
 
     def _feature_group_series(self):
         """Ordered list of (group_label, color) for the per-feature quality curves.

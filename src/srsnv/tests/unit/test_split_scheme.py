@@ -262,3 +262,23 @@ class TestExtensibility:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestStartOnlyPpmseq:
+    """Start-only ppmSeq libraries (st, no et; BIOIN-3125) keep the mixed/non-mixed start split."""
+
+    def test_start_only_detected_as_mixed(self):
+        assert resolve_scheme(pd.DataFrame({"st": ["MIXED", "PLUS"]})) is MIXED_SCHEME
+        assert resolve_scheme(pd.DataFrame({"st": ["MIXED"], FS: [1], RS: [1]})) is MIXED_SCHEME
+
+    def test_start_only_keeps_start_split(self):
+        data_df = pd.DataFrame({"st": ["MIXED", "PLUS", "MIXED", "MINUS"]})
+        out, scheme = resolve_scheme_and_add_columns(data_df, adapter_version="v1")
+        assert scheme is MIXED_SCHEME
+        assert out["is_mixed_start"].tolist() == [True, False, True, False]
+        assert not out["is_mixed_end"].any()
+        assert not out[IS_MIXED].any()  # both-ends legacy split collapses (no end tag)
+        assert list(out[READ_GROUP].astype(str)) == ["Mixed", "Non-mixed", "Mixed", "Non-mixed"]
+        # the display (start-tag) variant still yields both groups
+        masks = MIXED_SCHEME.display_variant.group_masks(out)
+        assert masks["Mixed"].sum() == 2 and masks["Non-mixed"].sum() == 2

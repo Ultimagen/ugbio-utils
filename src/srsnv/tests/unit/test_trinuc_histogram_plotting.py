@@ -461,3 +461,11 @@ class TestTrinucNGroupSplit:
         resolved = _resolve_qual_group_specs(stats_df)
         labels = [label for _, label, _ in resolved]
         assert labels == ["Mixed reads", "Non-mixed reads"]
+
+
+def test_qual_colors_honored_without_group_specs():
+    stats_df = pd.DataFrame({"mixed=True median_qual": [1.0], "mixed=False median_qual": [2.0]})
+    specs = _resolve_qual_group_specs(stats_df, None, {"mixed=True": "purple"})
+    assert specs == [("mixed=True", "Mixed reads", "purple"), ("mixed=False", "Non-mixed reads", "black")]
+    # no qual_colors -> historical defaults
+    assert _resolve_qual_group_specs(stats_df)[0][2] == "tab:green"

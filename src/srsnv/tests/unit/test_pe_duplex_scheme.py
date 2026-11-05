@@ -102,3 +102,19 @@ def test_simplex_boundary_two_crossing_is_simplex_pe():
     frame.loc[0, CS_N_CROSSING] = 2  # the simplex SE row -> now both ends cross
     out, _ = resolve_scheme_and_add_columns(frame.copy())
     assert out[READ_GROUP].iloc[0] == PE_DUPLEX_GROUP_SIMPLEX_PE
+
+
+def test_pe_duplex_grouping_does_not_need_cs_family_size():
+    # Paired-end (pair-dx) data model: dx = duplex flag, cs_n_crossing = family reads crossing the variant. The
+    # scheme is detected from cs_n_crossing alone, so grouping must not require the unused cs_family_size column
+    # (previously: no pe_duplex_group was assigned and read_group construction raised KeyError).
+    frame = _pe_duplex_df().drop(columns=[CS_FAMILY_SIZE])
+    out, scheme = resolve_scheme_and_add_columns(frame)
+    assert scheme is PE_DUPLEX_SCHEME
+    assert list(out[READ_GROUP]) == [
+        PE_DUPLEX_GROUP_SIMPLEX_SE,
+        PE_DUPLEX_GROUP_SIMPLEX_PE,
+        PE_DUPLEX_GROUP_SE,
+        PE_DUPLEX_GROUP_PE,
+        PE_DUPLEX_GROUP_SIMPLEX_SE,
+    ]

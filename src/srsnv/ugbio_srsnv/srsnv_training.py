@@ -103,9 +103,6 @@ pl.enable_string_cache()
 # ───────────────────────── parsers ────────────────────────────
 
 
-_MIN_STR_UNIT_DISTINCT_BASES = 2  # an STR unit must differ from a homopolymer
-
-
 def _count_bases_in_interval_list(path: str) -> int:
     """
     Count the total number of bases in an interval_list file.
