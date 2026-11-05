@@ -34,6 +34,8 @@ class FeatureMapFields(Enum):
     X_HMER_ALT = "X_HMER_ALT"
     X_INDEL_CLASS = "X_INDEL_CLASS"
     X_INDEL_SEQ = "X_INDEL_SEQ"
+    READ_COUNT = "X_READ_COUNT"
+    FILTERED_COUNT = "X_FILTERED_COUNT"
     ST = "st"
     ET = "et"
     EDIST = "EDIST"

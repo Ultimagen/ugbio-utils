@@ -446,6 +446,40 @@ def _lod_inputs(tmp_path, n=2000, seed=0):
     return fm, str(bed), str(sorter), filters
 
 
+def test_retention_noise_and_mrd_lod_simulation(tmp_path):
+    fm, bed, sorter, filters = _lod_inputs(tmp_path)
+    df_mrd, valid_filters, _lod_label, c_lod, norm = spu.retention_noise_and_mrd_lod_simulation(
+        fm,
+        single_sub_regions=bed,
+        sorter_json_stats_file=sorter,
+        fp_featuremap_entry_number=10_000,
+        lod_filters=filters,
+    )
+    assert "broken" not in valid_filters
+    assert c_lod == "LoD_90"
+    assert "never" not in df_mrd.index  # low TP retention removed
+    assert norm["n_bases_in_region"] == 1_200_000
+    assert df_mrd.loc["no_filter", spu.FP_READ_RETENTION_RATIO] == pytest.approx(1.0)
+    assert norm["read_filter_correction_factor"] == 1  # no X_FILTERED_COUNT / X_READ_COUNT columns
+
+
+def test_lod_simulation_read_filter_correction_from_count_columns(tmp_path):
+    # Regression: FeatureMapFields had no READ_COUNT / FILTERED_COUNT members, so this raised AttributeError on
+    # every call. With the X_FILTERED_COUNT / X_READ_COUNT columns the correction is sum(filtered+1)/sum(read).
+    fm, bed, sorter, filters = _lod_inputs(tmp_path)
+    fm["X_FILTERED_COUNT"] = 1
+    fm["X_READ_COUNT"] = 4
+    _, _, _, _, norm = spu.retention_noise_and_mrd_lod_simulation(
+        fm,
+        single_sub_regions=bed,
+        sorter_json_stats_file=sorter,
+        fp_featuremap_entry_number=10_000,
+        lod_filters=filters,
+    )
+    assert norm["read_filter_correction_factor"] == pytest.approx(0.5)  # (1 + 1) / 4 over the FP rows
+    assert norm["ratio_filtered_prior_to_featuremap"] == pytest.approx(norm["ratio_of_reads_over_mapq"] * 0.5)
+
+
 def _df_mrd():
     """Hand-built MRD-simulation table (the shape retention_noise_and_mrd_lod_simulation returns)."""
     return pd.DataFrame(
