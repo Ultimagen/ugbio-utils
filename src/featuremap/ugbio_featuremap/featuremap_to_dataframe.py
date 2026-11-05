@@ -120,7 +120,6 @@ COL_X_IC = "X_IC"  # Indel-class column emitted by snvfind: "ins"/"del" for hmer
 #   * nf/nr = consensus family sizes keyed by alignment orientation; on paired data the two mates of ONE strand
 #     have opposite nf/nr, so nf/nr is NOT the molecular strand (only a fallback when po is absent).
 #   * MI is per-strand, so it must NOT be used to pair the two strands.
-COL_MI = "MI"
 COL_NF = "nf"
 COL_NR = "nr"
 COL_CS = "CS"
@@ -151,7 +150,6 @@ DUPLEX_PRIORITY_FP = [
     DUPLEX_GROUP_SSC,
     DUPLEX_GROUP_SINGLETON,
 ]
-DUPLEX_PRIORITY_TP = list(DUPLEX_PRIORITY_FP)
 # Special --duplex-oversample-priority value: instead of the duplex_group tier ladder, fill the budget by
 # per-(CS + variant) ALT-matching read COUNT (descending) so concordant FP (several reads of a molecule carry
 # the same ALT) are enriched. The per-duplex_group min-fraction floor still applies (non-starvation).

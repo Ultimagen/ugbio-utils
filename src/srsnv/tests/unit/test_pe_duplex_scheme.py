@@ -1,16 +1,16 @@
 """Unit tests for the paired-end-duplex split scheme (simplex SE / simplex PE / duplex SE / duplex PE).
 
 Covers the pe-duplex grouping driven by the DNN per-image CS-family stats (``cs_n_crossing`` +
-``dx``/``mate_present``): scheme detection/priority over the generic DUPLEX scheme, the
-simplex-SE / simplex-PE / duplex-SE / duplex-PE assignment (a single-read family is simplex SE), and
-the legacy fallback when the CS stats are absent.
+``dx``): scheme detection, the simplex-SE / simplex-PE / duplex-SE / duplex-PE assignment (a
+single-read family is simplex SE), and the fallback when the CS stats are absent.
 """
 
 from __future__ import annotations
 
 import pandas as pd
 from ugbio_srsnv.split_scheme import (
-    DUPLEX_SCHEME,
+    MIXED_SCHEME,
+    NONE_SCHEME,
     PE_DUPLEX_SCHEME,
     resolve_scheme,
     resolve_scheme_and_add_columns,
@@ -52,17 +52,18 @@ def _pe_duplex_df() -> pd.DataFrame:
     )
 
 
-def test_pe_duplex_scheme_detected_and_wins_over_duplex():
-    frame = _pe_duplex_df()
-    # cs_n_crossing present -> pe-duplex scheme; even though nf/nr also match the generic DUPLEX scheme.
+def test_pe_duplex_scheme_detected_and_wins_over_mixed():
+    frame = _pe_duplex_df().assign(st="MIXED", et="MIXED")
+    # cs_n_crossing present -> pe-duplex scheme, even though st/et also match the ppmSeq MIXED scheme.
     assert resolve_scheme(frame) is PE_DUPLEX_SCHEME
     assert PE_DUPLEX_SCHEME.mode is ReportMode.PE_DUPLEX
 
 
-def test_pe_duplex_scheme_falls_back_to_duplex_without_cs_stats():
+def test_pe_duplex_scheme_not_detected_without_cs_stats():
     frame = _pe_duplex_df().drop(columns=[CS_FAMILY_SIZE, CS_N_CROSSING])
-    # no CS stats -> the generic duplex scheme (nf/nr) applies, unchanged.
-    assert resolve_scheme(frame) is DUPLEX_SCHEME
+    # no CS stats -> no duplex split (single-end duplex is not supported); nf/nr alone select nothing.
+    assert resolve_scheme(frame) is NONE_SCHEME
+    assert resolve_scheme(frame.assign(st="MIXED", et="MIXED")) is MIXED_SCHEME
 
 
 def test_pe_duplex_grouping_four_groups_and_fam1_is_simplex_se():

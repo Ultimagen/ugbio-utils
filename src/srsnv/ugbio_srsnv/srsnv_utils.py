@@ -80,23 +80,15 @@ ET_FILLNA = "et_fillna"  # end tag with NAs filled in
 FS = "fs"  # forward-strand read count (consensus data)
 RS = "rs"  # reverse-strand read count (consensus data)
 IS_CONSENSUS = "is_consensus"  # read is a consensus read (fs >= 1 and rs >= 1)
-NF = "nf"  # per-read forward-strand consensus count (duplex path); raw singleton has nf==0 & nr==0
-NR = "nr"  # per-read reverse-strand consensus count (duplex path)
+NF = "nf"  # per-read forward-strand consensus count (PE-duplex consensus CRAMs)
+NR = "nr"  # per-read reverse-strand consensus count (PE-duplex consensus CRAMs)
 DX = "dx"  # PE-duplex per-read tag: dx==1 marks a DUPLEX molecule (both strands present); absent otherwise.
 # Coverage-based (set by the consensus on every read of the molecule), so it marks a duplex molecule even when
 # only one strand flagged the variant here -- unlike "both strands appear in the featuremap", which misses ~90%.
 
-# Duplex per-molecule data: one prediction row is a MOLECULE built from two consensus reads
-# (opposite strands, same molecular id MI). ``mate_present`` = 1 when the molecule had a real
-# partner (both strands), 0 for a single-strand molecule / singleton. ``MI`` is the molecular id.
-MATE_PRESENT = "mate_present"  # per-molecule flag: molecule has both strand-mates present
-DUPLEX_CONCORDANT = "duplex_concordant"  # per-read: 1 both strands call the same variant, 0 discordant, -1 none
-# PE-duplex featuremap columns used to derive the per-molecule duplex flags (grouping by the CS family):
+# PE-duplex per-row duplex flag, derived from dx (see add_pe_duplex_columns_to_featuremap_df).
+MATE_PRESENT = "mate_present"  # per-row flag: the read's molecule is duplex (dx == 1)
 CS_FAMILY = "CS"  # paired-end-duplex consensus/UMI family key
-COL_CHROM_KEY = "CHROM"
-COL_POS_KEY = "POS"
-COL_ALT_KEY = "ALT"
-MI = "MI"  # molecular id column
 
 # Ordered read-group column: reads are split into N ordered groups per mode (see
 # add_read_group_column). The report iterates these groups instead of a binary split.
@@ -107,16 +99,6 @@ CONSENSUS_GROUP_SINGLE = "single read"  # fs + rs <= 1
 CONSENSUS_GROUP_ONE_STRAND = "consensus, one strand"  # fs + rs >= 2 and (fs == 0) xor (rs == 0)
 CONSENSUS_GROUP_DUPLEX = "consensus, duplex"  # fs >= 1 and rs >= 1
 CONSENSUS_GROUPS = [CONSENSUS_GROUP_SINGLE, CONSENSUS_GROUP_ONE_STRAND, CONSENSUS_GROUP_DUPLEX]
-
-# Duplex per-molecule groups (3), ordered by ascending strand support
-# (singleton -> single-strand consensus -> duplex), mirroring the CONSENSUS_GROUPS ordering
-# convention (weaker support first). The split reads the per-row ``is_consensus`` flag (1 = a
-# consensus read that has nf/nr strand counts, 0 = a raw singleton) and the per-molecule
-# ``mate_present`` flag (both strands paired).
-DUPLEX_MOL_SINGLETON = "singleton"  # is_consensus == 0: a raw, non-consensus read (no duplex info)
-DUPLEX_MOL_SINGLE_STRAND = "single-strand consensus"  # is_consensus and mate_present falsy: one strand
-DUPLEX_MOL_PAIRED = "duplex molecule"  # mate_present is truthy: both strand-mates present
-DUPLEX_MOL_GROUPS = [DUPLEX_MOL_SINGLETON, DUPLEX_MOL_SINGLE_STRAND, DUPLEX_MOL_PAIRED]
 
 # Per-image CS-family stats (paired-end duplex), produced by the DNN tensorizer from each image's own
 # CS family + focus column and surfaced per row (see ugbio_deep_srsnv.constants.PRED_COL_CS_*).
@@ -157,7 +139,6 @@ class ReportMode(Enum):
 
     MIXED = "mixed"  # ppmSeq data: split on mixed vs non-mixed reads (st/et tags)
     CONSENSUS = "consensus"  # consensus data: split on consensus vs non-consensus (fs/rs)
-    DUPLEX = "duplex_molecule"  # duplex per-molecule data: split on mate_present (paired vs single-strand)
     # paired-end duplex (DNN per-image CS-family stats present): simplex / duplex-SE / duplex-PE
     PE_DUPLEX = "pe_duplex"
     NONE = "none"  # neither available: single "all reads" group
@@ -213,64 +194,32 @@ def add_is_consensus_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
     return data_df
 
 
-def add_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
-    """Coerce the duplex per-molecule grouping columns (``mate_present`` and ``is_consensus``).
+def add_pe_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
+    """Add the PE-duplex per-row grouping columns (``mate_present`` and ``pe_duplex_group``).
 
-    In a duplex run each row is a molecule; ``mate_present`` marks whether the molecule had a real
-    partner (both strand-mates, 1) or is a single-strand molecule / singleton (0). The per-row
-    ``is_consensus`` flag (1 = a consensus read with nf/nr strand counts, 0 = a raw singleton)
-    further separates singletons from single-strand consensus reads.
-
-    ``is_consensus`` is derived directly from ``nf``/``nr`` (a read is a consensus read iff it
-    carries a strand-count tag, i.e. ``nf > 0`` or ``nr > 0``; a raw singleton has ``nf == 0`` and
-    ``nr == 0``). This is the DNN tensorizer's own definition and, unlike a stored ``is_consensus``
-    column, is well-defined for every row: in the DNN path the stored ``is_consensus`` is only
-    computed for tensorized/scored reads and is NaN for reads that were never tensorized (e.g. the
-    held-out chromosome), so a naive ``fillna(0)`` would misclassify those genuine consensus reads
-    as singletons. When ``nf``/``nr`` are absent we fall back to coercing the stored ``is_consensus``
-    column (older data); if that is absent too, the split degrades to the 2-way behavior.
+    A molecule is duplex (both strands present) iff ``dx == 1`` -- the coverage-based consensus tag. Because
+    it is coverage-based, dx marks a duplex molecule even when only ONE strand flagged the variant here (the
+    informative case), which a "both strands appear in the featuremap" heuristic misses (~90% of duplex
+    molecules). A read without dx is not duplex. ``pe_duplex_group`` is then assigned from ``mate_present``
+    and the DNN per-image CS-family stats (see :func:`_assign_pe_duplex_group`).
 
     Parameters
     ----------
     data_df : pd.DataFrame
-        The featuremap dataframe, expected to contain the ``mate_present`` column (and ``nf``/``nr``
-        or a stored ``is_consensus`` column).
+        The featuremap dataframe, expected to contain ``dx`` and the ``cs_n_crossing`` /
+        ``cs_family_size`` CS-family stats.
 
     Returns
     -------
     pd.DataFrame
-        The same dataframe with ``mate_present`` (and ``is_consensus`` when derivable) coerced to
-        boolean columns.
+        The same dataframe with boolean ``mate_present`` and (when the CS stats are present)
+        ``pe_duplex_group`` columns.
     """
-    logger.info("Adding duplex per-molecule columns to featuremap")
-    has_nf_nr = NF in data_df.columns and NR in data_df.columns
-    # is_consensus: a read is a consensus read iff it carries a strand-count tag (nf>0 or nr>0); a raw
-    # singleton has nf==0 and nr==0.
-    if has_nf_nr:
-        data_df[IS_CONSENSUS] = (data_df[NF].fillna(0) > 0) | (data_df[NR].fillna(0) > 0)
-    elif IS_CONSENSUS in data_df.columns:
-        data_df[IS_CONSENSUS] = data_df[IS_CONSENSUS].fillna(0).astype(bool)
-
-    if MATE_PRESENT in data_df.columns:
-        # duplex-2 (2-slot): the tensorizer emits a per-molecule mate_present (and duplex_concordant) directly.
-        data_df[MATE_PRESENT] = data_df[MATE_PRESENT].fillna(0).astype(bool)
-        _assign_pe_duplex_group(data_df)
-        return data_df
-
-    if not (has_nf_nr and CS_FAMILY in data_df.columns):
-        data_df[MATE_PRESENT] = False
-        _assign_pe_duplex_group(data_df)
-        return data_df
-
-    # PE-consensus run (identified by the CS family tag). CS only says the reads are PE consensus; it does
-    # NOT by itself mean duplex. A molecule is duplex (both strands present) iff dx==1 -- the coverage-based
-    # consensus tag. Because it is coverage-based, dx marks a duplex molecule even when only ONE strand
-    # flagged the variant here (the informative case), which the old "both strands appear in the featuremap"
-    # heuristic missed (~90% of duplex molecules). A read without dx is not duplex.
+    logger.info("Adding PE-duplex columns to featuremap")
     if DX in data_df.columns:
         data_df[MATE_PRESENT] = pd.to_numeric(data_df[DX], errors="coerce").eq(1)
     else:
-        logger.warning("PE-consensus featuremap has no dx tag; cannot identify duplex -> mate_present=False")
+        logger.warning("PE-duplex featuremap has no dx tag; cannot identify duplex -> mate_present=False")
         data_df[MATE_PRESENT] = False
     _assign_pe_duplex_group(data_df)
     return data_df

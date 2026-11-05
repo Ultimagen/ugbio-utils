@@ -33,22 +33,15 @@ from ugbio_srsnv.srsnv_utils import (
     CONSENSUS_GROUP_SINGLE,
     CONSENSUS_GROUPS,
     CS_N_CROSSING,
-    DUPLEX_MOL_GROUPS,
-    DUPLEX_MOL_PAIRED,
-    DUPLEX_MOL_SINGLE_STRAND,
-    DUPLEX_MOL_SINGLETON,
     ET,
     FS,
     IS_CONSENSUS,
     IS_MIXED,
     IS_MIXED_START,
-    MATE_PRESENT,
     MIXED_GROUP_NON,
     MIXED_GROUP_POS,
     MIXED_GROUPS,
-    NF,
     NONE_GROUP_ALL,
-    NR,
     PE_DUPLEX_GROUP,
     PE_DUPLEX_GROUP_PE,
     PE_DUPLEX_GROUP_SE,
@@ -61,9 +54,9 @@ from ugbio_srsnv.srsnv_utils import (
     TE,
     TS,
     ReportMode,
-    add_duplex_columns_to_featuremap_df,
     add_is_consensus_to_featuremap_df,
     add_is_mixed_to_featuremap_df,
+    add_pe_duplex_columns_to_featuremap_df,
 )
 
 MIN_CONSENSUS_READS = 2  # fs + rs >= 2 to be more than a single read
@@ -217,37 +210,12 @@ def _consensus_groups(data_df: pd.DataFrame) -> pd.Categorical:
     return _ordered(g, CONSENSUS_GROUPS)
 
 
-def _duplex_groups(data_df: pd.DataFrame) -> pd.Categorical:
-    """Per-molecule split by ascending strand support: singleton / single-strand consensus / duplex.
-
-    - ``mate_present`` truthy -> ``duplex molecule`` (both strand-mates paired).
-    - else, if the per-row ``is_consensus`` column is present and truthy -> ``single-strand
-      consensus`` (a consensus read whose opposite strand was not paired).
-    - else -> ``singleton`` (a raw, non-consensus read).
-
-    Backward compatibility: when the ``is_consensus`` column is absent (older 2-column data), the
-    default group becomes ``single-strand consensus`` so it degrades to the previous 2-way behavior
-    (``mate_present`` truthy -> duplex; else -> single-strand consensus).
-    """
-    mate_present = data_df[MATE_PRESENT].astype(bool)
-    if IS_CONSENSUS in data_df.columns:
-        # 3-way split: singletons (is_consensus == 0) are separated from single-strand consensus.
-        g = pd.Series(DUPLEX_MOL_SINGLETON, index=data_df.index, dtype=object)
-        g[data_df[IS_CONSENSUS].astype(bool)] = DUPLEX_MOL_SINGLE_STRAND
-    else:
-        # Backward-compat 2-way split: no is_consensus column, so no singleton group.
-        g = pd.Series(DUPLEX_MOL_SINGLE_STRAND, index=data_df.index, dtype=object)
-    g[mate_present] = DUPLEX_MOL_PAIRED
-    return _ordered(g, DUPLEX_MOL_GROUPS)
-
-
 def _pe_duplex_groups(data_df: pd.DataFrame) -> pd.Categorical:
-    """Paired-end-duplex split: simplex / duplex SE / duplex PE (singletons excluded).
+    """Paired-end-duplex split: simplex SE / simplex PE / duplex SE / duplex PE.
 
     Reads the per-row ``pe_duplex_group`` column assigned by
-    :func:`~ugbio_srsnv.srsnv_utils.add_duplex_columns_to_featuremap_df` from the DNN per-image
-    CS-family stats (``dx``/``mate_present`` + ``cs_n_crossing``). Singletons were mapped to a label
-    outside ``PE_DUPLEX_GROUPS`` and are dropped here (not displayed).
+    :func:`~ugbio_srsnv.srsnv_utils.add_pe_duplex_columns_to_featuremap_df` from the DNN per-image
+    CS-family stats (``dx`` + ``cs_n_crossing``).
     """
     return _ordered(data_df[PE_DUPLEX_GROUP], PE_DUPLEX_GROUPS)
 
@@ -267,8 +235,8 @@ def _consensus_add_columns(data_df: pd.DataFrame, kw: dict) -> pd.DataFrame:  # 
     return add_is_consensus_to_featuremap_df(data_df)
 
 
-def _duplex_add_columns(data_df: pd.DataFrame, kw: dict) -> pd.DataFrame:  # noqa: ARG001
-    return add_duplex_columns_to_featuremap_df(data_df)
+def _pe_duplex_add_columns(data_df: pd.DataFrame, kw: dict) -> pd.DataFrame:  # noqa: ARG001
+    return add_pe_duplex_columns_to_featuremap_df(data_df)
 
 
 def _none_add_columns(data_df: pd.DataFrame, kw: dict) -> pd.DataFrame:  # noqa: ARG001
@@ -343,31 +311,13 @@ MIXED_SCHEME = SplitScheme(
     ),
 )
 
-DUPLEX_SCHEME = SplitScheme(
-    mode=ReportMode.DUPLEX,
-    # duplex-2 emits the per-molecule `mate_present` column; PE-duplex does not, but its consensus
-    # strand counts `nf`/`nr` carry the same per-molecule signal (mate_present derived in add_columns).
-    detect=lambda cols: MATE_PRESENT in cols or (NF in cols and NR in cols),
-    add_columns=_duplex_add_columns,
-    tag_axis="mate status",
-    variants=(
-        SplitVariant(
-            suffix="duplex_molecule",
-            group_fn=_duplex_groups,
-            groups=tuple(DUPLEX_MOL_GROUPS),
-            is_display=True,
-            tag_axis="mate status",
-        ),
-    ),
-)
-
 PE_DUPLEX_SCHEME = SplitScheme(
     mode=ReportMode.PE_DUPLEX,
-    # Paired-end duplex: detected by the DNN per-image CS-family stat `cs_n_crossing`. Must be checked
-    # before DUPLEX (nf/nr also present) so the simplex-SE / simplex-PE / duplex-SE / duplex-PE split wins for
-    # pe-duplex runs.
+    # Paired-end duplex: detected by the DNN per-image CS-family stat `cs_n_crossing`. Checked before
+    # MIXED (pe-duplex consensus reads also carry st/et) so the simplex-SE / simplex-PE / duplex-SE /
+    # duplex-PE split wins for pe-duplex runs.
     detect=lambda cols: CS_N_CROSSING in cols,
-    add_columns=_duplex_add_columns,
+    add_columns=_pe_duplex_add_columns,
     tag_axis="duplex overlap",
     variants=(
         SplitVariant(
@@ -418,18 +368,12 @@ NONE_SCHEME = SplitScheme(
     ),
 )
 
-# Ordered registry. Detection order preserves the historical priority: ppmSeq tags beat everything;
-# the per-molecule duplex `mate_present` flag beats per-read fs/rs (a duplex featuremap may carry
-# both, and the per-molecule split must win). NONE is the explicit fallback, not consulted via
-# `detect`.
-# DUPLEX first: it detects the per-molecule `mate_present` column (duplex-2) or the `nf`/`nr` consensus
-# strand counts (PE-duplex, which emits no `mate_present`) -- both are emitted only by duplex/PE-duplex
-# DeepSRSNV runs. For those runs the per-molecule duplex split is the point, so it must win over the
-# ppmSeq MIXED split (which also matches because st/et are present). Non-duplex runs lack both
-# `mate_present` and `nf`/`nr`, so MIXED/CONSENSUS/NONE detection is unchanged.
+# Ordered registry. PE_DUPLEX first: it detects the DNN per-image CS-family stat `cs_n_crossing`,
+# emitted only by duplex-PE DeepSRSNV runs, whose per-molecule split must win over the ppmSeq MIXED
+# split (which also matches because st/et are present). ppmSeq tags then beat per-read fs/rs. NONE is
+# the explicit fallback, not consulted via `detect`.
 SPLIT_SCHEMES: tuple[SplitScheme, ...] = (
     PE_DUPLEX_SCHEME,
-    DUPLEX_SCHEME,
     MIXED_SCHEME,
     CONSENSUS_SCHEME,
     NONE_SCHEME,

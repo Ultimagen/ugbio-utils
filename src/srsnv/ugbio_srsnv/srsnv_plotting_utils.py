@@ -61,7 +61,6 @@ from ugbio_srsnv.srsnv_utils import (
     RS,
     ST,
     ST_FILLNA,
-    ReportMode,
     construct_trinuc_context_with_alt,
     get_base_recall_from_filters,
     phred_to_prob,
@@ -98,11 +97,6 @@ VARIANT_TYPE_NONHMER_INDEL = "non_hmer_indel"
 IS_MIXED = "is_mixed"
 IS_MIXED_START = "is_mixed_start"
 IS_MIXED_END = "is_mixed_end"
-MATE_PRESENT = "mate_present"  # duplex per-molecule flag (read by the DUPLEX group_fn)
-IS_CONSENSUS = "is_consensus"  # duplex per-read consensus flag (read by the DUPLEX group_fn)
-# per-molecule strand-concordance code emitted by the duplex tensorizer (1=concordant,
-# 0=single-strand difference, 2=other, -1=no mate). Absent in older runs -> no sub-split.
-DUPLEX_CONCORDANT = "duplex_concordant"
 FOLD_ID = "fold_id"
 
 EDIST = FeatureMapFields.EDIST.value
@@ -3253,11 +3247,11 @@ class SRSNVReport:
         """Columns (besides read_group) that the active scheme's variant group_fns read, so the
         logit-histogram slice includes them. Only columns present in data_df are returned.
 
-        Covers every scheme's raw group inputs (mixed: is_mixed/_start; consensus: fs/rs; duplex:
-        mate_present/is_consensus); a new scheme should add its raw group columns here so its group_fn
-        can run on the sliced frame. The pe-duplex group_fn reads the pre-assigned ``pe_duplex_group``
-        column directly (it is not recomputed from raw inputs), so include it too."""
-        candidates = [IS_MIXED, IS_MIXED_START, FS, RS, MATE_PRESENT, IS_CONSENSUS, PE_DUPLEX_GROUP]
+        Covers every scheme's raw group inputs (mixed: is_mixed/_start; consensus: fs/rs); a new scheme
+        should add its raw group columns here so its group_fn can run on the sliced frame. The pe-duplex
+        group_fn reads the pre-assigned ``pe_duplex_group`` column directly (it is not recomputed from raw
+        inputs), so include it too."""
+        candidates = [IS_MIXED, IS_MIXED_START, FS, RS, PE_DUPLEX_GROUP]
         return [c for c in candidates if c in self.data_df.columns]
 
     def _plot_logit_variant(self, plot_df, ax, variant, alpha=0.4):
@@ -3523,14 +3517,10 @@ class SRSNVReport:
         )
 
     def _snvq_thresholds(self) -> list[int]:
-        """SNVQ thresholds for the Recall@SNVQ rows. Duplex runs also report the high-quality
-        Recall@SNVQ80 (duplex consensus reaches higher SNVQ). SNVQ90 is intentionally omitted: the
-        recalibrated SNVQ ceiling is counting-LUT-limited (~84 on typical runs), so Recall@SNVQ90
-        would be structurally 0 rather than informative."""
-        thresholds = [50, 60, 70]
-        if self.report_mode == ReportMode.DUPLEX:
-            thresholds = [*thresholds, 80]
-        return thresholds
+        """SNVQ thresholds for the Recall@SNVQ rows. SNVQ90 is intentionally omitted: the recalibrated
+        SNVQ ceiling is counting-LUT-limited (~84 on typical runs), so Recall@SNVQ90 would be
+        structurally 0 rather than informative."""
+        return [50, 60, 70]
 
     def _hmer_indel_class_conditions(self):
         """Ordered ``{label: boolean mask}`` over the variant-type / indel-class axis.
@@ -3579,8 +3569,8 @@ class SRSNVReport:
         """SNVQ summary metrics for hmer indels, on the full read-type x indel-class cross-product.
 
         Mirrors the SNV ``run_quality_summary_table`` (``_calc_run_info_table_by_group``) but on the
-        variant-type / indel-class axis crossed with the read-type split (singleton / single-strand
-        consensus / duplex, from ``self._group_masks()``). For every (indel-class, read-type) cell it
+        variant-type / indel-class axis crossed with the read-type split (the display scheme groups,
+        from ``self._group_masks()``). For every (indel-class, read-type) cell it
         reports, using the shared recalibrated **SNVQ** (``QUAL``): Median SNVQ, conditional
         ``Recall at SNVQ={50,60,70}`` (= ``#(SNVQ>=q & TP & mask) / #(TP & mask)`` — the prefilter
         ``base_recall`` cancels, so this is report-only and directly comparable to the SNV conditional
@@ -3764,7 +3754,7 @@ class SRSNVReport:
         if ind.empty:
             return None
         bases = list("ACGT")
-        # read-group label per row (singleton / single-strand consensus / duplex) from the display scheme
+        # read-group label per row (e.g. simplex SE / duplex PE) from the display scheme
         group = pd.Series(index=ind.index, dtype=object)
         for label, mask in self._group_masks(data_df=ind):
             group[np.asarray(mask, dtype=bool)] = label
@@ -3814,7 +3804,7 @@ class SRSNVReport:
         hmer length (1..6, innermost ticks). For a given hmer base the flanking bases cannot equal it
         (a maximal homopolymer run is bounded by a different base), so base-before / base-after range
         only over the OTHER three bases. The quality panel draws one median-SNVQ step-line per read
-        type (singleton / single-strand consensus / duplex). Writes the tidy per-context table to the
+        type (the display scheme groups). Writes the tidy per-context table to the
         QC h5 under ``hmer_indel_context_stats``. Self-skips SNV-only runs / missing snvfind columns.
         """
         table = self._hmer_indel_context_df()

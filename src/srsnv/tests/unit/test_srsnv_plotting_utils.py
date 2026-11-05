@@ -889,7 +889,7 @@ def test_hmer_indel_snvq_summary_and_plots(consensus_resources, real_models_calc
         assert {"single read", "consensus, one strand", "consensus, duplex"} <= set(table["read_type"])
         for col in ["Median SNVQ", "Recall at SNVQ=50", "Recall at SNVQ=60", "Recall at SNVQ=70", "ROC AUC (Phred)"]:
             assert col in table.columns
-        # consensus (non-duplex) run: no Recall at SNVQ=80/90 columns (duplex-only)
+        # no Recall at SNVQ=80/90 columns (thresholds are 50/60/70 for every mode)
         assert "Recall at SNVQ=80" not in table.columns
         # per read_type: ins + del n_TP == all-indel n_TP (every indel is ins or del)
         for rt in table["read_type"].unique():
@@ -901,71 +901,27 @@ def test_hmer_indel_snvq_summary_and_plots(consensus_resources, real_models_calc
         assert os.path.exists(by_class + ".png")
 
 
-def _make_duplex_report(df, metadata, temp_output_dir, models):
-    """A duplex-mode SRSNVReport (report_mode='duplex_molecule'); df should carry mate_present."""
-    temp_metadata_file = os.path.join(temp_output_dir, "test_metadata.json")
-    with open(temp_metadata_file, "w") as f:
-        json.dump(metadata, f)
-    categorical_features = [feat for feat in metadata["features"] if feat["type"] == "c"]
-    numerical_features = [feat for feat in metadata["features"] if feat["type"] != "c"]
-    params = {
-        "workdir": temp_output_dir,
-        "data_name": "test_run",
-        "categorical_features_names": [feat["name"] for feat in categorical_features],
-        "categorical_features_dict": {feat["name"]: list(feat["values"].keys()) for feat in categorical_features},
-        "numerical_features": [feat["name"] for feat in numerical_features],
-        "fp_regions_bed_file": 1,
-        "num_CV_folds": len(models),
-        "report_mode": "duplex_molecule",
-    }
-    return SRSNVReport(
-        models=models,
-        data_df=df.copy(),
-        params=params,
-        out_path=temp_output_dir,
-        srsnv_metadata=temp_metadata_file,
-        base_name="test_",
-        raise_exceptions=True,
-    )
-
-
-def _add_duplex_columns(df, seed=7):
-    rng = np.random.default_rng(seed)
-    df["mate_present"] = rng.integers(0, 2, len(df))
-    return df
-
-
-def test_snvq_thresholds_duplex_adds_80(consensus_resources, real_models_calc_run_info):
-    """_snvq_thresholds() returns [50,60,70] for a consensus run and adds only 80 for duplex runs
-    (SNVQ90 omitted — the recalibrated SNVQ ceiling is ~84, so Recall@SNVQ90 would be structurally 0);
-    the duplex hmer-indel SNVQ table then carries a Recall at SNVQ=80 column but not =90."""
+def test_snvq_thresholds_no_snvq80(consensus_resources, real_models_calc_run_info):
+    """_snvq_thresholds() is [50,60,70] for every split mode (SNVQ80/90 omitted -- the recalibrated SNVQ
+    ceiling is ~84, so the high thresholds would be structurally ~0)."""
     df, metadata = consensus_resources
-    df = _add_hmer_variant_columns(df)  # noqa: PD901
     with tempfile.TemporaryDirectory() as temp_output_dir:
         report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
         assert report._snvq_thresholds() == [50, 60, 70]
-    dfd = _add_duplex_columns(_add_hmer_variant_columns(consensus_resources[0].copy()))
     with tempfile.TemporaryDirectory() as temp_output_dir:
-        report = _make_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
-        assert report._snvq_thresholds() == [50, 60, 70, 80]
-        report.calc_hmer_indel_run_info_table()
-        table = pd.read_hdf(
-            os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5"),
-            key="run_quality_summary_table_hmer_indel",
-        )
-        for col in ["Recall at SNVQ=70", "Recall at SNVQ=80"]:
-            assert col in table.columns
-        assert "Recall at SNVQ=90" not in table.columns
+        pe_df = _add_pe_duplex_columns(df)
+        report = _make_pe_duplex_report(pe_df, metadata, temp_output_dir, real_models_calc_run_info)
+        assert report._snvq_thresholds() == [50, 60, 70]
 
 
 def test_by_class_hmer_indel_stats(consensus_resources, real_models_calc_run_info):
     """plot_hmer_indel_by_class writes the hmer_indel_class_stats h5 (with a median_snvq column);
-    lines split by the active read-split groups (e.g. duplex molecule / single-strand consensus) in
-    addition to ins/del, when a multi-group read_group is present."""
+    lines split by the active read-split groups (e.g. simplex SE / duplex PE) in addition to ins/del,
+    when a multi-group read_group is present."""
     df, metadata = consensus_resources
-    dfd = _add_duplex_columns(_add_hmer_variant_columns(df))  # noqa: PD901
+    dfd = _add_pe_duplex_columns(_add_hmer_variant_columns(df))  # noqa: PD901
     with tempfile.TemporaryDirectory() as temp_output_dir:
-        report = _make_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
+        report = _make_pe_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
         by_class = os.path.join(temp_output_dir, "by_class")
         report.plot_hmer_indel_by_class(output_filename=by_class)
         stats = pd.read_hdf(
@@ -973,7 +929,7 @@ def test_by_class_hmer_indel_stats(consensus_resources, real_models_calc_run_inf
         )
         assert "median_snvq" in stats.columns
         rg = set(stats["read_group"])
-        # duplex data has >1 read group -> lines are split by group (not the single "all" fallback)
+        # pe-duplex data has >1 read group -> lines are split by group (not the single "all" fallback)
         assert rg and rg != {"all"}
         assert rg.issubset(set(report._display_variant.groups))
         assert os.path.exists(by_class + ".png")
@@ -1011,11 +967,11 @@ def _add_non_hmer_variant_columns(df, n_indel=300, seed=11):
 
 def test_non_hmer_indel_sections(consensus_resources, real_models_calc_run_info):
     """The three non-hmer figures render and write their h5 stats; read-group split is exercised via a
-    duplex report (multi-group). Mirrors the hmer by-class/context tests."""
+    pe-duplex report (multi-group). Mirrors the hmer by-class/context tests."""
     df, metadata = consensus_resources
-    dfd = _add_duplex_columns(_add_non_hmer_variant_columns(df))  # noqa: PD901
+    dfd = _add_pe_duplex_columns(_add_non_hmer_variant_columns(df))  # noqa: PD901
     with tempfile.TemporaryDirectory() as temp_output_dir:
-        report = _make_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
+        report = _make_pe_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
         assert report._has_non_hmer_indel_rows()
         h5 = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
 
