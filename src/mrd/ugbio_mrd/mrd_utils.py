@@ -964,8 +964,20 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
     df_tf: pd.DataFrame,
     df_signatures_filt: pd.DataFrame,
     thresh_multi_read_pvalue: float,
+    *,
+    skip_min_vaf: float | None = None,
+    skip_min_supported_fraction: float = 0.0,
+    excluded_loci: dict | pd.Index | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """Apply the Bonferroni-corrected Poisson outlier test uniformly across all signature types.
+
+    High-TF skip rule, evaluated independently for every signature (matched, control,
+    db_control) on its own data: a signature is left untouched when its ``ctdna_vaf`` exceeds
+    ``skip_min_vaf`` and at least ``skip_min_supported_fraction`` of its loci have ≥ 1
+    supporting read.  ``skip_min_vaf=None`` disables the rule.  Both quantities are computed
+    from the signature's own feature rows at its own active loci, i.e. its rows in
+    ``df_signatures_filt`` minus ``excluded_loci`` (the same exclusions passed to
+    ``get_tf_from_filtered_data`` to build ``df_tf``).
 
     For every ``(signature_type, signature)`` row in ``df_tf`` the function computes:
 
@@ -1011,7 +1023,8 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         ``n_filtered_control_loci`` / ``n_filtered_control_reads``,
         ``n_filtered_db_control_loci`` / ``n_filtered_db_control_reads``,
         ``poisson_lambda_ctrl`` (mean λ across all control/db_control signatures),
-        ``max_reads_per_locus_control``, ``max_reads_per_locus_db_control``.
+        ``max_reads_per_locus_control``, ``max_reads_per_locus_db_control``,
+        ``skipped_signatures`` (list of dicts for signatures exempted by the high-TF rule).
     """
     filter_info: dict = {
         "n_filtered_loci": 0,
@@ -1026,6 +1039,7 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         "poisson_lambda_ctrl": 0.0,
         "max_reads_per_locus_control": 1,
         "max_reads_per_locus_db_control": 1,
+        "skipped_signatures": [],
     }
 
     # --- mean_coverage from the matched signature; fall back to all signatures when absent ---
@@ -1112,6 +1126,28 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         per_locus_cov = per_locus_cov[in_signature].to_numpy()
         if len(per_locus_counts) == 0:
             continue
+
+        if skip_min_vaf is not None:
+            # df_tf counts reads at the union of all signatures' active loci, so recompute from
+            # this signature's own active loci only.
+            active_loci = sig_loci_cov.index
+            excl = excluded_loci.get(sig_name) if isinstance(excluded_loci, dict) else excluded_loci
+            if excl is not None and len(excl) > 0:
+                active_loci = active_loci.difference(excl)
+            active_counts = per_locus_counts[per_locus_counts.index.isin(active_loci)]
+            corr_cov_gate = float(sig_row.get("corrected_coverage", 0.0))
+            sig_vaf = float(active_counts.sum()) / corr_cov_gate if corr_cov_gate > 0 else 0.0
+            supported_fraction = len(active_counts) / max(len(active_loci), 1)
+            if sig_vaf > skip_min_vaf and supported_fraction >= skip_min_supported_fraction:
+                filter_info["skipped_signatures"].append(
+                    {
+                        "signature_type": sig_type,
+                        "signature": sig_name,
+                        "ctdna_vaf": sig_vaf,
+                        "supported_fraction": supported_fraction,
+                    }
+                )
+                continue
 
         # --- Estimate VAF from signature loci ---
         # Using all (retained) loci avoids the breakdown at high coverage / high TF where a
