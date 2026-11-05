@@ -28,8 +28,6 @@ from ugbio_srsnv.srsnv_utils import (
     IS_CONSENSUS,
     IS_MIXED,
     MATE_PRESENT,
-    NF,
-    NR,
     PE_DUPLEX_GROUP_PE,
     PE_DUPLEX_GROUP_SE,
     PE_DUPLEX_GROUP_SIMPLEX_PE,
@@ -83,8 +81,8 @@ class TestResolveScheme:
         data_df = pd.DataFrame(
             {
                 "CS": ["X", "X", "Y", "Z", "Z"],
-                NF: [3, 0, 2, 1, 0],
-                NR: [0, 5, 0, 0, 1],
+                "nf": [3, 0, 2, 1, 0],
+                "nr": [0, 5, 0, 0, 1],
                 DX: [1, 1, None, 1, None],
                 "DS": [4, 4, 2, 2, 2],  # family size on the paired CRAMs: must be ignored
                 "cs_family_size": [4, 4, 1, 2, 2],
@@ -108,7 +106,7 @@ class TestResolveScheme:
     def test_nf_nr_without_cs_stats_resolves_to_mixed(self):
         # Single-end duplex is no longer supported: nf/nr consensus counts alone (no PE-duplex CS-family
         # stats) do not select a duplex split; st/et ppmSeq tags -> MIXED, fs/rs -> CONSENSUS.
-        data_df = pd.DataFrame({NF: [3, 0, 2, 0], NR: [5, 4, 0, 0], "st": ["MIXED"] * 4, "et": ["MIXED"] * 4})
+        data_df = pd.DataFrame({"nf": [3, 0, 2, 0], "nr": [5, 4, 0, 0], "st": ["MIXED"] * 4, "et": ["MIXED"] * 4})
         assert resolve_scheme(data_df) is MIXED_SCHEME
         assert resolve_scheme(pd.DataFrame({MATE_PRESENT: [1, 0], FS: [1, 2], RS: [1, 0]})) is CONSENSUS_SCHEME
 

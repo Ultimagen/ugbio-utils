@@ -80,18 +80,15 @@ ET_FILLNA = "et_fillna"  # end tag with NAs filled in
 FS = "fs"  # forward-strand read count (consensus data)
 RS = "rs"  # reverse-strand read count (consensus data)
 IS_CONSENSUS = "is_consensus"  # read is a consensus read (fs >= 1 and rs >= 1)
-NF = "nf"  # per-read forward-strand consensus count (PE-duplex consensus CRAMs)
-NR = "nr"  # per-read reverse-strand consensus count (PE-duplex consensus CRAMs)
 DX = "dx"  # PE-duplex per-read tag: dx==1 marks a DUPLEX molecule (both strands present); absent otherwise.
 # Coverage-based (set by the consensus on every read of the molecule), so it marks a duplex molecule even when
 # only one strand flagged the variant here -- unlike "both strands appear in the featuremap", which misses ~90%.
 
 # PE-duplex per-row duplex flag, derived from dx (see add_pe_duplex_columns_to_featuremap_df).
 MATE_PRESENT = "mate_present"  # per-row flag: the read's molecule is duplex (dx == 1)
-CS_FAMILY = "CS"  # paired-end-duplex consensus/UMI family key
 
 # Ordered read-group column: reads are split into N ordered groups per mode (see
-# add_read_group_column). The report iterates these groups instead of a binary split.
+# split_scheme.resolve_scheme_and_add_columns). The report iterates these groups instead of a binary split.
 READ_GROUP = "read_group"
 
 # Consensus groups, ordered by ascending strand support (single -> one strand -> duplex).
@@ -133,7 +130,7 @@ class ReportMode(Enum):
     """How the SRSNV report splits reads into two groups.
 
     The mode is detected automatically from the columns present in the featuremap
-    dataframe (see :func:`detect_report_mode`). Its ``.value`` is a plain string, so the
+    dataframe (see :func:`ugbio_srsnv.split_scheme.resolve_scheme`). Its ``.value`` is a plain string, so the
     mode can be stored in the params dict / JSON and reconstructed via ``ReportMode(value)``.
     """
 
@@ -142,36 +139,6 @@ class ReportMode(Enum):
     # paired-end duplex (DNN per-image CS-family stats present): simplex / duplex-SE / duplex-PE
     PE_DUPLEX = "pe_duplex"
     NONE = "none"  # neither available: single "all reads" group
-
-
-def detect_report_mode(data_df: pd.DataFrame) -> ReportMode:
-    """Detect the report split mode from the columns present in the featuremap dataframe.
-
-    Detection is column-presence based (not adapter-version based), because the adapter
-    version is unreliable in some pipelines (e.g. the DNN report path stores it as None).
-
-    ppmSeq tags take priority over consensus counts: if the start/end strand-ratio tags
-    (``st``/``et``, or the v5 ``as``/``ae``/``ts``/``te`` tags from which they are derived)
-    are present, the mode is MIXED even if ``fs``/``rs`` happen to also be present.
-
-    Parameters
-    ----------
-    data_df : pd.DataFrame
-        The featuremap dataframe.
-
-    Returns
-    -------
-    ReportMode
-        MIXED if ppmSeq tags are present, CONSENSUS if fs/rs are present, else NONE.
-    """
-    cols = data_df.columns
-    v5_tags_present = AS in cols and AE in cols and TS in cols and TE in cols
-    # ST alone suffices: start-only ppmSeq libraries (e.g. ppmSeq_plus_v8_9) emit st but no et (BIOIN-3125).
-    if ST in cols or v5_tags_present:
-        return ReportMode.MIXED
-    if FS in cols and RS in cols:
-        return ReportMode.CONSENSUS
-    return ReportMode.NONE
 
 
 def add_is_consensus_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
@@ -259,96 +226,6 @@ def _assign_pe_duplex_group(data_df: pd.DataFrame) -> None:
     g[mate & (cross <= 2)] = PE_DUPLEX_GROUP_SE  # noqa: PLR2004  (2 reads cross = one PE end)
     g[mate & (cross >= 3)] = PE_DUPLEX_GROUP_PE  # noqa: PLR2004  (>=3 reads cross = both PE ends)
     data_df[PE_DUPLEX_GROUP] = g
-
-
-def add_read_group_column(data_df: pd.DataFrame, mode: ReportMode) -> pd.DataFrame:
-    """Add the ordered categorical ``read_group`` column used to split the report.
-
-    The report splits reads into N ordered groups depending on the mode:
-
-    - CONSENSUS: three groups by strand support (from ``fs``/``rs``), ascending:
-      ``single read`` (fs + rs <= 1), ``consensus, one strand``
-      (fs + rs >= 2 and exactly one of fs/rs is 0), ``consensus, duplex`` (fs >= 1 and rs >= 1).
-      These are exhaustive and mutually exclusive.
-    - MIXED: two groups reproducing the historical binary ppmSeq split, derived from
-      ``is_mixed_start``: ``Non-mixed`` / ``Mixed`` (in that order). NOTE: mixed-mode report code
-      keeps its own dual (legacy both-ends + display start) logic and does not rely on this column;
-      it is added only for a uniform N-group interface.
-    - NONE: a single ``all reads`` group.
-
-    The column is an *ordered* pandas Categorical so group order is stable in tables/plots.
-
-    Parameters
-    ----------
-    data_df : pd.DataFrame
-        The featuremap dataframe (with split boolean columns already added).
-    mode : ReportMode
-        The resolved report mode.
-
-    Returns
-    -------
-    pd.DataFrame
-        The dataframe with the ``read_group`` ordered-categorical column added.
-    """
-    if mode is ReportMode.CONSENSUS:
-        min_consensus_reads = 2  # fs + rs >= 2 to be more than a single read
-        fs = data_df[FS]
-        rs = data_df[RS]
-        total = fs + rs
-        group = pd.Series(CONSENSUS_GROUP_SINGLE, index=data_df.index, dtype=object)
-        one_strand = (total >= min_consensus_reads) & ((fs == 0) ^ (rs == 0))
-        duplex = (fs >= 1) & (rs >= 1)
-        group[one_strand] = CONSENSUS_GROUP_ONE_STRAND
-        group[duplex] = CONSENSUS_GROUP_DUPLEX
-        categories = CONSENSUS_GROUPS
-    elif mode is ReportMode.MIXED:
-        group = pd.Series(MIXED_GROUP_NON, index=data_df.index, dtype=object)
-        group[data_df[IS_MIXED_START]] = MIXED_GROUP_POS
-        categories = MIXED_GROUPS
-    else:  # ReportMode.NONE
-        group = pd.Series(NONE_GROUP_ALL, index=data_df.index, dtype=object)
-        categories = [NONE_GROUP_ALL]
-
-    data_df[READ_GROUP] = pd.Categorical(group, categories=categories, ordered=True)
-    return data_df
-
-
-def resolve_and_add_split_columns(
-    data_df: pd.DataFrame,
-    adapter_version: str = None,
-    categorical_features_names: list[str] | None = None,
-) -> tuple[pd.DataFrame, ReportMode]:
-    """Detect the report mode and add the boolean split column(s) it needs.
-
-    - MIXED: delegates to :func:`add_is_mixed_to_featuremap_df` (adds is_mixed/_start/_end).
-    - CONSENSUS: adds ``is_consensus`` = (fs >= 1) & (rs >= 1).
-    - NONE: adds ``is_consensus`` = False (single "all reads" group).
-
-    Parameters
-    ----------
-    data_df : pd.DataFrame
-        The featuremap dataframe.
-    adapter_version : str, optional
-        ppmSeq adapter version, forwarded to the MIXED path.
-    categorical_features_names : list[str], optional
-        Categorical feature names, forwarded to the MIXED path.
-
-    Returns
-    -------
-    tuple[pd.DataFrame, ReportMode]
-        The dataframe with split columns added, and the detected mode.
-    """
-    mode = detect_report_mode(data_df)
-    logger.info("Detected SRSNV report mode: %s", mode.value)
-    if mode is ReportMode.MIXED:
-        data_df = add_is_mixed_to_featuremap_df(data_df, adapter_version, categorical_features_names)
-    elif mode is ReportMode.CONSENSUS:
-        data_df = add_is_consensus_to_featuremap_df(data_df)
-    else:  # ReportMode.NONE — no split information available, degrade to a single group
-        data_df[IS_CONSENSUS] = False
-    # Add the ordered read_group column used by the N-group report split.
-    data_df = add_read_group_column(data_df, mode)
-    return data_df, mode
 
 
 FLOW_ORDER = ["T", "G", "C", "A"]

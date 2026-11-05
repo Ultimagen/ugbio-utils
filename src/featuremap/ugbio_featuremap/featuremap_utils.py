@@ -1,6 +1,5 @@
 from enum import Enum
 
-import numpy as np
 import polars as pl
 from ugbio_core.consts import (
     ALT,
@@ -37,8 +36,6 @@ class FeatureMapFields(Enum):
     X_INDEL_SEQ = "X_INDEL_SEQ"
     ST = "st"
     ET = "et"
-    FS = "fs"  # forward-strand read count (consensus data)
-    RS = "rs"  # reverse-strand read count (consensus data)
     EDIST = "EDIST"
     HAMDIST = "HAMDIST"
     HAMDIST_FILT = "HAMDIST_FILT"
@@ -87,23 +84,6 @@ HMER_RUN_BINS = (("L1", 0, 1), ("L2", 2, 2), ("L3-4", 3, 4), ("L5-6", 5, 6), ("L
 def hmer_bin_cell(bin_label: str) -> str:
     """Cell key of an hmer run-length bin, e.g. ``hmer_indel|L3-4``."""
     return f"{CELL_HMER_INDEL}{CELL_SEP}{bin_label}"
-
-
-def hmer_run_bin_label(run_length: int) -> str:
-    """Bin label for a homopolymer run length (``X_HMER_RUN``)."""
-    for label, lo, hi in HMER_RUN_BINS:
-        if run_length >= lo and (hi is None or run_length <= hi):
-            return label
-    return HMER_RUN_BINS[0][0]  # negative/invalid -> shortest bin
-
-
-def hmer_run_bin_array(run_length: np.ndarray) -> np.ndarray:
-    """Vectorized :func:`hmer_run_bin_label` (missing / negative -> shortest bin)."""
-    run = np.nan_to_num(np.asarray(run_length, dtype=float), nan=0.0)
-    out = np.full(run.shape, HMER_RUN_BINS[0][0], dtype=object)
-    for label, lo, hi in HMER_RUN_BINS[1:]:
-        out[(run >= lo) & ((run <= hi) if hi is not None else True)] = label
-    return out
 
 
 def cell_key_expr(columns: list[str] | set[str], *, with_bins: bool = True) -> pl.Expr:

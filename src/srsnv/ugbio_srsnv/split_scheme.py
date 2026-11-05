@@ -94,9 +94,6 @@ class SplitVariant:
     fq_conditions_fn : Callable | None
         Optional builder of the ordered ``{label: mask|None}`` FQ-recall conditions for this variant
         (mixed legacy needs the special both-ends/start conditions). ``None`` -> derived from groups.
-    summary_group_fn : Callable | None
-        Optional grouping for the per-tag summary table when it differs from ``group_fn`` (mixed
-        display groups by start-tag category, not by the 2-group label). ``None`` -> ``group_fn``.
     trinuc_split_col : str | None
         Column name fed to the trinuc plotter as its split column. ``None`` -> a materialized
         ``read_group`` column. (Mixed uses the raw ``is_mixed`` bool to keep trinuc_stats identical.)
@@ -117,7 +114,6 @@ class SplitVariant:
     tag_axis: str = ""
     hist_col_name: str = ""
     fq_conditions_fn: Callable[[pd.DataFrame], dict] | None = None
-    summary_group_fn: Callable[[pd.DataFrame], pd.Series] | None = None
     trinuc_split_col: str | None = None
     trinuc_group_specs: Any = None
 

@@ -16,12 +16,9 @@ from ugbio_srsnv.split_scheme import (
     resolve_scheme_and_add_columns,
 )
 from ugbio_srsnv.srsnv_utils import (
-    CS_FAMILY,
     CS_FAMILY_SIZE,
     CS_N_CROSSING,
     DX,
-    NF,
-    NR,
     PE_DUPLEX_GROUP_PE,
     PE_DUPLEX_GROUP_SE,
     PE_DUPLEX_GROUP_SIMPLEX_PE,
@@ -42,10 +39,10 @@ def _pe_duplex_df() -> pd.DataFrame:
             "CHROM": ["chr1"] * 5,
             "POS": [10, 15, 20, 30, 40],
             "RN": ["r_simplex_se", "r_simplex_pe", "r_se", "r_pe", "r_fam1"],
-            NF: [2, 2, 2, 2, 1],
-            NR: [0, 0, 2, 2, 0],
+            "nf": [2, 2, 2, 2, 1],
+            "nr": [0, 0, 2, 2, 0],
             DX: [None, None, 1, 1, None],
-            CS_FAMILY: ["c_simplex_se", "c_simplex_pe", "c_se", "c_pe", "c_fam1"],
+            "CS": ["c_simplex_se", "c_simplex_pe", "c_se", "c_pe", "c_fam1"],
             CS_FAMILY_SIZE: [2, 2, 2, 4, 1],
             CS_N_CROSSING: [1, 2, 2, 4, 1],
         }

@@ -1,10 +1,10 @@
-"""Unit tests for duplex oversampling in featuremap_to_dataframe (PE→SE unpaired duplex data).
+"""Unit tests for duplex oversampling in featuremap_to_dataframe (paired-end pair-dx duplex data).
 
 Covers:
 - _add_duplex_group_column: dx-based classification into duplex_pe_full / duplex / ssc / singleton, keyed on
   CS (never MI, which is per-strand on this data). dx==1 = full PE duplex (coverage-based, tags the molecule
-  even when only one strand flagged); no dx + both strands flag = duplex; one strand = ssc; no consensus =
-  singleton.
+  even when only one strand flagged); no dx + both po strands (F1R2 and F2R1) flag = duplex; one strand = ssc;
+  no consensus = singleton. Rows without po carry no strand info (nf/nr is never used as the strand).
 - _priority_preserve_downsample: fills the budget top-down by tier (higher tiers kept whole, only the
   boundary tier subsampled).
 - _balanced_sample: keeps ~the requested indel fraction within a sampled group.
@@ -51,8 +51,8 @@ def test_duplex_group_classification():
         _row("chr1", 110, "C", "T", "cs_full2", 3, 0, dx=1),
         _row("chr1", 110, "C", "T", "cs_full2", 0, 3, dx=1),
         # duplex: no dx but this CS flags the variant on BOTH strands (chr5-style)
-        _row("chr1", 200, "C", "T", "cs_dup", 2, 0, dx=None),
-        _row("chr1", 200, "C", "T", "cs_dup", 0, 2, dx=None),
+        _row("chr1", 200, "C", "T", "cs_dup", 2, 0, dx=None, po="F1R2"),
+        _row("chr1", 200, "C", "T", "cs_dup", 0, 2, dx=None, po="F2R1"),
         # ssc: no dx, single-strand consensus
         _row("chr1", 300, "C", "T", "cs_ssc", 4, 0, dx=None),
         # singleton: no consensus family
@@ -98,8 +98,8 @@ def test_priority_preserve_keeps_higher_tiers(tmp_path):
         rows.append(_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, dx=1))  # duplex_pe_full
     for j in range(5):
         rows += [
-            _row("chr1", 2000 + j, "C", "T", f"d{j}", 3, 0, dx=None),
-            _row("chr1", 2000 + j, "C", "T", f"d{j}", 0, 3, dx=None),
+            _row("chr1", 2000 + j, "C", "T", f"d{j}", 3, 0, dx=None, po="F1R2"),
+            _row("chr1", 2000 + j, "C", "T", f"d{j}", 0, 3, dx=None, po="F2R1"),
         ]  # duplex (both strands flag)
     for j in range(100):
         rows.append(_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, dx=None))  # ssc
@@ -287,8 +287,8 @@ def test_within_group_count_priority_keeps_tier_order_and_floor(tmp_path):
     rows = [_row("chr1", 1000 + j, "C", "T", f"f{j}", 3, 0, dx=1) for j in range(10)]  # duplex_pe_full
     for j in range(5):
         rows += [
-            _row("chr1", 2000 + j, "C", "T", f"d{j}", 3, 0, dx=None),
-            _row("chr1", 2000 + j, "C", "T", f"d{j}", 0, 3, dx=None),
+            _row("chr1", 2000 + j, "C", "T", f"d{j}", 3, 0, dx=None, po="F1R2"),
+            _row("chr1", 2000 + j, "C", "T", f"d{j}", 0, 3, dx=None, po="F2R1"),
         ]  # duplex
     rows += [_row("chr1", 3000 + j, "C", "T", f"s{j}", 3, 0, dx=None) for j in range(100)]  # ssc
     for i, r in enumerate(rows):
@@ -378,6 +378,22 @@ def test_paired_po_strand_not_nf_nr():
         DUPLEX_GROUP_DUPLEX,
         DUPLEX_GROUP_DUPLEX_PE_FULL,
     ]
+
+
+def test_missing_po_is_no_strand_info():
+    """Without po (column absent or null) nf/nr is NOT used as the strand: opposite nf/nr rows of one CS stay ssc;
+    dx still marks duplex_pe_full and nf==nr==0 is still a singleton."""
+    rows = [
+        {"CHROM": "chr1", "POS": 100, "REF": "C", "ALT": "T", "CS": "m", "nf": 2, "nr": 0, "dx": None},
+        {"CHROM": "chr1", "POS": 100, "REF": "C", "ALT": "T", "CS": "m", "nf": 0, "nr": 2, "dx": None},
+        {"CHROM": "chr1", "POS": 200, "REF": "C", "ALT": "T", "CS": "f", "nf": 2, "nr": 0, "dx": 1},
+        {"CHROM": "chr1", "POS": 300, "REF": "C", "ALT": "T", "CS": "s", "nf": 0, "nr": 0, "dx": None},
+    ]
+    expected = [DUPLEX_GROUP_SSC, DUPLEX_GROUP_SSC, DUPLEX_GROUP_DUPLEX_PE_FULL, DUPLEX_GROUP_SINGLETON]
+    no_po_col = pl.DataFrame(rows)
+    assert _add_duplex_group_column(no_po_col)[DUPLEX_GROUP_COL].to_list() == expected
+    null_po = no_po_col.with_columns(pl.lit(None, dtype=pl.Utf8).alias("po"))
+    assert _add_duplex_group_column(null_po)[DUPLEX_GROUP_COL].to_list() == expected
 
 
 def test_ds_is_ignored():

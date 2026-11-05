@@ -119,7 +119,7 @@ COL_X_IC = "X_IC"  # Indel-class column emitted by snvfind: "ins"/"del" for hmer
 #     here (the informative case). This is the only duplex marker used (DS is not used for classification).
 #   * po = the molecular strand as pair orientation (F1R2 / F2R1); the two strands of a duplex have opposite po.
 #   * nf/nr = consensus family sizes keyed by alignment orientation; on paired data the two mates of ONE strand
-#     have opposite nf/nr, so nf/nr is NOT the molecular strand (only a fallback when po is absent).
+#     have opposite nf/nr, so nf/nr is NOT the molecular strand (used only for "is this a consensus read").
 #   * MI is per-strand, so it must NOT be used to pair the two strands.
 COL_NF = "nf"
 COL_NR = "nr"
@@ -127,7 +127,6 @@ COL_CS = "CS"
 COL_DX = "dx"
 COL_PO = "po"
 COL_X_INDEL_CLASS = "X_INDEL_CLASS"  # "hmer"/"non_hmer" on indel rows; absent -> indels treated as hmer
-COL_RN = "RN"
 COL_CHROM = "CHROM"
 COL_POS = "POS"
 
@@ -851,9 +850,9 @@ def _add_duplex_group_column(frame: pl.DataFrame) -> pl.DataFrame:
       * ``duplex_pe_full`` – ``dx == 1``: a duplex molecule (both strands present). dx is coverage-based, so this
                              tags the molecule even when only one strand flagged the variant here.
       * ``duplex``         – no dx but this molecule (keyed on ``CS`` + variant) flags the variant on BOTH strands:
-                             both ``po`` orientations (F1R2 and F2R1) among its rows; without a ``po`` column, a
-                             nf>0 row and a nr>0 row (legacy unpaired-by-strand data only — on paired data nf/nr
-                             is alignment orientation, so the two mates of one strand would look like two strands).
+                             both ``po`` orientations (F1R2 and F2R1) among its rows. Rows without a valid ``po``
+                             carry no strand info and never make a molecule ``duplex`` (nf/nr is alignment
+                             orientation on paired data, not the molecular strand).
       * ``ssc``            – single-strand consensus (only one strand flags).
       * ``singleton``      – no consensus family (nf==0 and nr==0).
 
@@ -870,14 +869,15 @@ def _add_duplex_group_column(frame: pl.DataFrame) -> pl.DataFrame:
         if COL_DX in frame.columns
         else pl.lit(value=False)
     )
-    # Molecular strand: po per read when present; reads without po (legacy unpaired-by-strand data) use nf/nr.
+    # Molecular strand = po (F1R2 / F2R1). nf/nr is alignment orientation on paired data, NOT the strand, so it is
+    # never used here. A read without a valid po (or a frame without a po column) carries no strand info: it can
+    # still be duplex_pe_full (dx), ssc or singleton, but never "duplex" by observed two-strand agreement.
     if COL_PO in frame.columns:
         po = pl.col(COL_PO).cast(pl.Utf8)
-        has_po = po.is_in(["F1R2", "F2R1"]).fill_null(value=False)
-        strand_a = pl.when(has_po).then(po == "F1R2").otherwise(nf > 0)
-        strand_b = pl.when(has_po).then(po == "F2R1").otherwise(nr > 0)
+        strand_a = (po == "F1R2").fill_null(value=False)
+        strand_b = (po == "F2R1").fill_null(value=False)
     else:
-        strand_a, strand_b = nf > 0, nr > 0
+        strand_a = strand_b = pl.lit(value=False)
     frame = frame.with_columns(
         strand_a.alias("_is_fwd"),
         strand_b.alias("_is_rev"),
