@@ -1546,6 +1546,7 @@ class SRSNVReport:
         self.params = params
         self.use_gpu_for_shap = use_gpu_for_shap
         self.out_path = out_path
+        base_name = base_name or ""  # None -> no prefix (not the literal "None")
         self.base_name = base_name
         self.lod_filters = lod_filters
         self.lod_label = lod_label

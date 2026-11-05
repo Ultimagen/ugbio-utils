@@ -613,6 +613,14 @@ def test_report_init_adds_columns_and_rng_default(tmp_path):
     assert {"ML_prob_train", "ML_logit_train", "ML_logit_test"} <= set(rep.data_df.columns)
 
 
+def test_report_without_base_name_has_clean_h5_name(tmp_path):
+    # Regression: base_name=None (the default) produced "Nonesingle_read_snv.applicationQC.h5" and a
+    # TypeError in the run-info tables (base_name[:-1]).
+    rep = _report(_base_df(100), tmp_path, base_name=None)
+    assert rep.params["data_name"] == ""
+    assert os.path.basename(rep.output_h5_filename) == "single_read_snv.applicationQC.h5"
+
+
 def test_display_groups_and_palette_per_scheme(tmp_path):
     pe = _report(_add_pe_duplex(_base_df(300)), tmp_path)
     assert pe._display_groups() == PE_DUPLEX_GROUPS
