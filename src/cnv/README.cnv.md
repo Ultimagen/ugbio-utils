@@ -128,6 +128,11 @@ snap_cnv_breakpoints --input-vcf sample.ann.vcf.gz --alignment sample.cram --ref
 filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.calls.vcf.gz
 ```
 
+- `filter_nested_cnv_candidates` drops split-read and pair candidates that are < 500 bp after snapping, >= 50% inside
+  a same-type depth call, or with >= 50% reciprocal overlap with a same-type candidate kept before them (snapping often
+  moves several candidates of one deletion to the same breakpoints; split-read candidates are kept first, then pair
+  candidates, by the reads in their cluster).
+
 - Discordant-pair candidates (paired-end, optional; not in the pipeline yet): `pair_cnv_candidates` runs after
   `split_read_cnv_candidates` on its output (same `--depth-mq0` / `--depth-mq20` / `--annotation`, and `--input-vcf`
   instead of `--depth-vcf`). FR pairs with a span >= 800 (the evidence step's `--min-pair-span` default) give deletion
@@ -136,7 +141,8 @@ filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.
   Clusters of >= 3 pairs: a deletion is the gap between the reads and their mates (snapping's pair rule), kept from
   300 bp since the 500 bp minimum is applied after snapping; a duplication contains the pairs, 500 bp - 1 Mb.
   With the split-read candidates' depth check, and not already called. They get `CNV_SOURCE=pair` and
-  `PAIR_READS`; `filter_nested_cnv_candidates` treats them like split-read candidates. The filter model
+  `PAIR_READS`; overlapping pair clusters are collapsed to the one with most pairs, and
+  `filter_nested_cnv_candidates` treats them like split-read candidates. The filter model
   `cnv_filtering_model_v2.0.0.pkl` is trained with them (`source_pair` feature).
 - Sex chromosomes: `call_depth_cnvs` infers them from the median depth of the clean (unique, non-segdup) chrX and
   chrY bins relative to the autosomes, with the karyotype table of `estimate_ploidy`. One chrX copy makes chrX

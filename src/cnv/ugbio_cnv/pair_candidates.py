@@ -16,12 +16,15 @@ pair_cnv_candidates:
      deletion, and the 500 bp minimum is applied after snapping (filter_nested_cnv_candidates), when split reads have
      moved a real deletion to its breakpoints. A duplication contains the pairs: from the left reads' first start to
      the mates' last end (left start + TLEN), so the evidence step brackets the same pairs; kept from 500 bp.
+     Clusters with >= 50% reciprocal overlap are collapsed to the one with most pairs (split_read_candidates.
+     dedup_clusters): one deletion often gives several clusters of pairs.
   3. The same depth check as the split-read candidates (split_read_candidates.score_with_depth), and candidates with a
      same-type call of the input VCF overlapping >= 50% reciprocally are dropped (already called). The rest are added
      with CNV_SOURCE=pair, PAIR_READS and CIPOS / CIEND = +-ci (as snapping gives pair-shrunk calls).
 
 Paired-end data only. Run after split_read_cnv_candidates; the nested / short filter (filter_nested_cnv_candidates)
-after snapping treats pair candidates like split-read candidates.
+after snapping treats pair candidates like split-read candidates, and drops the candidates that snapping has made
+duplicates of a call.
 """
 
 import argparse
@@ -39,6 +42,7 @@ from ugbio_cnv.split_read_candidates import (
     PAIR_FIELDS,
     CandidateParams,
     add_candidates_to_calls,
+    dedup_clusters,
     samtools_lines,
     score_with_depth,
 )
@@ -140,6 +144,7 @@ def pair_cnv_candidates(  # noqa: PLR0913
     cp = CandidateParams()
     pairs = stream_pairs(alignment, reference, contigs, p, threads)
     clusters = cluster_pairs(pairs, p, cp) if len(pairs) else pd.DataFrame()
+    clusters = dedup_clusters(clusters, cp) if len(clusters) else clusters
     scored = score_with_depth(clusters, depth_mq0, depth_mq20, annotation, sex.haploid, cp) if len(clusters) else None
     if scored is None or not len(scored):
         scored = pd.DataFrame(columns=["chrom", "start", "end", "svtype"])

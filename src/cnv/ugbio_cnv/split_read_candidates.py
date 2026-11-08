@@ -14,8 +14,10 @@ split_read_cnv_candidates:
      added to the depth calls with CNV_SOURCE=split_read.
 
 filter_nested_cnv_candidates (after breakpoint snapping):
-  Drop split-read and pair candidates that are >= 50% inside a same-type depth call (a second call on an event that is
-  already called) or shorter than 500 bp.
+  Drop split-read and pair candidates that are shorter than 500 bp, >= 50% inside a same-type depth call (a second
+  call on an event that is already called), or with >= 50% reciprocal overlap with a same-type candidate kept before
+  them (snapping often moves several candidates of one deletion to the same breakpoints). Split-read candidates are
+  kept first, then pair candidates, each by the most reads in their cluster (SR_READS / PAIR_READS).
 """
 
 import argparse
@@ -300,10 +302,24 @@ def split_read_cnv_candidates(  # noqa: PLR0913
     return n
 
 
+def _candidate_rank(r: pysam.VariantRecord) -> tuple:
+    """Order in which candidates are kept: split-read before pair, then the most reads in the cluster, then position."""
+    is_pair = CNV_SOURCE_PAIR in r.info.get("CNV_SOURCE", ())
+    tag = "PAIR_READS" if is_pair else "SR_READS"
+    reads = (r.info.get(tag) if tag in r.header.info else None) or 0  # the tag is not defined when not computed
+    return (is_pair, -reads, r.start, r.stop)
+
+
 def filter_nested_cnv_candidates(
-    input_vcf: str, output_vcf: str, min_len: int = 500, min_inside: float = 0.5
+    input_vcf: str, output_vcf: str, min_len: int = 500, min_inside: float = 0.5, min_overlap: float = 0.5
 ) -> dict[str, int]:
-    """Drop split-read and pair candidates >= min_inside inside a same-type depth call, or shorter than min_len."""
+    """
+    Drop split-read and pair candidates that are short, nested in a depth call or duplicates; returns the counts.
+
+    A candidate is dropped when shorter than min_len ("short"), >= min_inside inside a same-type depth call ("nested"),
+    or with >= min_overlap reciprocal overlap with a same-type candidate kept before it ("duplicate"; split-read
+    candidates are kept first, then pair candidates, each by the most reads in their cluster).
+    """
     with pysam.VariantFile(input_vcf) as vin:
         records = list(vin)
         header = vin.header.copy()
@@ -311,24 +327,35 @@ def filter_nested_cnv_candidates(
     def source(r):
         return tuple(r.info.get("CNV_SOURCE", ()))
 
-    depth = {}
+    candidates = [r for r in records if source(r) in ((CNV_SOURCE_SPLIT_READ,), (CNV_SOURCE_PAIR,))]
+    depth_calls: dict[tuple[str, str], list[tuple[int, int]]] = {}
     for r in records:
         if CNV_SOURCE_DEPTH in source(r):
-            depth.setdefault((r.chrom, r.info["SVTYPE"]), []).append((r.start, r.stop))
-    depth = {k: np.array(v) for k, v in depth.items()}
-    kept, dropped = [], {"nested": 0, "short": 0}
-    for r in records:
-        if source(r) in ((CNV_SOURCE_SPLIT_READ,), (CNV_SOURCE_PAIR,)):
-            if r.stop - r.start < min_len:
-                dropped["short"] += 1
-                continue
-            d = depth.get((r.chrom, r.info["SVTYPE"]))
-            if d is not None and len(d):
-                inside = (np.minimum(d[:, 1], r.stop) - np.maximum(d[:, 0], r.start)).clip(min=0).max()
-                if inside >= min_inside * (r.stop - r.start):
-                    dropped["nested"] += 1
-                    continue
-        kept.append(r)
+            depth_calls.setdefault((r.chrom, r.info["SVTYPE"]), []).append((r.start, r.stop))
+    depth = {k: np.array(v) for k, v in depth_calls.items()}
+    kept_candidates: dict[tuple[str, str], list[tuple[int, int]]] = {}
+    dropped_ids, dropped = set(), {"nested": 0, "short": 0, "duplicate": 0}
+    for r in sorted(candidates, key=_candidate_rank):
+        length, key = r.stop - r.start, (r.chrom, r.info["SVTYPE"])
+        reason = None
+        if length < min_len:
+            reason = "short"
+        elif key in depth and (
+            (np.minimum(depth[key][:, 1], r.stop) - np.maximum(depth[key][:, 0], r.start)).clip(min=0).max()
+            >= min_inside * length
+        ):
+            reason = "nested"
+        elif any(
+            min(e, r.stop) - max(s, r.start) >= min_overlap * max(e - s, length)
+            for s, e in kept_candidates.get(key, [])
+        ):
+            reason = "duplicate"
+        if reason:
+            dropped[reason] += 1
+            dropped_ids.add(id(r))
+        else:
+            kept_candidates.setdefault(key, []).append((r.start, r.stop))
+    kept = [r for r in records if id(r) not in dropped_ids]
     with pysam.VariantFile(output_vcf, "wz", header=header) as vout:
         for r in kept:
             vout.write(r)
@@ -371,7 +398,7 @@ def run(argv: list[str]):
 def parse_args_nested(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="filter_nested_cnv_candidates",
-        description="Drop split-read and pair candidates nested in a same-type depth call or < 500 bp",
+        description="Drop split-read and pair candidates < 500 bp, nested in a same-type depth call, or duplicates",
     )
     parser.add_argument("--input-vcf", required=True, help="Snapped calls")
     parser.add_argument("--output-vcf", required=True, help="Output .vcf.gz")

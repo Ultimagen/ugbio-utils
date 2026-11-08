@@ -113,7 +113,39 @@ class TestNestedFilter:
         cvcf, out = str(tmp_path / "cand.vcf.gz"), str(tmp_path / "filtered.vcf.gz")
         src.add_candidates_to_calls(dvcf, cand, cvcf, src.CandidateParams())
         dropped = src.filter_nested_cnv_candidates(cvcf, out)
-        assert dropped == {"nested": 1, "short": 1}
+        assert dropped == {"nested": 1, "short": 1, "duplicate": 0}
         with pysam.VariantFile(out) as v:
             kept = [(r.start, r.info["SVTYPE"]) for r in v]
         assert kept == [(100_000, "DEL"), (400_000, "DUP"), (970_000, "DEL")]
+
+    def test_duplicate_candidates_dropped(self, tmp_path, fasta_index):
+        """Candidates snapped onto the same event: split-read kept first, then the pair candidate with most pairs."""
+        dvcf = str(tmp_path / "depth.vcf.gz")
+        write_depth_calls(depth_calls([("chr1", 10_000, 12_000, "DEL")]), dvcf, "S1", fasta_index)
+        sr = str(tmp_path / "sr.vcf.gz")
+        src.add_candidates_to_calls(dvcf, candidates([("chr1", 200_000, 210_000, "DEL", 2)]), sr, src.CandidateParams())
+        pairs = candidates(
+            [
+                ("chr1", 200_100, 210_050, "DEL", 9),  # same event as the split-read candidate: dropped
+                ("chr1", 300_000, 320_000, "DEL", 3),  # same event as the next one, fewer pairs: dropped
+                ("chr1", 300_500, 320_500, "DEL", 8),
+                ("chr1", 300_000, 320_000, "DUP", 3),  # the other type: kept
+                ("chr1", 305_000, 309_000, "DEL", 4),  # inside the 20 kb candidate, but not >= 50% of it: kept
+            ]
+        )
+        cvcf, out = str(tmp_path / "cand.vcf.gz"), str(tmp_path / "filtered.vcf.gz")
+        p = src.CandidateParams(min_overlap=1.1)  # add all of them (the "already called" check is not tested here)
+        src.add_candidates_to_calls(
+            sr, pairs, cvcf, p, source=src.CNV_SOURCE_PAIR, id_prefix="PAIR", count_tag="PAIR_READS"
+        )
+        dropped = src.filter_nested_cnv_candidates(cvcf, out)
+        assert dropped == {"nested": 0, "short": 0, "duplicate": 2}
+        with pysam.VariantFile(out) as v:
+            kept = [(r.start, r.info["SVTYPE"], r.info["CNV_SOURCE"]) for r in v]
+        assert kept == [
+            (10_000, "DEL", ("depth",)),
+            (200_000, "DEL", ("split_read",)),
+            (300_000, "DUP", ("pair",)),
+            (300_500, "DEL", ("pair",)),
+            (305_000, "DEL", ("pair",)),
+        ]
