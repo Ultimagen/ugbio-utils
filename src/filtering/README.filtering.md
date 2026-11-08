@@ -144,18 +144,34 @@ Prepares training data for the depth CNV caller's filter (`--vcf_type cnv_depth`
   matched → 1, unmatched → 0 (pctovl 0.5, pctsize 0.5, pctseq 0, refdist 100 kb, duplications matched to insertions).
 - `--known_events CALL_VCF EVENTS_BED` (repeatable) adds positives from samples with known events (e.g. cell lines):
   calls of the event's type (BED: chrom, start, end, svtype) with ≥ 50% of their length inside an event.
+- The depth caller gives one call per event, so a long known event adds one row. `cnv_known_event_pieces` (ugbio_cnv)
+  cuts it into training pieces: windows of 10–100 kb inside the event, scored with the depth caller's statistics and
+  kept when the caller would call them (no N, ≤ 10% segdup / low-mappability bins). After the pipeline's evidence and
+  snapping steps they go in as `--known_events` too, and teach the filter that a depth-only call without junction
+  reads can be real.
 
 ```bash
+# pieces of a known event (per sample; --haploid-contigs chrX for a male sample), then evidence and snapping
+cnv_known_event_pieces --depth-mq0 YLC444.q0.regions.bed.gz --depth-mq20 YLC444.q20.regions.bed.gz \
+  --annotation ref.depth_annotation.parquet --events-bed ylc444.events.bed --sample-name YLC444 \
+  --fasta-index ref.fasta.fai --n-pieces 15 --min-len 10000 --max-len 100000 --seed 1002 \
+  --output-vcf YLC444.pieces.vcf.gz
+analyze_cnv_breakpoint_reads --bam-file YLC444.cram --vcf-file YLC444.pieces.vcf.gz --reference-fasta ref.fasta \
+  --cushion 1500 --output-file YLC444.pieces.ann.vcf.gz --output-bam YLC444.pieces.ev.bam
+snap_cnv_breakpoints --input-vcf YLC444.pieces.ann.vcf.gz --alignment YLC444.cram --reference-fasta ref.fasta \
+  --output-vcf YLC444.pieces.snap.vcf.gz
+
 training_prep_depth_cnv_pipeline \
   --call_vcf HG002.depth_cnv.vcf.gz \
   --truth_vcf GRCh38_HG2-T2TQ100-V1.1_stvar.ge500.vcf.gz \
   --benchmark_bed GRCh38_HG2-T2TQ100-V1.1_stvar.benchmark.bed \
   --train_chromosomes chr1 chr10 chr11 chr12 chr13 chr14 chr15 \
   --known_events YLC444.depth_cnv.vcf.gz ylc444.events.bed \
+  --known_events YLC444.pieces.snap.vcf.gz ylc444.events.bed \
   --output_prefix hg002_depth_cnv
 
 train_models_pipeline --train_dfs hg002_depth_cnv.train.h5 --test_dfs hg002_depth_cnv.test.h5 \
-  --output_file_prefix cnv_filtering_model --vcf_type cnv_depth --gt_type approximate --decision_threshold 26
+  --output_file_prefix cnv_filtering_model --vcf_type cnv_depth --gt_type approximate --decision_threshold 28
 ```
 
 For `cnv_depth`, `train_models_pipeline` also stores `decision_threshold` in the pickle: the out-of-bag probability with
@@ -163,9 +179,10 @@ the best F1 on the training rows as a FilterVCF score (30 + 10 log10(p / (1 − 
 `filter_variants_pipeline --decision_threshold`. `train_models_pipeline --decision_threshold <int>` stores the given
 threshold instead.
 
-`cnv_filtering_model_v2.0.0.pkl` was trained with these two commands (threshold 26), on the paired-end pipeline's
+`cnv_filtering_model_v2.0.0.pkl` was trained with these commands (threshold 28), on the paired-end pipeline's
 calls: depth, split-read and discordant-pair candidates after snapping and `filter_nested_cnv_candidates`, for HG002
-613168 (training chromosomes) and the YLC444 / GSM704 events. The same model filters single-end calls (no pair
+613168 (training chromosomes) and the YLC444 (chr21 DUP) / GSM704 (chrX DEL) events, with their pieces (15 YLC444 DUP
+pieces, seed 1002; 13 GSM704 DEL pieces, seed 1012; 10–100 kb). The same model filters single-end calls (no pair
 candidates, `source_pair` is 0).
 
 ## Typical Workflows

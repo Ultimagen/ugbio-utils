@@ -144,6 +144,8 @@ filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.
   `PAIR_READS`; overlapping pair clusters are collapsed to the one with most pairs, and
   `filter_nested_cnv_candidates` treats them like split-read candidates. The filter model
   `cnv_filtering_model_v2.0.0.pkl` is trained with them (`source_pair` feature).
+- Filter training: `cnv_known_event_pieces` cuts a sample's known long CNV into 10–100 kb depth calls (the windows the
+  caller would call), as extra positives for `training_prep_depth_cnv_pipeline --known_events` (README.filtering.md).
 - Sex chromosomes: `call_depth_cnvs` infers them from the median depth of the clean (unique, non-segdup) chrX and
   chrY bins relative to the autosomes, with the karyotype table of `estimate_ploidy`. One chrX copy makes chrX
   haploid, two diploid; chrY is haploid when present and not called otherwise. If the depth is ambiguous, chrX and

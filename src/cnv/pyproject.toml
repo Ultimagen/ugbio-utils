@@ -37,6 +37,7 @@ split_read_cnv_candidates = "ugbio_cnv.split_read_candidates:main"
 pair_cnv_candidates = "ugbio_cnv.pair_candidates:main"
 filter_nested_cnv_candidates = "ugbio_cnv.split_read_candidates:main_nested"
 snap_cnv_breakpoints = "ugbio_cnv.breakpoint_snapping:main"
+cnv_known_event_pieces = "ugbio_cnv.known_event_pieces:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true
