@@ -79,6 +79,16 @@ RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSI
     cd .. && \
     rm -rf samtools-${SAMTOOLS_VERSION}.tar.bz2 samtools-${SAMTOOLS_VERSION}
 
+# Install Picard (IntervalFile converts interval_list to BED with it)
+ARG PICARD_VERSION=3.4.0
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends --reinstall ca-certificates openjdk-17-jre-headless \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* && apt-get autoclean
+RUN mkdir -p /opt/picard && \
+    wget -O /opt/picard/picard.jar https://github.com/broadinstitute/picard/releases/download/${PICARD_VERSION}/picard.jar && \
+    chmod +x /opt/picard/picard.jar
+RUN echo '#!/bin/sh\njava -jar /opt/picard/picard.jar "$@"' > /usr/local/bin/picard && \
+    chmod +x /usr/local/bin/picard
+
 ## install ug-cn.mops (branch: ug.master):
 RUN cd /opt && \
     if [ -d "cn.mops/.git" ]; then \
