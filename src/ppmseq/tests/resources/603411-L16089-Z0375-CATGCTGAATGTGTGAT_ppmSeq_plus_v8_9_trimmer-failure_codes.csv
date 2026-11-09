@@ -1,0 +1,5 @@
+read group,code,format,segment,reason,failed read count,total read count
+Z0375,10001,ppmSeq_plus_v8_9,insert,sequence was too short,200764,95990888
+Z0375,10008,ppmSeq_plus_v8_9,insert,rsq file,14932854,95990888
+Z0375,20006,no trimming,insert,comparison failed,80841040,80857270
+Z0375,30006,no trimming,insert,comparison failed,59111577,80841040
