@@ -758,13 +758,13 @@ def read_trimmer_tags_dataframe(
 def _trimmer_input_reads_excluding_rsq(trimmer_failure_codes_csv: str) -> tuple[str, int]:
     """Format and RSQ-passing input reads when no rejection rows remain (only RSQ / "no trimming" rows)."""
     df_raw = pd.read_csv(trimmer_failure_codes_csv)
-    df_raw = df_raw[df_raw["format"] != NO_TRIMMING_FORMAT]
+    df_trimming = df_raw[df_raw["format"] != NO_TRIMMING_FORMAT]
+    # Continuation-only file: the first "no trimming" row's input is every read that reached Trimmer.
+    df_raw = df_trimming if not df_trimming.empty else df_raw
     trimmer_format = df_raw["format"].iloc[0]
     df_raw = df_raw[df_raw["format"] == trimmer_format]
     first_row = df_raw.iloc[0]
-    input_reads = df_raw[(df_raw["segment"] == first_row["segment"]) & (df_raw["reason"] == first_row["reason"])][
-        "total read count"
-    ].sum()
+    input_reads = df_raw[df_raw["code"] == first_row["code"]]["total read count"].sum()
     rsq_failed = df_raw[df_raw["reason"].isin(["rsq file", "rsq filter"])]["failed read count"].sum()
     return trimmer_format, int(input_reads - rsq_failed)
 
