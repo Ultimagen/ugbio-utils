@@ -96,6 +96,21 @@ def test_read_trimmer_failure_codes_ppmseq_plus_failed_total():
     assert df_metrics.loc["PCT_failed_adapter_dimers", "value"] == pytest.approx(0.2476793355, abs=1e-9)
 
 
+def test_read_trimmer_failure_codes_ppmseq_plus_no_rejections(tmp_path):
+    # Only RSQ and "no trimming" rows: nothing is rejected, so the total is 0% rather than an IndexError.
+    csv = tmp_path / "no_rejections_trimmer-failure_codes.csv"
+    csv.write_text(
+        "read group,code,format,segment,reason,failed read count,total read count\n"
+        "Z0375,10008,ppmSeq_plus_v8_9,insert,rsq file,14932854,95990888\n"
+        "Z0375,20006,no trimming,insert,comparison failed,80841040,80857270\n"
+    )
+    df_trimmer_failure_codes, df_metrics = read_trimmer_failure_codes_ppmseq(str(csv))
+    assert df_trimmer_failure_codes.loc[("total", "total"), "failed_read_count"] == 0
+    assert df_trimmer_failure_codes.loc[("total", "total"), "total_read_count"] == 95990888 - 14932854
+    assert df_metrics.loc["PCT_failed_total", "value"] == 0
+    assert df_metrics.loc["PCT_failed_adapter_dimers", "value"] == 0
+
+
 def test_read_tags_from_subsampled_sam():
     df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
     assert len(df_reads) > 0

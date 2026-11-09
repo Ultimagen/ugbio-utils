@@ -755,6 +755,20 @@ def read_trimmer_tags_dataframe(
     return df_tags
 
 
+def _trimmer_input_reads_excluding_rsq(trimmer_failure_codes_csv: str) -> tuple[str, int]:
+    """Format and RSQ-passing input reads when no rejection rows remain (only RSQ / "no trimming" rows)."""
+    df_raw = pd.read_csv(trimmer_failure_codes_csv)
+    df_raw = df_raw[df_raw["format"] != NO_TRIMMING_FORMAT]
+    trimmer_format = df_raw["format"].iloc[0]
+    df_raw = df_raw[df_raw["format"] == trimmer_format]
+    first_row = df_raw.iloc[0]
+    input_reads = df_raw[(df_raw["segment"] == first_row["segment"]) & (df_raw["reason"] == first_row["reason"])][
+        "total read count"
+    ].sum()
+    rsq_failed = df_raw[df_raw["reason"].isin(["rsq file", "rsq filter"])]["failed read count"].sum()
+    return trimmer_format, int(input_reads - rsq_failed)
+
+
 def read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv: str):
     """
     Read a trimmer failure codes csv file
@@ -786,10 +800,14 @@ def read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv: str):
     # PCT_failed_total: reads rejected by Trimmer / reads into Trimmer for this read group, RSQ-failed
     # reads excluded from both (same denominator as the other PCT_failed_* rows).
     failed_read_count = df_trimmer_failure_codes["failed_read_count"].sum()
-    total_read_count = df_trimmer_failure_codes["total_read_count"].iloc[0]
+    if df_trimmer_failure_codes.empty:
+        trimmer_format, total_read_count = _trimmer_input_reads_excluding_rsq(trimmer_failure_codes_csv)
+    else:
+        trimmer_format = df_trimmer_failure_codes["format"].iloc[0]
+        total_read_count = df_trimmer_failure_codes["total_read_count"].iloc[0]
     total_row = pd.DataFrame(
         {
-            "format": [df_trimmer_failure_codes["format"].iloc[0]],
+            "format": [trimmer_format],
             "failed_read_count": [failed_read_count],
             "total_read_count": [total_read_count],
             "PCT_failure": [100 * failed_read_count / total_read_count],
