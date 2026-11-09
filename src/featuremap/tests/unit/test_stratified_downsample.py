@@ -203,3 +203,31 @@ def test_stratified_multipart_downsample_without_seed(tmp_path: Path) -> None:
     result_df = pl.read_parquet(out)
     assert result_df.height == 400
     assert result_df.filter(_indel_pred()).height == 100  # 0.25 * 400, indels available (150)
+
+
+def test_indel_pool_sampled_per_part_not_collected_fully(tmp_path: Path, monkeypatch) -> None:
+    """Indel-dominated input (WGS with hmer indels): indels must be Bernoulli-sampled per part like SNVs,
+    never concatenated in full before trimming (that OOM'd PrepareRawFeatureMap on 171M indel rows)."""
+    import ugbio_featuremap.featuremap_to_dataframe as f2d  # noqa: PLC0415
+
+    parts = [_write_part(tmp_path / f"p{i}.parquet", 20000, 2000, f"p{i}") for i in range(5)]
+    out = tmp_path / "out.parquet"
+    seen_heights: list[int] = []
+    real_concat = pl.concat
+
+    def spy_concat(items, *a, **k):
+        items = list(items)
+        if items and isinstance(items[0], pl.DataFrame):
+            seen_heights.append(sum(x.height for x in items))
+        return real_concat(items, *a, **k)
+
+    monkeypatch.setattr(f2d.pl, "concat", spy_concat)
+    f2d._stratified_downsample_by_variant_type(parts, str(out), 1000, SEED, 0.3)
+    monkeypatch.setattr(f2d.pl, "concat", real_concat)
+
+    result_df = pl.read_parquet(out)
+    assert result_df.height == 1000
+    assert result_df.filter(_indel_pred()).height == 300
+    # no in-memory concat ever held anything close to the 100k-row indel pool
+    assert max(seen_heights) < 5000, seen_heights
+    assert result_df.select("part", "POS").n_unique() == result_df.height  # no duplicated rows

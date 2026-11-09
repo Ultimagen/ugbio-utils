@@ -1087,6 +1087,37 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
         Path(f).unlink(missing_ok=True)
 
 
+def _sample_pool_from_parts(
+    parquet_files: list[str],
+    pool_pred: pl.Expr,
+    n_pool: int,
+    target: int,
+    downsample_seed: int | None,
+    *,
+    seed_offset: int,
+) -> pl.DataFrame:
+    """Sample ``target`` rows matching ``pool_pred`` across part-files with bounded memory.
+
+    Each part is filtered to the pool and Bernoulli-sampled at a slightly inflated global fraction
+    (so the concatenation almost surely holds >= ``target`` rows), then trimmed exactly to ``target``.
+    Peak memory is one filtered part plus ~``target`` rows. Part ``i`` uses seed
+    ``_part_seed(downsample_seed, i + seed_offset)`` so different pools draw independent streams.
+    Returns an empty frame with the pool's schema when nothing is kept.
+    """
+    if n_pool <= 0 or target <= 0:
+        empty = [pl.scan_parquet(f).filter(pool_pred) for f in parquet_files]
+        return pl.concat(empty, how="vertical").head(0).collect()
+    keep_frac = min(1.0, (target / n_pool) * 1.05 + 1000.0 / n_pool)
+    parts = []
+    for i, f in enumerate(parquet_files):
+        part_seed = _part_seed(downsample_seed, i + seed_offset)
+        parts.append(pl.read_parquet(f).filter(pool_pred).sample(fraction=keep_frac, seed=part_seed))
+    pool_df = pl.concat(parts, how="vertical")
+    if pool_df.height > target:
+        pool_df = pool_df.sample(n=target, seed=downsample_seed)
+    return pool_df
+
+
 def _stratified_downsample_by_variant_type(
     parquet_files: list[str],
     output_path: str,
@@ -1101,9 +1132,10 @@ def _stratified_downsample_by_variant_type(
 
     This is best-effort and never upsamples/duplicates: if either pool is scarce, the
     realized fraction drifts toward what the data can supply (the deficit is refilled from
-    the other pool up to ``downsample_reads``). Indels are rare, so they are materialized
-    fully; SNVs use the same memory-bounded per-part sampling as the uniform path. The
-    combined survivors are fully shuffled (deterministically) so types interleave.
+    the other pool up to ``downsample_reads``). Both pools use the same memory-bounded
+    per-part sampling as the uniform path (see :func:`_sample_pool_from_parts`), so memory
+    scales with the targets, not with the pool sizes. The combined survivors are fully
+    shuffled (deterministically) so types interleave.
 
     Parameters
     ----------
@@ -1145,26 +1177,13 @@ def _stratified_downsample_by_variant_type(
         f"(target fraction {indel_snv_balance_fraction})"
     )
 
-    # Indels are rare: collect them fully, then trim to target.
-    indel_df = pl.concat([pl.scan_parquet(f).filter(pred) for f in parquet_files], how="vertical").collect()
-    if indel_df.height > target_indel:
-        indel_df = indel_df.sample(n=target_indel, seed=downsample_seed)
-
-    # SNVs: memory-bounded per-part sampling (mirror the uniform multi-part path), then exact-trim.
-    if n_snv > 0 and target_snv > 0:
-        keep_frac = min(1.0, (target_snv / n_snv) * 1.05 + 1000.0 / n_snv)
-        sampled_parts = [
-            pl.read_parquet(f).filter(snv_pred).sample(fraction=keep_frac, seed=_part_seed(downsample_seed, i))
-            for i, f in enumerate(parquet_files)
-        ]
-        snv_df = pl.concat(sampled_parts, how="vertical")
-        if snv_df.height > target_snv:
-            snv_df = snv_df.sample(n=target_snv, seed=downsample_seed)
-    else:
-        # Preserve schema even when no SNVs are kept.
-        snv_df = (
-            pl.concat([pl.scan_parquet(f).filter(snv_pred) for f in parquet_files], how="vertical").head(0).collect()
-        )
+    # Both pools use memory-bounded per-part sampling, then an exact trim. Indels are NOT rare on WGS with hmer
+    # indels enabled (e.g. 171M post-filter indel rows at 100X), so they must never be materialized in full.
+    # SNVs keep their historical per-part seeds (offset 0 -> unchanged SNV sample); indels get an independent stream.
+    indel_df = _sample_pool_from_parts(
+        parquet_files, pred, n_indel, target_indel, downsample_seed, seed_offset=len(parquet_files)
+    )
+    snv_df = _sample_pool_from_parts(parquet_files, snv_pred, n_snv, target_snv, downsample_seed, seed_offset=0)
 
     # Combine and deterministically shuffle so indel/SNV rows interleave.
     merged_df = pl.concat([indel_df, snv_df], how="vertical")
