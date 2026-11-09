@@ -5,6 +5,8 @@ For each DEL/DUP call, primary reads (MAPQ >= 20) within +-window of either edge
 chromosome and strand are split into their two aligned pieces, ordered along the read:
   DEL: piece 1 ends at the left breakpoint L, piece 2 starts at the right breakpoint R (R > L)
   DUP (tandem): piece 1 ends at the duplication end E, piece 2 starts at the duplication start S (S < E)
+When the two pieces overlap on the read by h bases (microhomology at the junction: the aligner puts the shared bases
+in both pieces), the junction is left-normalized as in VCF: L - h for a deletion, E - h for a duplication.
 Junctions are grouped by similar position (+-100 bp) and size (+-10%); the largest group with >= 2 reads replaces the
 call's breakpoints (SNAP=SR). Calls > 3 kb only accept junctions at least half their size, so a small indel near a
 large event cannot shrink it. Without a junction, DEL calls are shrunk to the interval allowed by FR discordant pairs
@@ -79,7 +81,8 @@ def split_read_junctions(
 
     Each SA piece on the same chromosome and strand is ordered with the primary piece along the read. If the second
     piece starts after the first ends on the reference, the junction is a deletion (L, R); if it starts before, a
-    tandem duplication (S, E).
+    tandem duplication (S, E). Bases aligned in both pieces (an overlap of h > 0 on the read: microhomology at the
+    junction) are given to the second piece, which left-normalizes the junction: (L - h, R) and (S, E - h).
 
     Returns
     -------
@@ -96,12 +99,13 @@ def split_read_junctions(
             continue
         other = alignment_piece(int(sa_pos) - 1, sa_strand, sa_cigar, read_len)
         first, second = sorted((primary, other), key=lambda x: x[0])  # along the read
+        overlap = max(0, first[1] - second[0])  # read bases aligned in both pieces (microhomology)
         if strand == "-":  # on the minus strand, read order runs right to left on the reference
             first, second = second, first
         if second[2] > first[3]:
-            out.append((first[3], second[2], "DEL"))
+            out.append((first[3] - overlap, second[2], "DEL"))
         elif second[2] < first[3]:
-            out.append((second[2], first[3], "DUP"))
+            out.append((second[2], first[3] - overlap, "DUP"))
     return out
 
 

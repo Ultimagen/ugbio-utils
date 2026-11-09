@@ -15,7 +15,7 @@ from ugbio_cnv import split_read_candidates as src
 from ugbio_cnv.merge_cnv_sv import merge_cnv_sv_vcfs
 
 SAMPLE = "NA24385"  # as in gridss_sv_example.vcf.gz (merge_cnv_sv needs the same sample)
-TRUE_DEL = (19723638, 19728853)  # split-read junction: same end as the truth, start 3 bp off (microhomology)
+TRUE_DEL = (19723635, 19728853)  # split-read junction, left-normalized: the deleted bases of the truth record
 
 
 @pytest.fixture
