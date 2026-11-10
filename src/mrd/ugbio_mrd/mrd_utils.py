@@ -1012,6 +1012,12 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         derive ``mean_coverage`` and per-signature Bonferroni N.
     thresh_multi_read_pvalue : float
         Bonferroni-corrected p-value threshold applied identically to all types.
+    skip_min_vaf, skip_min_supported_fraction : float or None, float
+        High-TF skip rule thresholds (see above); ``skip_min_vaf=None`` disables the rule.
+    excluded_loci : dict[str, pd.Index] or pd.Index or None
+        Loci already removed for a signature by earlier filters (noisy-locus filter, previous
+        multi-read iterations), keyed by signature name. They are dropped from that signature's
+        loci before the skip rule computes its VAF and supported fraction.
 
     Returns
     -------

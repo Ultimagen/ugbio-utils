@@ -1278,8 +1278,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         const=None,
         default=DEFAULT_MULTI_READ_SKIP_MIN_VAF,
         help=(
-            "Skip the multi-read locus filter when the pre-filter matched VAF exceeds this value and "
-            "at least --multi-read-skip-min-supported-fraction of matched loci have support. "
+            "Skip the multi-read locus filter for a signature (matched or control) when its own pre-filter VAF "
+            "exceeds this value and at least --multi-read-skip-min-supported-fraction of its loci have support. "
             f"Default: {DEFAULT_MULTI_READ_SKIP_MIN_VAF}. Omit a value to never skip."
         ),
     )
@@ -1288,8 +1288,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=float,
         default=DEFAULT_MULTI_READ_SKIP_MIN_SUPPORTED_FRACTION,
         help=(
-            "Minimum fraction of matched signature loci with ≥ 1 supporting read required to skip the "
-            f"multi-read filter. Default: {DEFAULT_MULTI_READ_SKIP_MIN_SUPPORTED_FRACTION}."
+            "Minimum fraction of a signature's own loci with ≥ 1 supporting read required to skip the "
+            f"multi-read filter for that signature. Default: {DEFAULT_MULTI_READ_SKIP_MIN_SUPPORTED_FRACTION}."
         ),
     )
     parser.add_argument(
