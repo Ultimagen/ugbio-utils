@@ -322,12 +322,12 @@ gh run view <run-id>
 **Key Modules:**
 - `analyze_cnv_breakpoint_reads.py` - Split-read and discordant-pair evidence at CNV breakpoints
 - `merge_cnv_sv.py` - Merge CNV calls with SV (GRIDSS) calls; `combine_cnv_vcf_utils.py` holds the VCF combining it uses
-- `process_cnvs.py` - Process CNV calls from FREEC
+- `process_cnvs.py`, `add_cipos.py` - Process CNV calls from cn.mops / FREEC to VCF; add CIPOS (cn.mops workflows)
 - `bicseq2_post_processing.py`, `annotate_FREEC_segments.py` - Post-processing
 - `depth_cnv_caller.py`, `split_read_candidates.py`, `pair_candidates.py`, `breakpoint_snapping.py`, `depth_annotation.py` - Cohort-free depth CNV caller (100 bp mosdepth depth, weighted PELT, one call per event, split-read candidates, breakpoint snapping); filtered by FilterVCF with a `cnv_depth` model (`ugbio_filtering.transformers.depth_cnv_features`)
 
-**Entry Points:** 18
-- `analyze_cnv_breakpoint_reads`, `merge_cnv_sv`, `process_cnvs`, `plot_cnv_results`, `bicseq2_post_processing`, `annotate_FREEC_segments`, `plot_FREEC_neutral_AF`, `reformat_parascopy_bed`, `lpa_caller`, `estimate_ploidy`
+**Entry Points:** 20
+- `analyze_cnv_breakpoint_reads`, `merge_cnv_sv`, `process_cnvs`, `add_cipos_to_vcf`, `plot_cnv_results`, `bicseq2_post_processing`, `annotate_FREEC_segments`, `plot_FREEC_neutral_AF`, `reformat_parascopy_bed`, `lpa_caller`, `estimate_ploidy`
 - Depth CNV caller: `build_depth_annotation`, `call_depth_cnvs`, `split_read_cnv_candidates`, `pair_cnv_candidates` (optional, paired-end), `snap_cnv_breakpoints`, `filter_nested_cnv_candidates`; optional cn.mops candidates: `cnmops_cnv_candidates` (R scripts in `src/cnv/cnmops/`); filter training: `cnv_known_event_pieces`
 
 ### Other Modules

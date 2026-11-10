@@ -49,6 +49,9 @@ process_cnvs \
 - `--min_cnv_length` - CNVs below this length will be marked (default: 10000)
 - `--intersection_cutoff` - Overlap threshold with the cnv lcr(default: 0.5)
 
+#### `add_cipos_to_vcf`
+Add CIPOS (± half the window size) to the calls of a cn.mops VCF: `add_cipos_to_vcf --input_vcf calls.vcf.gz --window_size 1000 --output_vcf calls.cipos.vcf.gz`.
+
 ### Breakpoint evidence and SV merge
 
 #### `analyze_cnv_breakpoint_reads`
