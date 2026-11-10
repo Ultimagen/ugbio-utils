@@ -7,14 +7,14 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
         "CNV_SOURCE",
         ".",
         "String",
-        "the tool that called this CNV. can be combination of: depth, split_read, gridss",
+        "the tool that called this CNV. can be combination of: depth, split_read, pair, cn.mops, gridss",
         "INFO",
     ),
     "CNV_SOURCE": (
         "CNV_SOURCE",
         ".",
         "String",
-        "the tool that called this CNV. can be combination of: depth, split_read, gridss",
+        "the tool that called this CNV. can be combination of: depth, split_read, pair, cn.mops, gridss",
         "INFO",
     ),
     "CNV_ID": (
@@ -112,7 +112,7 @@ FILTER_TAG_REGISTRY = {
     ),
 }
 
-# INFO / FILTER tags written by the depth CNV caller (depth_cnv_caller, split_read_candidates, breakpoint_snapping).
+# INFO tags written by the depth CNV caller (depth_cnv_caller, split_read_candidates, breakpoint_snapping).
 # Kept apart from INFO_TAG_REGISTRY, whose tags are added to every CNV VCF header (cn.mops, FREEC).
 DEPTH_CNV_INFO_TAGS: dict[str, tuple[str, int | str, str, str, str]] = {
     "END": ("END", 1, "Integer", "End position of the variant", "INFO"),

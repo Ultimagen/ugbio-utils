@@ -357,7 +357,8 @@ def segment(units: pd.DataFrame, p: Params) -> pd.DataFrame:
                 }
             )
             s = e
-    segs = pd.DataFrame(rows)
+    columns = ["chrom", "start", "end", "n_units", "cn_mean", "baseline", "z", "difficult_frac", "lowmap", "segdup"]
+    segs = pd.DataFrame(rows, columns=[*columns, "uniq_frac"])  # the columns also when no chromosome is segmented
     dcn = segs["cn_mean"] - segs["baseline"]
     called = (dcn.abs() >= p.min_abs_dcn) & (segs["z"].abs() >= p.min_z)
     segs["direction"] = np.where(called, np.where(dcn < 0, "DEL", "DUP"), "")
@@ -405,7 +406,7 @@ def merge_calls(segs: pd.DataFrame, bins: pd.DataFrame, p: Params) -> pd.DataFra
     calls = _merge_pass(segs, p, cidx, nidx)
     while True:
         again = _merge_pass(
-            calls.assign(confident=calls["conf_units"] >= 0.5 * calls["n_units"]), p, cidx, nidx, keep=calls
+            calls.assign(confident=calls["conf_units"] >= 0.5 * calls["n_units"]), p, cidx, nidx, first_pass=False
         )
         if len(again) == len(calls):
             break
@@ -419,7 +420,8 @@ def _merge_pass(  # noqa: C901
     p: Params,
     cidx: CallableIndex,
     nidx: NormalIndex,
-    keep: pd.DataFrame | None = None,
+    *,
+    first_pass: bool = True,
 ) -> pd.DataFrame:
     """
     Merge same-direction calls on a chromosome when the stretch between them is short relative to the calls
@@ -431,7 +433,7 @@ def _merge_pass(  # noqa: C901
         merged = []
         for seg in s[s["direction"] != ""].sort_values("start").to_dict("records"):
             c = seg
-            if keep is None:
+            if first_pass:
                 c = dict(
                     c, n_merged=1, cn_sum=c["cn_mean"] * c["n_units"], conf_units=c["n_units"] if c["confident"] else 0
                 )
@@ -531,7 +533,8 @@ def write_depth_calls(
     """Write depth calls as a bgzipped, indexed VCF in reference contig order."""
     header = depth_cnv_header(sample_name, fasta_index, sex)
     order = {c: k for k, c in enumerate(header.contigs)}
-    calls = calls.assign(_order=calls["chrom"].map(order)).sort_values(["_order", "start"])
+    if len(calls):
+        calls = calls.assign(_order=calls["chrom"].map(order)).sort_values(["_order", "start"])
     cipos = (-BIN_SIZE * 5, BIN_SIZE * 5)  # one unit
     with pysam.VariantFile(output_vcf, "wz", header=header) as out:
         for k, c in enumerate(calls.itertuples(index=False)):
@@ -616,9 +619,10 @@ def call_depth_cnvs(  # noqa: PLR0913
     bins = bins[~bins["chrom"].isin(setup.skipped)].reset_index(drop=True)
     bins["baseline"] = np.where(bins["chrom"].isin(setup.haploid), 1.0, 2.0)
     segs = segment(make_units(bins, p), p)
-    calls = merge_calls(segs, bins, p)
-    calls = refine_edges(calls, bins, p)
-    calls = calls[(calls["end"] - calls["start"]) >= p.min_len_refined].reset_index(drop=True)
+    calls = pd.DataFrame()  # no segment called (a small region or a clean sample): a VCF without records
+    if (segs["direction"] != "").any():
+        calls = refine_edges(merge_calls(segs, bins, p), bins, p)
+        calls = calls[(calls["end"] - calls["start"]) >= p.min_len_refined].reset_index(drop=True)
     write_depth_calls(calls, output_vcf, sample_name, fasta_index, setup)
     logger.info(f"{output_vcf}: {len(calls)} depth calls (noise per unit: {segs.attrs['sigma']})")
     return calls

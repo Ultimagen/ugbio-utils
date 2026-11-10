@@ -197,7 +197,7 @@ def combine_vcf_headers_for_cnv(
     Combine two VCF headers into a single header for CNV/SV variant calls.
 
     This function is specifically designed for merging headers from different CNV/SV
-    callers (e.g., cn.mops and CNVpytor). It creates a new header that includes all
+    callers (e.g., the depth CNV caller and GRIDSS). It creates a new header that includes all
     metadata from both input headers with special handling for structural variant fields.
 
     For INFO and FORMAT fields with the same ID:
@@ -234,7 +234,7 @@ def combine_vcf_headers_for_cnv(
     --------
     >>> import pysam
     >>> header1 = pysam.VariantFile("cnmops.vcf.gz").header
-    >>> header2 = pysam.VariantFile("cnvpytor.vcf.gz").header
+    >>> header2 = pysam.VariantFile("gridss.vcf.gz").header
     >>> combined = combine_vcf_headers_for_cnv(header1, header2)
     """
     # Enforced specifications for CNV/SV fields per VCF 4.2 spec
@@ -333,22 +333,21 @@ def combine_cnv_or_sv_vcf_files(
 
     Examples
     --------
-    Combine CNV and SV VCFs for merge/collapse preparation (preserve filters):
+    Combine SV calls with CNV calls that keep their own CNV_SOURCE, as merge_cnv_sv does (preserve filters):
 
-    >>> combine_vcf_files(
-    ...     vcf_files=[("cnv.vcf.gz", "cn.mops"), ("sv.vcf.gz", "gridss")],
+    >>> combine_cnv_or_sv_vcf_files(
+    ...     vcf_files=[("sv.vcf.gz", "gridss"), ("cnv.vcf.gz", None)],
     ...     output_vcf="combined.vcf.gz",
     ...     fasta_index="genome.fa.fai",
     ...     preserve_filters=True,
-    ...     make_ids_unique=True,
     ... )
 
-    Consolidate multiple CNV caller outputs (clear filters to PASS):
+    Consolidate the calls of two CNV callers, each tagged with its source (clear filters to PASS):
 
-    >>> combine_vcf_files(
+    >>> combine_cnv_or_sv_vcf_files(
     ...     vcf_files=[
+    ...         ("sample1_depth.vcf.gz", "depth"),
     ...         ("sample1_cnmops.vcf.gz", "cn.mops"),
-    ...         ("sample1_cnvpytor.vcf.gz", "cnvpytor"),
     ...     ],
     ...     output_vcf="combined_cnv.vcf.gz",
     ...     fasta_index="genome.fa.fai",

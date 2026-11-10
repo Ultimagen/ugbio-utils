@@ -6,7 +6,7 @@ This module provides Python scripts and utilities for Copy Number Variation (CNV
 
 The CNV module integrates multiple CNV calling algorithms and provides tools for processing, filtering, combining, annotating, and visualizing CNV calls. It supports both germline and somatic CNV detection workflows.
 
-Note that the package itself does not call variants, it just provides facilities for preparing data, calling, changing the format and combining callsets.
+Apart from the depth CNV caller, the package does not call variants itself: it provides facilities for preparing data, calling, changing the format and combining callsets.
 
 The package is designed to work with the following CNV callers:
 
@@ -141,10 +141,10 @@ snap_cnv_breakpoints --input-vcf sample.ann.vcf.gz --alignment sample.cram --ref
 filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.calls.vcf.gz
 ```
 
-- `filter_nested_cnv_candidates` drops split-read and pair candidates that are < 500 bp after snapping, >= 50% inside
-  a same-type depth call, or with >= 50% reciprocal overlap with a same-type candidate kept before them (snapping often
-  moves several candidates of one deletion to the same breakpoints; split-read candidates are kept first, then pair
-  candidates, by the reads in their cluster).
+- `filter_nested_cnv_candidates` drops split-read, pair and cn.mops candidates that are < 500 bp after snapping,
+  >= 50% inside a same-type depth call, or with >= 50% reciprocal overlap with a same-type candidate kept before them
+  (snapping often moves several candidates of one deletion to the same breakpoints; split-read candidates are kept
+  first, then pair candidates, by the reads in their cluster, then cn.mops candidates).
 
 - Discordant-pair candidates (paired-end only): `pair_cnv_candidates` runs after
   `split_read_cnv_candidates` on its output (same `--depth-mq0` / `--depth-mq20` / `--annotation`, and `--input-vcf`
@@ -160,9 +160,10 @@ filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.
 - cn.mops candidates (optional): the cohort caller cn.mops (R scripts in `cnmops/`, run with a reads-count cohort and
   `process_cnvs`) finds losses in low-mappability / segdup sequence where the sample's own all-read depth shows none.
   `cnmops_cnv_candidates --input-vcf <calls so far> --cnmops-vcf <cn.mops calls>` (same `--depth-mq0` /
-  `--depth-mq20` / `--annotation`) adds every cn.mops call without a same-type call (>= 50% reciprocal) as
-  `CNV_SOURCE=cn.mops`, with the candidates' depth features but no depth-change check; they then go through the
-  evidence, snapping, nested / duplicate filter and FilterVCF with a `cnv_depth_cnmops` model (`source_cnmops`).
+  `--depth-mq20` / `--annotation`) adds every cn.mops call (whatever its FILTER) without a same-type call (>= 50%
+  reciprocal) as `CNV_SOURCE=cn.mops`, with the candidates' depth features but no depth-change check; they then go
+  through the evidence, snapping, nested / duplicate filter and FilterVCF with a `cnv_depth_cnmops` model
+  (`source_cnmops`).
 - Filter training: `cnv_known_event_pieces` cuts a sample's known long CNV into 10–100 kb depth calls (the windows the
   caller would call), as extra positives for `training_prep_depth_cnv_pipeline --known_events` (README.filtering.md).
 - Sex chromosomes: `call_depth_cnvs` infers them from the median depth of the clean (unique, non-segdup) chrX and
@@ -198,9 +199,10 @@ Generate coverage plots along the genome for germline and tumor samples.
 ```bash
 plot_cnv_results \
   --sample_name SAMPLE \
-  --germline_cov_file germline_coverage.bed \
-  --tumor_cov_file tumor_coverage.bed \
-  --cnv_file cnv_calls.bed \
+  --germline_coverage germline_coverage.bed \
+  --tumor_coverage tumor_coverage.bed \
+  --duplication_cnv_calls dup_calls.bed \
+  --deletion_cnv_calls del_calls.bed \
   --out_directory ./plots
 ```
 
@@ -209,7 +211,8 @@ Generate histogram of allele frequencies at neutral (non-CNV) locations.
 
 ```bash
 plot_FREEC_neutral_AF \
-  --input_file neutral_regions.txt \
+  --mpileup sample.pileup \
+  --cnvs_file sample_CNVs \
   --sample_name SAMPLE \
   --out_directory ./plots
 ```

@@ -5,7 +5,7 @@ The depth caller gives one call per event, so a sample with a known multi-megaba
 filter then sees almost no true events without breakpoint evidence, such as a mid-sized duplication in clean sequence
 whose junction lies in repeats. cnv_known_event_pieces cuts windows inside each known event (lengths log-uniform in
 [min_len, max_len], at 100 bp resolution), scores each with the depth caller's own segment statistics (GC-corrected
-copy number of the 1 kb units, noise-weighted mean and z, segdup / unique fraction, LOW_CONF rule) and keeps the
+copy number of the ~500 bp units, noise-weighted mean and z, segdup / unique fraction, LOW_CONF rule) and keeps the
 windows the caller would call in the event's direction, without N bases and with at most max_segdup / max_lowmap
 segmental-duplication / low-mappability bins. The windows are written as depth calls (call_depth_cnvs format).
 
@@ -23,7 +23,7 @@ from ugbio_core.logger import logger
 
 
 def unit_table(bins: pd.DataFrame, p: dc.Params) -> pd.DataFrame:
-    """The depth caller's 1 kb units of normalized bins, with the difficult flag and the noise weight w."""
+    """The depth caller's units (~500 bp) of normalized bins, with the difficult flag and the noise weight w."""
     units = dc.make_units(bins, p)
     units["difficult"] = (units["segdup"] >= p.difficult_frac) | (units["lowmap"] >= p.difficult_frac)
     units["w"] = 1.0 / units["difficult"].map(dc.unit_noise(units)) ** 2
@@ -85,6 +85,9 @@ def cut_pieces(  # noqa: PLR0913
     returned when max_tries random windows do not give enough.
     """
     chrom, ev_start, ev_end, svtype = event
+    if ev_end - ev_start <= min_len:
+        logger.warning(f"{chrom}:{ev_start}-{ev_end} {svtype}: shorter than the shortest piece ({min_len} bp), skipped")
+        return pd.DataFrame()
     # the bins and units of the event only (window starts are rounded down to the bin, so one bin of margin)
     lo, hi = ev_start - dc.BIN_SIZE, ev_end + dc.BIN_SIZE
     bins = bins[(bins["chrom"] == chrom) & (bins["start"] >= lo) & (bins["end"] <= hi)]
@@ -143,27 +146,25 @@ def known_event_pieces(  # noqa: PLR0913
         events_bed, sep="\t", header=None, usecols=[0, 1, 2, 3], names=["chrom", "start", "end", "svtype"]
     )
     rng = np.random.default_rng(seed)
-    pieces = pd.concat(
-        [
-            cut_pieces(
-                bins,
-                units,
-                (str(e.chrom), int(e.start), int(e.end), str(e.svtype)),
-                n_pieces,
-                min_len,
-                max_len,
-                rng,
-                p,
-                max_segdup,
-                max_lowmap,
-                max_overlap,
-            )
-            for e in events.itertuples(index=False)
-        ],
-        ignore_index=True,
-    )
-    skipped = {"chrY"} if haploid else set()
-    sex = dc.SexChromosomes(haploid=haploid, skipped=skipped, karyotype="given (known-event pieces)")
+    pieces = [
+        cut_pieces(
+            bins,
+            units,
+            (str(e.chrom), int(e.start), int(e.end), str(e.svtype)),
+            n_pieces,
+            min_len,
+            max_len,
+            rng,
+            p,
+            max_segdup,
+            max_lowmap,
+            max_overlap,
+        )
+        for e in events.itertuples(index=False)
+    ]
+    pieces = pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame()
+    # pieces lie inside the given events only: no contig is skipped
+    sex = dc.SexChromosomes(haploid=haploid, skipped=set(), karyotype="given (known-event pieces)")
     dc.write_depth_calls(pieces, output_vcf, sample_name, fasta_index, sex)
     logger.info(f"{output_vcf}: {len(pieces)} pieces of {len(events)} events")
     return pieces

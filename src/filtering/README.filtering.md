@@ -86,7 +86,7 @@ train_models_pipeline \
   --test_dfs test1.h5 test2.h5 \
   --output_file_prefix model_output \
   [--gt_type exact|approximate] \
-  [--vcf_type single_sample|deep_variant|cnv_depth] \
+  [--vcf_type single_sample|deep_variant|cnv_depth|cnv_depth_cnmops] \
   [--custom_annotations ANNOTATION1 ANNOTATION2] \
   [--verbosity INFO]
 ```
@@ -96,7 +96,7 @@ train_models_pipeline \
 - `--test_dfs`: Test HDF5 files for model evaluation
 - `--output_file_prefix`: Prefix for output .pkl (model) and .h5 (results) files
 - `--gt_type`: Ground truth type - "exact" or "approximate" (default: exact)
-- `--vcf_type`: VCF type - "single_sample", "deep_variant", or "cnv_depth" (depth CNV caller; default: single_sample)
+- `--vcf_type`: VCF type - "single_sample", "deep_variant", "cnv_depth" (depth CNV caller) or "cnv_depth_cnmops" (with cn.mops candidates); default: single_sample
 - `--custom_annotations`: Additional INFO annotations to include in training
 
 #### `training_prep_pipeline`

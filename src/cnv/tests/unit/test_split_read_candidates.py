@@ -118,6 +118,25 @@ class TestNestedFilter:
             kept = [(r.start, r.info["SVTYPE"]) for r in v]
         assert kept == [(100_000, "DEL"), (400_000, "DUP"), (970_000, "DEL")]
 
+    def test_cnmops_candidates_are_kept_after_pair_candidates(self, tmp_path, fasta_index):
+        dvcf = str(tmp_path / "depth.vcf.gz")
+        write_depth_calls(depth_calls([("chr1", 10_000, 12_000, "DEL")]), dvcf, "S1", fasta_index)
+        p = src.CandidateParams(min_overlap=1.1)  # add all of them
+        cm = str(tmp_path / "cnmops.vcf.gz")
+        cnmops = candidates([("chr1", 300_000, 320_000, "DEL", 0), ("chr1", 400_000, 420_000, "DUP", 0)])
+        src.add_candidates_to_calls(
+            dvcf, cnmops, cm, p, source=src.CNV_SOURCE_CNMOPS, id_prefix="CNMOPS", count_tag=None
+        )
+        cvcf, out = str(tmp_path / "cand.vcf.gz"), str(tmp_path / "filtered.vcf.gz")
+        pairs = candidates([("chr1", 300_500, 320_500, "DEL", 3)])  # same event as the cn.mops DEL
+        src.add_candidates_to_calls(
+            cm, pairs, cvcf, p, source=src.CNV_SOURCE_PAIR, id_prefix="PAIR", count_tag="PAIR_READS"
+        )
+        assert src.filter_nested_cnv_candidates(cvcf, out) == {"nested": 0, "short": 0, "duplicate": 1}
+        with pysam.VariantFile(out) as v:
+            kept = [(r.start, r.info["SVTYPE"], r.info["CNV_SOURCE"]) for r in v]
+        assert kept == [(10_000, "DEL", ("depth",)), (300_500, "DEL", ("pair",)), (400_000, "DUP", ("cn.mops",))]
+
     def test_duplicate_candidates_dropped(self, tmp_path, fasta_index):
         """Candidates snapped onto the same event: split-read kept first, then the pair candidate with most pairs."""
         dvcf = str(tmp_path / "depth.vcf.gz")

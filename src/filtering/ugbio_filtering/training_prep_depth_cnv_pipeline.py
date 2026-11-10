@@ -58,16 +58,16 @@ TRUVARI_OPTIONS = [
     "100000",
     "--dup-to-ins",
 ]
-KEY_COLUMNS = ["chrom", "pos"]
+KEY_COLUMNS = ["chrom", "pos", "id"]  # calls may share a start (e.g. two pair DUP candidates); IDs are unique
 
 
 def read_calls(call_vcf: str) -> pd.DataFrame:
     """Calls with the INFO columns the depth CNV filter reads, plus chrom, pos, id and end."""
     calls = vcftools.get_vcf_df(call_vcf, custom_info_fields=transformers.DEPTH_CNV_INFO_FIELDS)
     with pysam.VariantFile(call_vcf) as vcf:
-        ends = {(r.chrom, r.pos): r.stop for r in vcf}
+        ends = {(r.chrom, r.pos, r.id): r.stop for r in vcf}
     calls = calls.reset_index(drop=True)
-    calls["end"] = [ends[(c, p)] for c, p in zip(calls["chrom"], calls["pos"], strict=True)]
+    calls["end"] = [ends[k] for k in zip(calls["chrom"], calls["pos"], calls["id"], strict=True)]
     return calls
 
 
@@ -109,11 +109,11 @@ def label_calls(call_vcf: str, truth_vcf: str, benchmark_bed: str, workdir: str,
     rows = []
     for name, label in (("tp-comp", 1), ("fp", 0)):
         with pysam.VariantFile(os.path.join(bench, f"{name}.vcf.gz")) as vcf:
-            rows += [(r.chrom, r.pos, label) for r in vcf]
+            rows += [(r.chrom, r.pos, r.id, label) for r in vcf]
     return pd.DataFrame(rows, columns=[*KEY_COLUMNS, "label"]).drop_duplicates(KEY_COLUMNS)
 
 
-def known_event_positives(call_vcf: str, events_bed: str, min_inside: float = 0.5) -> pd.DataFrame:
+def known_event_positives(call_vcf: str, events_bed: str, min_inside: float = 0.5, min_len: int = 500) -> pd.DataFrame:
     """
     Calls of a sample with known events, labelled 1 when of the event's type and at least min_inside inside an event.
 
@@ -125,6 +125,8 @@ def known_event_positives(call_vcf: str, events_bed: str, min_inside: float = 0.
         Known events: chrom, start (0-based), end, svtype (DEL / DUP).
     min_inside : float
         Minimal fraction of the call inside the event.
+    min_len : int
+        Minimal call length, as for the truth-labelled calls.
 
     Returns
     -------
@@ -137,10 +139,11 @@ def known_event_positives(call_vcf: str, events_bed: str, min_inside: float = 0.
     calls = read_calls(call_vcf)
     start0 = calls["pos"] - 1
     keep = pd.Series(data=False, index=calls.index)
+    long_enough = (calls["end"] - start0) >= min_len
     for e in events.itertuples(index=False):
         same = (calls["chrom"] == e.chrom) & (calls["svtype"] == e.svtype)
         inside = (calls["end"].clip(upper=e.end) - start0.clip(lower=e.start)).clip(lower=0)
-        keep |= same & (inside >= min_inside * (calls["end"] - start0).clip(lower=1))
+        keep |= long_enough & same & (inside >= min_inside * (calls["end"] - start0).clip(lower=1))
     return calls[keep].assign(label=1)
 
 
@@ -184,7 +187,7 @@ def training_prep_depth_cnv(  # noqa: PLR0913
     labelled = read_calls(call_vcf).merge(labels, on=KEY_COLUMNS, how="inner")
     is_train = labelled["chrom"].isin(train_chromosomes)
     train, test = labelled[is_train], labelled[~is_train]
-    extra = [known_event_positives(vcf, bed) for vcf, bed in known_events or []]
+    extra = [known_event_positives(vcf, bed, min_len=min_len) for vcf, bed in known_events or []]
     if extra:
         train = pd.concat([train, *extra], ignore_index=True)
     train, test = train.reindex(columns=columns), test.reindex(columns=columns)

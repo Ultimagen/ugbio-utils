@@ -205,6 +205,7 @@ def depth_cnv_features(df: pd.DataFrame, *, cnmops: bool = False) -> pd.DataFram
     depth_len = num("depth_end") - num("depth_pos")
     snap = df["snap"] if "snap" in df else pd.Series("", index=df.index)
     source = df["cnv_source"] if "cnv_source" in df else pd.Series([()] * len(df), index=df.index)
+    source = source.apply(lambda x: tuple(x) if isinstance(x, tuple | list) else ())  # None / NaN: no source
     out = pd.DataFrame(
         {
             "is_del": is_del.astype(float),
@@ -223,7 +224,7 @@ def depth_cnv_features(df: pd.DataFrame, *, cnmops: bool = False) -> pd.DataFram
             "sr_frac": by_type("cnv_{}_frac", same=True),
             "pe_frac": by_type("cnv_{}_pairs_frac", same=True),
             "total_reads": num("cnv_total_reads"),
-            "lowconf": df["low_conf"].apply(lambda x: float(bool(x))) if "low_conf" in df else 0.0,
+            "lowconf": df["low_conf"].apply(lambda x: float(pd.notna(x) and bool(x))) if "low_conf" in df else 0.0,
             "sr_insert": by_type("{}_reads_median_insert_size", same=True),
             "pe_span": by_type("{}_pairs_median_span", same=True),
             "log_support": np.log1p(sr_same + pe_same),
@@ -231,10 +232,10 @@ def depth_cnv_features(df: pd.DataFrame, *, cnmops: bool = False) -> pd.DataFram
             "snap_pe": (snap == "PE").astype(float),
             "snap_n": num("snap_n"),
             "snap_shrink": np.where(depth_len > 0, 1 - svlen / depth_len.clip(lower=1), 0.0),
-            "source_sr": source.apply(lambda x: float(tuple(x or ()) == ("split_read",))),
-            "source_pair": source.apply(lambda x: float(tuple(x or ()) == ("pair",))),
+            "source_sr": source.apply(lambda x: float(x == ("split_read",))),
+            "source_pair": source.apply(lambda x: float(x == ("pair",))),
             "sr_reads": num("sr_reads"),
-            "source_cnmops": source.apply(lambda x: float(tuple(x or ()) == ("cn.mops",))),
+            "source_cnmops": source.apply(lambda x: float(x == ("cn.mops",))),
         },
         index=df.index,
     )

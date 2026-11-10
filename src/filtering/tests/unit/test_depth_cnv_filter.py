@@ -102,6 +102,14 @@ class TestDepthCnvFeatures:
         assert list(f.source_pair) == [1.0, 0.0]
         assert list(f.source_sr) == [0.0, 0.0]  # only calls found by split reads alone
 
+    def test_missing_values_are_false(self):
+        calls = depth_cnv_df(2)
+        calls["low_conf"] = [np.nan, True]
+        calls["cnv_source"] = [np.nan, ("split_read",)]
+        f = transformers.depth_cnv_features(calls)
+        assert list(f.lowconf) == [0.0, 1.0]
+        assert list(f.source_sr) == [0.0, 1.0]
+
     def test_cnmops_source_is_opt_in(self):
         calls = depth_cnv_df(2)
         calls["cnv_source"] = [("cn.mops",), ("depth",)]

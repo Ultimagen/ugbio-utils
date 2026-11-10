@@ -19,10 +19,11 @@ cnmops_cnv_candidates (optional, with the cn.mops calls of the sample):
   sequence where the all-read depth shows none).
 
 filter_nested_cnv_candidates (after breakpoint snapping):
-  Drop split-read and pair candidates that are shorter than 500 bp, >= 50% inside a same-type depth call (a second
-  call on an event that is already called), or with >= 50% reciprocal overlap with a same-type candidate kept before
-  them (snapping often moves several candidates of one deletion to the same breakpoints). Split-read candidates are
-  kept first, then pair candidates, each by the most reads in their cluster (SR_READS / PAIR_READS).
+  Drop split-read, pair and cn.mops candidates that are shorter than 500 bp, >= 50% inside a same-type depth call (a
+  second call on an event that is already called), or with >= 50% reciprocal overlap with a same-type candidate kept
+  before them (snapping often moves several candidates of one deletion to the same breakpoints). Split-read
+  candidates are kept first, each by the most reads in their cluster (SR_READS), then pair candidates (PAIR_READS),
+  then cn.mops candidates.
 """
 
 import argparse
@@ -323,12 +324,17 @@ def split_read_cnv_candidates(  # noqa: PLR0913
     return n
 
 
+# candidates kept first in the duplicate rule of filter_nested_cnv_candidates
+CANDIDATE_KEEP_ORDER = (CNV_SOURCE_SPLIT_READ, CNV_SOURCE_PAIR, CNV_SOURCE_CNMOPS)
+
+
 def _candidate_rank(r: pysam.VariantRecord) -> tuple:
-    """Order in which candidates are kept: split-read before pair, then the most reads in the cluster, then position."""
-    is_pair = CNV_SOURCE_PAIR in r.info.get("CNV_SOURCE", ())
-    tag = "PAIR_READS" if is_pair else "SR_READS"
-    reads = (r.info.get(tag) if tag in r.header.info else None) or 0  # the tag is not defined when not computed
-    return (is_pair, -reads, r.start, r.stop)
+    """Order in which candidates are kept: split-read, pair, then cn.mops; then the most reads, then position."""
+    source = r.info.get("CNV_SOURCE", ())
+    rank = next((k for k, s in enumerate(CANDIDATE_KEEP_ORDER) if s in source), 0)
+    tag = {0: "SR_READS", 1: "PAIR_READS"}.get(rank)  # cn.mops candidates have no read count
+    reads = (r.info.get(tag) if tag and tag in r.header.info else None) or 0  # the tag is not always defined
+    return (rank, -reads, r.start, r.stop)
 
 
 def cnmops_cnv_candidates(  # noqa: PLR0913
@@ -342,7 +348,8 @@ def cnmops_cnv_candidates(  # noqa: PLR0913
 ) -> int:
     """
     Add the cn.mops calls of cnmops_vcf that input_vcf does not have (>= min_overlap reciprocal, same type) as
-    CNV_SOURCE=cn.mops candidates; returns the number added. Contigs the depth caller does not call are skipped.
+    CNV_SOURCE=cn.mops candidates; returns the number added. Every DEL / DUP >= min_len is taken whatever its FILTER;
+    calls on sex chromosomes the depth caller does not call, and calls without depth flanks, are skipped.
     """
     p = params or CandidateParams()
     sex = read_sex_chromosomes(input_vcf)
@@ -373,11 +380,11 @@ def filter_nested_cnv_candidates(
     input_vcf: str, output_vcf: str, min_len: int = 500, min_inside: float = 0.5, min_overlap: float = 0.5
 ) -> dict[str, int]:
     """
-    Drop split-read and pair candidates that are short, nested in a depth call or duplicates; returns the counts.
+    Drop split-read, pair and cn.mops candidates that are short, nested in a depth call or duplicates; returns counts.
 
     A candidate is dropped when shorter than min_len ("short"), >= min_inside inside a same-type depth call ("nested"),
     or with >= min_overlap reciprocal overlap with a same-type candidate kept before it ("duplicate"; split-read
-    candidates are kept first, then pair candidates, each by the most reads in their cluster).
+    candidates are kept first, then pair candidates, each by the most reads in their cluster, then cn.mops).
     """
     with pysam.VariantFile(input_vcf) as vin:
         records = list(vin)
@@ -459,7 +466,7 @@ def run(argv: list[str]):
 def parse_args_nested(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="filter_nested_cnv_candidates",
-        description="Drop split-read and pair candidates < 500 bp, nested in a same-type depth call, or duplicates",
+        description="Drop split-read, pair and cn.mops candidates that are < 500 bp, nested or duplicates",
     )
     parser.add_argument("--input-vcf", required=True, help="Snapped calls")
     parser.add_argument("--output-vcf", required=True, help="Output .vcf.gz")

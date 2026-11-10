@@ -62,3 +62,11 @@ def test_no_pieces_when_the_depth_goes_the_other_way():
         bins, units, (*EVENT[:3], "DEL"), 3, 10_000, 50_000, np.random.default_rng(1), p, max_tries=500
     )
     assert pieces.empty
+
+
+def test_events_shorter_than_a_piece_are_skipped():
+    p = dc.Params()
+    bins = synthetic_bins()
+    units = kep.unit_table(bins, p)
+    short = ("chr1", 1_000_000, 1_005_000, "DUP")
+    assert kep.cut_pieces(bins, units, short, 3, 10_000, 50_000, np.random.default_rng(1), p).empty

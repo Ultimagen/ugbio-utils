@@ -81,7 +81,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     ap_var.add_argument(
         "--decision_threshold",
-        help="cnv_depth only: FilterVCF decision threshold to store with the model "
+        help="cnv_depth / cnv_depth_cnmops only: FilterVCF decision threshold to store with the model "
         "(default: the out-of-bag probability with the best F1, as a phred-like score)",
         type=int,
         default=None,
@@ -119,6 +119,8 @@ def run(argv: list[str]):
         model, transformer = train_model(train_df, args)
         logger.info("Model training: done")
         extra = {}
+        if args.decision_threshold is not None and not args.vcf_type.is_cnv_depth:
+            logger.warning(f"--decision_threshold is used only with cnv_depth models, ignored for {args.vcf_type}")
         if args.vcf_type.is_cnv_depth:
             if args.decision_threshold is not None:
                 extra["decision_threshold"] = args.decision_threshold

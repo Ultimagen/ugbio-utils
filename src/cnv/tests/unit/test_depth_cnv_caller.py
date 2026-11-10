@@ -69,6 +69,18 @@ class TestGivenSex:
         with pytest.raises(ValueError, match="sex must be"):
             dc.sex_chromosome_setup("M")
 
+    def test_no_call_gives_a_vcf_without_records(self, tmp_path, monkeypatch):
+        rng = np.random.default_rng(3)
+        bins = make_bins({"chr1": noisy_cn(5000, rng)})  # flat: nothing to call
+        monkeypatch.setattr(dc, "load_bins", lambda *a, **k: bins)
+        out = str(tmp_path / "calls.vcf.gz")
+        fai = tmp_path / "ref.fa.fai"
+        fai.write_text("chr1\t500000\t6\t60\t61\n")
+        calls = dc.call_depth_cnvs("q0", "q20", "ann", "S", str(fai), out, sex="female")
+        assert calls.empty
+        with pysam.VariantFile(out) as v:
+            assert list(v.header.samples) == ["S"] and not list(v)
+
     def test_given_sex_overrides_the_depth(self, tmp_path, monkeypatch):
         rng = np.random.default_rng(9)
         bins = make_bins({"chr1": noisy_cn(5000, rng), "chrX": noisy_cn(3000, rng, level=1.0)})  # male depth

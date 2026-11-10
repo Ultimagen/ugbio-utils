@@ -160,3 +160,9 @@ def test_known_event_positives(inputs, tmp_path):
     )  # fmt: skip
     with open(f"{out26}.pkl", "rb") as f:
         assert pickle.load(f)["decision_threshold"] == 26
+
+
+def test_calls_sharing_a_start_keep_their_own_end(tmp_path):
+    calls = write_vcf(str(tmp_path / "calls.vcf.gz"), [("chr1", 100_000, 105_000, {}), ("chr1", 100_000, 160_000, {})])
+    read = tp.read_calls(calls).sort_values("id")
+    assert list(read["id"]) == ["C0", "C1"] and list(read["end"]) == [105_000, 160_000]

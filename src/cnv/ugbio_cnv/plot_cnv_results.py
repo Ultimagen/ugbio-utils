@@ -304,7 +304,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     parser.add_argument("--sample_name", help="sample name", required=True, type=str)
     parser.add_argument(
         "--vcf-like",
-        help="input CNV calls are in VCF-like format (e.g. a CNV VCF converted to BED)",
+        help="input CNV calls are in VCF-like format (e.g. cn.mops calls, or a CNV VCF converted to BED)",
         action="store_true",
         required=False,
     )
