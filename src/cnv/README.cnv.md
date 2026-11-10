@@ -11,6 +11,7 @@ Note that the package itself does not call variants, it just provides facilities
 The package is designed to work with the following CNV callers:
 
 - **Depth CNV caller** (this package) - cohort-free germline read-depth caller, see below
+- **cn.mops** - cohort read-depth caller (R scripts in `cnmops/`), optional extra candidates for the depth caller
 - **ControlFREEC** - Control-FREEC for somatic CNV detection
 
 ## Installation
@@ -23,7 +24,7 @@ Install the CNV module and its dependencies:
 pip install ugbio-cnv
 ```
 
-Pre-built docker image can be downloaded from Dockerhub: [`ultimagenomics/ugbio_cnv`](https://hub.docker.com/r/ultimagenomics/ugbio_filtering)
+Pre-built docker image can be downloaded from Dockerhub: [`ultimagenomics/ugbio_cnv`](https://hub.docker.com/r/ultimagenomics/ugbio_cnv)
 
 
 ## Available Tools
@@ -31,7 +32,7 @@ Pre-built docker image can be downloaded from Dockerhub: [`ultimagenomics/ugbio_
 ### CNV Processing
 
 #### `process_cnvs`
-Process CNV calls in BED format from ControlFREEC: filter by length and low-complexity regions, annotate, and convert to VCF format.
+Process CNV calls in BED format from cn.mops or ControlFREEC: filter by length and low-complexity regions, annotate, and convert to VCF format.
 
 ```bash
 process_cnvs \
@@ -121,7 +122,16 @@ call_depth_cnvs --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.reg
 split_read_cnv_candidates --alignment sample.cram --reference-fasta ref.fasta --depth-vcf sample.depth.vcf.gz \
   --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.regions.bed.gz \
   --annotation ref.depth_annotation.parquet --output-vcf sample.cand.vcf.gz
-analyze_cnv_breakpoint_reads --bam-file sample.cram --vcf-file sample.cand.vcf.gz --reference-fasta ref.fasta \
+# paired-end only
+pair_cnv_candidates --alignment sample.cram --reference-fasta ref.fasta --input-vcf sample.cand.vcf.gz \
+  --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.regions.bed.gz \
+  --annotation ref.depth_annotation.parquet --output-vcf sample.pair_cand.vcf.gz
+# optional, with the cn.mops calls of the sample (process_cnvs output)
+cnmops_cnv_candidates --input-vcf sample.pair_cand.vcf.gz --cnmops-vcf sample.cnmops.vcf.gz \
+  --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.regions.bed.gz \
+  --annotation ref.depth_annotation.parquet --output-vcf sample.cnmops_cand.vcf.gz
+# on the last candidates VCF
+analyze_cnv_breakpoint_reads --bam-file sample.cram --vcf-file sample.cnmops_cand.vcf.gz --reference-fasta ref.fasta \
   --cushion 1500 --output-file sample.ann.vcf.gz --output-bam sample.evidence.bam   # then samtools sort + index
 snap_cnv_breakpoints --input-vcf sample.ann.vcf.gz --alignment sample.cram --reference-fasta ref.fasta \
   --output-vcf sample.snap.vcf.gz
@@ -133,7 +143,7 @@ filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.
   moves several candidates of one deletion to the same breakpoints; split-read candidates are kept first, then pair
   candidates, by the reads in their cluster).
 
-- Discordant-pair candidates (paired-end, optional; not in the pipeline yet): `pair_cnv_candidates` runs after
+- Discordant-pair candidates (paired-end only): `pair_cnv_candidates` runs after
   `split_read_cnv_candidates` on its output (same `--depth-mq0` / `--depth-mq20` / `--annotation`, and `--input-vcf`
   instead of `--depth-vcf`). FR pairs with a span >= 800 (the evidence step's `--min-pair-span` default) give deletion
   candidates; RF (everted) pairs with the mate > 50 bp after the read give duplication candidates (an everted pair
@@ -161,8 +171,8 @@ filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.
 - The output is filtered with `filter_variants_pipeline` and a `cnv_depth` model (`ugbio_filtering`); the INFO fields
   the model reads are listed in `ugbio_filtering.transformers.DEPTH_CNV_INFO_FIELDS` (pass each as
   `--custom_annotations`, and use `--overwrite_qual_tag` so QUAL holds the score for `merge_cnv_sv`).
-- Calls carry `CNV_SOURCE=depth` or `split_read`, `CN_MEAN`, `BASE_CN`, `Z`, `SEGDUP`, `UNIQ_FRAC`, `LOW_CONF` and the
-  snapping fields `SNAP`, `SNAP_N`, `DEPTH_POS`, `DEPTH_END` (see `cnv_vcf_consts.DEPTH_CNV_INFO_TAGS`).
+- Calls carry `CNV_SOURCE` (`depth`, `split_read`, `pair` or `cn.mops`), `CN_MEAN`, `BASE_CN`, `Z`, `SEGDUP`,
+  `UNIQ_FRAC`, `LOW_CONF` and the snapping fields `SNAP`, `SNAP_N`, `DEPTH_POS`, `DEPTH_END` (see `cnv_vcf_consts.DEPTH_CNV_INFO_TAGS`).
 
 ### Somatic CNV Tools (ControlFREEC)
 
@@ -208,14 +218,14 @@ The module depends on:
 - **Python 3.11+**
 - **ugbio_core** - Core utilities from this workspace
 - **Bioinformatics tools**: samtools, bedtools, bcftools
-- **R** with cn.mops (Ultimagen fork), argparse, magrittr, rhdf5, GenomicRanges: only for the optional cn.mops path
-  (`cnmops/`; in the cnv image)
+- **R** with cn.mops (Ultimagen fork), argparse, magrittr, rhdf5, rtracklayer, GenomicRanges: only for the optional
+  cn.mops path (`cnmops/`; in the cnv image)
 
 ## Notes
 
 - See germline and somatic CNV calling workflows published in GH repository `Ultimagen\healthomics-workflows`
 for the reference implementations of the suggested workflows.
-- Filter CNV calls using the provided LCR (low-complexity region) files to reduce false positives
+- `process_cnvs` (cn.mops, ControlFREEC) can filter calls with the UG-CNV-LCR (low-complexity region) BED
 - Consider minimum CNV length thresholds based on your sequencing depth and biological context
 - The module supports both GRCh37 and GRCh38 reference genomes
 ## Key Components
@@ -224,7 +234,7 @@ for the reference implementations of the suggested workflows.
 
 Process CNV calls from CN.MOPS or ControlFREEC in BED format: filter by length and UG-CNV-LCR, annotate with coverage statistics, and convert to VCF format.
 
-**Note:** This module is called programmatically (not via CLI) from other pipeline scripts.
+**Note:** The pipelines run it as the `process_cnvs` CLI; it can also be called from Python.
 
 #### Programmatic Usage
 

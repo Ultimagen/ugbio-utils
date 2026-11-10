@@ -12,10 +12,6 @@ class GtType(Enum):
     def __str__(self):
         return self.value
 
-    @property
-    def is_cnv_depth(self) -> bool:
-        return self in (VcfType.CNV_DEPTH, VcfType.CNV_DEPTH_CNMOPS)
-
 
 class VcfType(Enum):
     SINGLE_SAMPLE = "single_sample"
