@@ -36,6 +36,7 @@ call_depth_cnvs = "ugbio_cnv.depth_cnv_caller:main"
 split_read_cnv_candidates = "ugbio_cnv.split_read_candidates:main"
 pair_cnv_candidates = "ugbio_cnv.pair_candidates:main"
 filter_nested_cnv_candidates = "ugbio_cnv.split_read_candidates:main_nested"
+cnmops_cnv_candidates = "ugbio_cnv.split_read_candidates:main_cnmops"
 snap_cnv_breakpoints = "ugbio_cnv.breakpoint_snapping:main"
 cnv_known_event_pieces = "ugbio_cnv.known_event_pieces:main"
 

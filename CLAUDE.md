@@ -328,7 +328,7 @@ gh run view <run-id>
 
 **Entry Points:** 18
 - `analyze_cnv_breakpoint_reads`, `merge_cnv_sv`, `process_cnvs`, `plot_cnv_results`, `bicseq2_post_processing`, `annotate_FREEC_segments`, `plot_FREEC_neutral_AF`, `reformat_parascopy_bed`, `lpa_caller`, `estimate_ploidy`
-- Depth CNV caller: `build_depth_annotation`, `call_depth_cnvs`, `split_read_cnv_candidates`, `pair_cnv_candidates` (optional, paired-end), `snap_cnv_breakpoints`, `filter_nested_cnv_candidates`; filter training: `cnv_known_event_pieces`
+- Depth CNV caller: `build_depth_annotation`, `call_depth_cnvs`, `split_read_cnv_candidates`, `pair_cnv_candidates` (optional, paired-end), `snap_cnv_breakpoints`, `filter_nested_cnv_candidates`; optional cn.mops candidates: `cnmops_cnv_candidates` (R scripts in `src/cnv/cnmops/`); filter training: `cnv_known_event_pieces`
 
 ### Other Modules
 

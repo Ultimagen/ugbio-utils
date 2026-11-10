@@ -66,7 +66,7 @@ def train_model(
     x_train_df = pd.DataFrame(transformer.fit_transform(df_train))
     _validate_data(x_train_df)
     logger.info("Transform: done")
-    if vtype == VcfType.CNV_DEPTH:
+    if vtype.is_cnv_depth:
         # out-of-bag scores choose the decision threshold (cnv_depth_decision_threshold)
         clf = RandomForestClassifier(
             n_estimators=500, min_samples_leaf=5, class_weight="balanced", random_state=0, n_jobs=-1, oob_score=True
@@ -231,7 +231,7 @@ def eval_model(
 
     df = df.loc[select]  # noqa PD901
 
-    if vtype == VcfType.CNV_DEPTH:  # CNV calls have no indel / hmer groups: report per SV type
+    if vtype.is_cnv_depth:  # CNV calls have no indel / hmer groups: report per SV type
         df["group_testing"] = df["svtype"]
         result = evaluate_results(df, pd.Series(list(labels), index=df.index), add_testing_group_column=False)
     else:

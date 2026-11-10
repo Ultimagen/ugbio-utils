@@ -144,6 +144,12 @@ filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.
   `PAIR_READS`; overlapping pair clusters are collapsed to the one with most pairs, and
   `filter_nested_cnv_candidates` treats them like split-read candidates. The filter model
   `cnv_filtering_model_v2.0.0.pkl` is trained with them (`source_pair` feature).
+- cn.mops candidates (optional): the cohort caller cn.mops (R scripts in `cnmops/`, run with a reads-count cohort and
+  `process_cnvs`) finds losses in low-mappability / segdup sequence where the sample's own all-read depth shows none.
+  `cnmops_cnv_candidates --input-vcf <calls so far> --cnmops-vcf <cn.mops calls>` (same `--depth-mq0` /
+  `--depth-mq20` / `--annotation`) adds every cn.mops call without a same-type call (>= 50% reciprocal) as
+  `CNV_SOURCE=cn.mops`, with the candidates' depth features but no depth-change check; they then go through the
+  evidence, snapping, nested / duplicate filter and FilterVCF with a `cnv_depth_cnmops` model (`source_cnmops`).
 - Filter training: `cnv_known_event_pieces` cuts a sample's known long CNV into 10–100 kb depth calls (the windows the
   caller would call), as extra positives for `training_prep_depth_cnv_pipeline --known_events` (README.filtering.md).
 - Sex chromosomes: `call_depth_cnvs` infers them from the median depth of the clean (unique, non-segdup) chrX and
@@ -202,6 +208,8 @@ The module depends on:
 - **Python 3.11+**
 - **ugbio_core** - Core utilities from this workspace
 - **Bioinformatics tools**: samtools, bedtools, bcftools
+- **R** with cn.mops (Ultimagen fork), argparse, magrittr, rhdf5, GenomicRanges: only for the optional cn.mops path
+  (`cnmops/`; in the cnv image)
 
 ## Notes
 

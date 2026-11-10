@@ -185,6 +185,9 @@ calls: depth, split-read and discordant-pair candidates after snapping and `filt
 pieces, seed 1002; 13 GSM704 DEL pieces, seed 1012; 10–100 kb). The same model filters single-end calls (no pair
 candidates, `source_pair` is 0).
 
+With the optional cn.mops candidates (`cnmops_cnv_candidates`, `CNV_SOURCE=cn.mops`), train with
+`--vcf_type cnv_depth_cnmops`: the same features plus `source_cnmops`. `cnv_depth` models are unchanged by it.
+
 ## Typical Workflows
 
 ### Training and Applying a Filtering Model

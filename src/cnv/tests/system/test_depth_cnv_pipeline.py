@@ -3,7 +3,8 @@ End-to-end run of the depth CNV caller on HG002 chr19:19.45-19.95 Mb (612365, 40
 heterozygous deletion (T2T-Q100 truth: POS 19,723,634, SVLEN 5,219; also called by the SV caller).
 
 Chain as in the pipeline: call_depth_cnvs -> split_read_cnv_candidates -> analyze_cnv_breakpoint_reads ->
-snap_cnv_breakpoints -> filter_nested_cnv_candidates, then merge_cnv_sv with the SV calls.
+snap_cnv_breakpoints -> filter_nested_cnv_candidates, then merge_cnv_sv with the SV calls; with the optional cn.mops
+calls, cnmops_cnv_candidates after the split-read candidates.
 """
 
 from pathlib import Path
@@ -201,3 +202,31 @@ def test_pair_candidates_find_the_deletion_from_pairs(inputs, tmp_path):
     with pysam.VariantFile(f"{t}/pair2.vcf.gz") as v:
         again = [r for r in v if r.id.startswith("PAIR_") and r.start < TRUE_DEL[1] and r.stop > TRUE_DEL[0]]
     assert not again
+
+
+def test_cnmops_calls_not_called_are_added(inputs, tmp_path):
+    """A cn.mops call of the deletion is already called; one elsewhere becomes a candidate without a depth change."""
+    run_chain(inputs, tmp_path)
+    cnmops = str(tmp_path / "cnmops.vcf.gz")
+    with pysam.VariantFile(str(tmp_path / "cand.vcf.gz")) as v:
+        header = pysam.VariantHeader()
+        for c in v.header.contigs.values():
+            header.contigs.add(c.name, c.length)
+        header.info.add("SVTYPE", 1, "String", "type")
+        header.info.add("END", 1, "Integer", "end")
+        header.add_sample(SAMPLE)
+        with pysam.VariantFile(cnmops, "wz", header=header) as out:
+            for s, e in ((19_600_000, 19_605_000), (TRUE_DEL[0] - 300, TRUE_DEL[1] + 700)):
+                rec = out.new_record(contig="chr19", start=s, stop=e, alleles=("N", "<DEL>"))
+                rec.info["SVTYPE"] = "DEL"
+                out.write(rec)
+    pysam.tabix_index(cnmops, preset="vcf", force=True)
+    out = str(tmp_path / "with_cnmops.vcf.gz")
+    src.run_cnmops(
+        ["cnmops_cnv_candidates", "--input-vcf", str(tmp_path / "cand.vcf.gz"), "--cnmops-vcf", cnmops]
+        + ["--depth-mq0", inputs["q0"], "--depth-mq20", inputs["q20"], "--annotation", inputs["annotation"]]
+        + ["--output-vcf", out]
+    )
+    with pysam.VariantFile(out) as v:
+        added = [(r.start, r.stop) for r in v if r.info["CNV_SOURCE"] == ("cn.mops",)]
+    assert added == [(19_600_000, 19_605_000)]

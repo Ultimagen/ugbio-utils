@@ -102,6 +102,14 @@ class TestDepthCnvFeatures:
         assert list(f.source_pair) == [1.0, 0.0]
         assert list(f.source_sr) == [0.0, 0.0]  # only calls found by split reads alone
 
+    def test_cnmops_source_is_opt_in(self):
+        calls = depth_cnv_df(2)
+        calls["cnv_source"] = [("cn.mops",), ("depth",)]
+        assert list(transformers.depth_cnv_features(calls).columns) == transformers.DEPTH_CNV_FEATURES
+        f = transformers.depth_cnv_features(calls, cnmops=True)
+        assert list(f.columns) == transformers.DEPTH_CNV_FEATURES_CNMOPS
+        assert list(f.source_cnmops) == [1.0, 0.0]
+
 
 class TestDepthCnvModel:
     def test_transformer_train_and_apply(self):
@@ -114,6 +122,14 @@ class TestDepthCnvModel:
         predictions, probabilities = apply_model(calls, model, fitted)
         assert list(predictions) == [1, 0] * 20
         assert probabilities.shape == (40, 2)
+
+    def test_cnmops_model_has_the_extra_feature(self):
+        calls = depth_cnv_df(40)
+        calls["label"] = [1, 0] * 20
+        _, fitted = train_model(calls, GtType.APPROXIMATE, VcfType.CNV_DEPTH_CNMOPS)
+        assert list(fitted.get_feature_names_out()) == [
+            f"depth_cnv__{f}" for f in transformers.DEPTH_CNV_FEATURES_CNMOPS
+        ]
 
     def test_needed_features_are_the_info_columns(self):
         assert transformers.get_needed_features(VcfType.CNV_DEPTH) == [

@@ -64,7 +64,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     ap_var.add_argument(
         "--vcf_type",
-        help='VCF type - "single_sample"(GATK), "deep_variant" or "cnv_depth" (depth CNV caller)',
+        help='VCF type - "single_sample"(GATK), "deep_variant", "cnv_depth" (depth CNV caller) or "cnv_depth_cnmops" '
+        "(depth CNV caller with cn.mops candidates)",
         type=VcfType,
         choices=list(VcfType),
         default=VcfType.SINGLE_SAMPLE,
@@ -118,7 +119,7 @@ def run(argv: list[str]):
         model, transformer = train_model(train_df, args)
         logger.info("Model training: done")
         extra = {}
-        if args.vcf_type == VcfType.CNV_DEPTH:
+        if args.vcf_type.is_cnv_depth:
             if args.decision_threshold is not None:
                 extra["decision_threshold"] = args.decision_threshold
                 logger.info(f"FilterVCF decision threshold (given): {extra['decision_threshold']}")

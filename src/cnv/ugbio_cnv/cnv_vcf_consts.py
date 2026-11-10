@@ -153,3 +153,4 @@ DEPTH_CNV_INFO_TAGS: dict[str, tuple[str, int | str, str, str, str]] = {
 CNV_SOURCE_DEPTH = "depth"
 CNV_SOURCE_SPLIT_READ = "split_read"
 CNV_SOURCE_PAIR = "pair"
+CNV_SOURCE_CNMOPS = "cn.mops"  # optional cohort caller (cnmops_cnv_candidates)

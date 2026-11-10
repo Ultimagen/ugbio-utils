@@ -150,4 +150,4 @@ jobs:
         working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
         run: |
           export PATH=/home/linuxbrew/.linuxbrew/bin/:$PATH
-          uv run pytest --durations=0 src/
+          uv run pytest --durations=0 src/ --ignore src/cnv/cnmops  # cn.mops tests need R: run in the cnv image

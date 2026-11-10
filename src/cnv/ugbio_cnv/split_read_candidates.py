@@ -13,6 +13,11 @@ split_read_cnv_candidates:
   4. Candidates with >= 50% reciprocal overlap with a same-type depth call are dropped (already called); the rest are
      added to the depth calls with CNV_SOURCE=split_read.
 
+cnmops_cnv_candidates (optional, with the cn.mops calls of the sample):
+  cn.mops calls without a same-type call with >= 50% reciprocal overlap are added with CNV_SOURCE=cn.mops and the
+  depth features of the other candidates, without the depth-change check (cn.mops finds losses in low-mappability
+  sequence where the all-read depth shows none).
+
 filter_nested_cnv_candidates (after breakpoint snapping):
   Drop split-read and pair candidates that are shorter than 500 bp, >= 50% inside a same-type depth call (a second
   call on an event that is already called), or with >= 50% reciprocal overlap with a same-type candidate kept before
@@ -31,7 +36,13 @@ import numpy as np
 import pandas as pd
 import pysam
 from ugbio_cnv.breakpoint_snapping import split_read_junctions
-from ugbio_cnv.cnv_vcf_consts import CNV_SOURCE_DEPTH, CNV_SOURCE_PAIR, CNV_SOURCE_SPLIT_READ, DEPTH_CNV_INFO_TAGS
+from ugbio_cnv.cnv_vcf_consts import (
+    CNV_SOURCE_CNMOPS,
+    CNV_SOURCE_DEPTH,
+    CNV_SOURCE_PAIR,
+    CNV_SOURCE_SPLIT_READ,
+    DEPTH_CNV_INFO_TAGS,
+)
 from ugbio_cnv.depth_annotation import BIN_SIZE
 from ugbio_cnv.depth_cnv_caller import genotype_for, read_sex_chromosomes
 from ugbio_core.logger import logger
@@ -168,10 +179,17 @@ def _depth_values(tbx: pysam.TabixFile, chrom: str, start: int, end: int) -> np.
         return np.array([])
 
 
-def score_with_depth(
-    cand: pd.DataFrame, depth_mq0: str, depth_mq20: str, annotation: str, haploid: set[str], p: CandidateParams
+def score_with_depth(  # noqa: PLR0913
+    cand: pd.DataFrame,
+    depth_mq0: str,
+    depth_mq20: str,
+    annotation: str,
+    haploid: set[str],
+    p: CandidateParams,
+    *,
+    require_change: bool = True,
 ) -> pd.DataFrame:
-    """Depth ratio, copy number and z per candidate; candidates without the expected depth change are dropped."""
+    """Depth ratio, copy number and z per candidate; with require_change, those without the expected change drop."""
     t0 = pysam.TabixFile(depth_mq0, index=depth_mq0 + ".csi")
     t20 = pysam.TabixFile(depth_mq20, index=depth_mq20 + ".csi")
     ann = pd.read_parquet(annotation)
@@ -192,7 +210,8 @@ def score_with_depth(
         ratio = inside.mean() / np.median(flanks)
         sd = np.std(flanks) / np.median(flanks)
         z = (ratio - 1) / (sd / np.sqrt(len(inside))) if sd > 0 else 0.0
-        if (r.svtype == "DEL" and ratio >= p.max_del_ratio) or (r.svtype == "DUP" and ratio <= p.min_dup_ratio):
+        no_change = (r.svtype == "DEL" and ratio >= p.max_del_ratio) or (r.svtype == "DUP" and ratio <= p.min_dup_ratio)
+        if require_change and no_change:
             continue
         uniq = _depth_values(t20, r.chrom, r.start, r.end)
         a = ann.reindex([(r.chrom, b) for b in range(r.start // BIN_SIZE * BIN_SIZE, r.end, BIN_SIZE)])
@@ -217,17 +236,18 @@ def add_candidates_to_calls(  # noqa: PLR0913
     *,
     source: str = CNV_SOURCE_SPLIT_READ,
     id_prefix: str = "SR",
-    count_tag: str = "SR_READS",
+    count_tag: str | None = "SR_READS",
     ci: tuple[int, int] = (-10, 10),
 ) -> int:
     """
     Write the calls of depth_vcf plus the candidates not already called (>= min_overlap reciprocal); returns # added.
 
-    The candidates get CNV_SOURCE=source, IDs <id_prefix>_<k>, their read count in count_tag and CIPOS / CIEND = ci.
+    The candidates get CNV_SOURCE=source, IDs <id_prefix>_<k>, their read count in count_tag (if any) and
+    CIPOS / CIEND = ci.
     """
     with pysam.VariantFile(depth_vcf) as vin:
         header = vin.header.copy()
-        if count_tag not in header.info:
+        if count_tag and count_tag not in header.info:
             header.info.add(*DEPTH_CNV_INFO_TAGS[count_tag][:-1])
         records = list(vin)
     sample = list(header.samples)[0]
@@ -252,7 +272,8 @@ def add_candidates_to_calls(  # noqa: PLR0913
         rec.info["SEGDUP"] = round(float(r.segdup), 3)
         if not np.isnan(r.uniq_frac):
             rec.info["UNIQ_FRAC"] = round(float(r.uniq_frac), 3)
-        rec.info[count_tag] = int(r.n_reads)
+        if count_tag:
+            rec.info[count_tag] = int(r.n_reads)
         rec.samples[sample]["GT"] = genotype_for(r.svtype)
         new.append(rec)
     order = {c: k for k, c in enumerate(header.contigs)}
@@ -310,6 +331,44 @@ def _candidate_rank(r: pysam.VariantRecord) -> tuple:
     return (is_pair, -reads, r.start, r.stop)
 
 
+def cnmops_cnv_candidates(  # noqa: PLR0913
+    input_vcf: str,
+    cnmops_vcf: str,
+    depth_mq0: str,
+    depth_mq20: str,
+    annotation: str,
+    output_vcf: str,
+    params: CandidateParams | None = None,
+) -> int:
+    """
+    Add the cn.mops calls of cnmops_vcf that input_vcf does not have (>= min_overlap reciprocal, same type) as
+    CNV_SOURCE=cn.mops candidates; returns the number added. Contigs the depth caller does not call are skipped.
+    """
+    p = params or CandidateParams()
+    sex = read_sex_chromosomes(input_vcf)
+    with pysam.VariantFile(cnmops_vcf) as v:
+        cand = pd.DataFrame(
+            [
+                (r.chrom, r.start, r.stop, r.info["SVTYPE"], 0)
+                for r in v
+                if r.info.get("SVTYPE") in ("DEL", "DUP")
+                and r.chrom not in sex.skipped
+                and r.stop - r.start >= p.min_len
+            ],
+            columns=["chrom", "start", "end", "svtype", "n_reads"],
+        )
+    scored = (
+        score_with_depth(cand, depth_mq0, depth_mq20, annotation, sex.haploid, p, require_change=False)
+        if len(cand)
+        else pd.DataFrame(columns=["chrom", "start", "end", "svtype"])
+    )
+    n = add_candidates_to_calls(
+        input_vcf, scored, output_vcf, p, source=CNV_SOURCE_CNMOPS, id_prefix="CNMOPS", count_tag=None, ci=(-500, 500)
+    )
+    logger.info(f"{output_vcf}: cn.mops calls {len(cand)}, added {n}")
+    return n
+
+
 def filter_nested_cnv_candidates(
     input_vcf: str, output_vcf: str, min_len: int = 500, min_inside: float = 0.5, min_overlap: float = 0.5
 ) -> dict[str, int]:
@@ -327,7 +386,9 @@ def filter_nested_cnv_candidates(
     def source(r):
         return tuple(r.info.get("CNV_SOURCE", ()))
 
-    candidates = [r for r in records if source(r) in ((CNV_SOURCE_SPLIT_READ,), (CNV_SOURCE_PAIR,))]
+    candidates = [
+        r for r in records if source(r) in ((CNV_SOURCE_SPLIT_READ,), (CNV_SOURCE_PAIR,), (CNV_SOURCE_CNMOPS,))
+    ]
     depth_calls: dict[tuple[str, str], list[tuple[int, int]]] = {}
     for r in records:
         if CNV_SOURCE_DEPTH in source(r):
@@ -406,6 +467,24 @@ def parse_args_nested(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def parse_args_cnmops(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="cnmops_cnv_candidates", description="Add the cn.mops calls the depth caller does not have as candidates"
+    )
+    parser.add_argument("--input-vcf", required=True, help="Calls so far (split_read / pair_cnv_candidates output)")
+    parser.add_argument("--cnmops-vcf", required=True, help="cn.mops calls of the sample (process_cnvs output)")
+    parser.add_argument("--depth-mq0", required=True, help="mosdepth regions.bed.gz, all reads (with .csi)")
+    parser.add_argument("--depth-mq20", required=True, help="mosdepth regions.bed.gz, MAPQ>=20 (with .csi)")
+    parser.add_argument("--annotation", required=True, help="Reference annotation parquet")
+    parser.add_argument("--output-vcf", required=True, help="Output .vcf.gz")
+    return parser.parse_args(argv)
+
+
+def run_cnmops(argv: list[str]):
+    a = parse_args_cnmops(argv[1:])
+    cnmops_cnv_candidates(a.input_vcf, a.cnmops_vcf, a.depth_mq0, a.depth_mq20, a.annotation, a.output_vcf)
+
+
 def run_nested(argv: list[str]):
     args = parse_args_nested(argv[1:])
     filter_nested_cnv_candidates(args.input_vcf, args.output_vcf, args.min_len)
@@ -417,6 +496,10 @@ def main():
 
 def main_nested():
     run_nested(sys.argv)
+
+
+def main_cnmops():
+    run_cnmops(sys.argv)
 
 
 if __name__ == "__main__":
