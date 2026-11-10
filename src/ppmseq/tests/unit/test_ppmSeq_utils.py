@@ -16,6 +16,7 @@ from ugbio_ppmseq.ppmSeq_utils import (
     PpmseqAdapterVersions,
     PpmseqCategories,
     PpmseqStrandVcfAnnotator,
+    adapter_version_has_end_tag,
     add_strand_ratios_and_categories_to_featuremap,
     all_reads_have_sr_tag,
     build_headline_table,
@@ -42,6 +43,9 @@ expected_output_featuremap_legacy_v5 = (
 )
 trimmer_failure_codes_csv_ppmseq_v1_incl_failed_rsq = (
     inputs_dir / "412884-L6860-Z0293-CATGTGAGCGGTGAT_trimmer-failure_codes.csv"
+)
+trimmer_failure_codes_csv_ppmseq_plus = (
+    inputs_dir / "603411-L16089-Z0375-CATGCTGAATGTGTGAT_ppmSeq_plus_v8_9_trimmer-failure_codes.csv"
 )
 sorter_stats_csv = inputs_dir / "ppmseq_sr_tag" / "Z0263_sorter_stats.csv"
 
@@ -74,6 +78,50 @@ def test_read_trimmer_failure_codes_ppmseq():
     # Regression: normalization of the per-category PCT columns (adapter-dimer fraction
     # is a critical QC metric per the review).
     assert np.isclose(df_metrics.loc["PCT_failed_adapter_dimers", "value"], 0.068886, atol=1e-4)
+    # 7 non-RSQ failure rows sum to 7,666,299 of 1,267,433,062 - 169,314,209 RSQ = 1,098,118,853.
+    assert df_metrics.loc["PCT_failed_total", "value"] == pytest.approx(100 * 7666299 / 1098118853)
+    assert df_metrics.loc["PCT_failed_total", "value"] == pytest.approx(0.698130, abs=1e-6)
+
+
+def test_read_trimmer_failure_codes_ppmseq_plus_failed_total():
+    df_trimmer_failure_codes, df_metrics = read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv_ppmseq_plus)
+    # The two "no trimming" rows (st-tag continue chain) are not rejections and must not count.
+    assert "no trimming" not in set(df_trimmer_failure_codes["format"])
+    # Only 200,764 "insert too short" reads rejected, of 95,990,888 - 14,932,854 RSQ = 81,058,034
+    # (= sorter PF_Barcode_reads; matches sorter PCT_PF_Unmatched_Barcode_reads 0.2476793355).
+    assert df_trimmer_failure_codes.loc[("total", "total"), "failed_read_count"] == 200764
+    assert df_trimmer_failure_codes.loc[("total", "total"), "total_read_count"] == 81058034
+    assert df_metrics.loc["PCT_failed_total", "value"] == pytest.approx(100 * 200764 / 81058034)
+    assert df_metrics.loc["PCT_failed_total", "value"] == pytest.approx(0.2476793355, abs=1e-9)
+    assert df_metrics.loc["PCT_failed_adapter_dimers", "value"] == pytest.approx(0.2476793355, abs=1e-9)
+
+
+def test_read_trimmer_failure_codes_ppmseq_plus_no_rejections(tmp_path):
+    # Only RSQ and "no trimming" rows: nothing is rejected, so the total is 0% rather than an IndexError.
+    csv = tmp_path / "no_rejections_trimmer-failure_codes.csv"
+    csv.write_text(
+        "read group,code,format,segment,reason,failed read count,total read count\n"
+        "Z0375,10008,ppmSeq_plus_v8_9,insert,rsq file,14932854,95990888\n"
+        "Z0375,20006,no trimming,insert,comparison failed,80841040,80857270\n"
+    )
+    df_trimmer_failure_codes, df_metrics = read_trimmer_failure_codes_ppmseq(str(csv))
+    assert df_trimmer_failure_codes.loc[("total", "total"), "failed_read_count"] == 0
+    assert df_trimmer_failure_codes.loc[("total", "total"), "total_read_count"] == 95990888 - 14932854
+    assert df_metrics.loc["PCT_failed_total", "value"] == 0
+    assert df_metrics.loc["PCT_failed_adapter_dimers", "value"] == 0
+
+
+def test_read_trimmer_failure_codes_ppmseq_plus_continuation_only(tmp_path):
+    csv = tmp_path / "continuation_only_trimmer-failure_codes.csv"
+    csv.write_text(
+        "read group,code,format,segment,reason,failed read count,total read count\n"
+        "Z0375,20006,no trimming,insert,comparison failed,80841040,80857270\n"
+        "Z0375,30006,no trimming,insert,comparison failed,59111577,80841040\n"
+    )
+    df_trimmer_failure_codes, df_metrics = read_trimmer_failure_codes_ppmseq(str(csv))
+    assert df_trimmer_failure_codes.loc[("total", "total"), "failed_read_count"] == 0
+    assert df_trimmer_failure_codes.loc[("total", "total"), "total_read_count"] == 80857270
+    assert df_metrics.loc["PCT_failed_total", "value"] == 0
 
 
 def test_read_tags_from_subsampled_sam():
@@ -236,6 +284,44 @@ def test_plot_strand_ratio_category(tmp_path):
         output_filename=str(tmp_path / "cat.png"),
     )
     assert (tmp_path / "cat.png").exists()
+
+
+@pytest.mark.parametrize(
+    ("adapter_version", "expected"),
+    [
+        ("v1", True),
+        ("legacy_v5", True),
+        ("Solaris2_ppmSeq", True),
+        ("Solaris2_ppmSeq_plus", False),
+        (PpmseqAdapterVersions.SOLARIS2_PPMSEQ_PLUS, False),
+    ],
+)
+def test_adapter_version_has_end_tag(adapter_version, expected):
+    assert adapter_version_has_end_tag(adapter_version) is expected
+
+
+def test_adapter_version_has_end_tag_rejects_unknown():
+    with pytest.raises(AssertionError):
+        adapter_version_has_end_tag("Solaris2_ppmSeq_plus_v8.5")
+
+
+def _legend_labels(ax):
+    return [t.get_text() for t in ax.get_legend().get_texts()]
+
+
+@pytest.mark.parametrize(
+    ("adapter_version", "expect_end_bars"),
+    [("v1", True), ("Solaris2_ppmSeq", True), ("Solaris2_ppmSeq_plus", False)],
+)
+def test_plot_strand_ratio_category_end_bars_by_adapter_version(adapter_version, expect_end_bars):
+    """ppmSeq_plus has no end loop, so the category plot must show the start-tag bars only."""
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    _, ax = plt.subplots()
+    plot_strand_ratio_category(adapter_version, df_reads, ax=ax)
+    labels = _legend_labels(ax)
+    assert "Start tag strand ratio category" in labels
+    assert ("End tag strand ratio category" in labels) is expect_end_bars
+    plt.close("all")
 
 
 def _category_bar_xticks(ax):
@@ -417,6 +503,27 @@ def test_ppmseq_qc_analysis(tmp_path):
         generate_report=False,
     )
     assert (tmp_path / "TEST_v1.ppmSeq.applicationQC.h5").exists()
+
+
+def test_ppmseq_qc_analysis_plus_keeps_hdf5_contents(tmp_path):
+    """The ppmSeq_plus change is report-level only: the HDF5 bundle matches v1."""
+    for adapter_version in ("v1", "Solaris2_ppmSeq_plus"):
+        ppmseq_qc_analysis(
+            adapter_version,
+            subsampled_sam=str(subsampled_sam),
+            output_path=str(tmp_path),
+            output_basename=adapter_version,
+            generate_report=False,
+        )
+    h5_v1, h5_plus = (tmp_path / f"{v}.ppmSeq.applicationQC.h5" for v in ("v1", "Solaris2_ppmSeq_plus"))
+    with pd.HDFStore(h5_v1, "r") as s_v1, pd.HDFStore(h5_plus, "r") as s_plus:
+        assert sorted(s_v1.keys()) == sorted(s_plus.keys())
+        for key in s_v1.keys():
+            obj_v1, obj_plus = s_v1[key], s_plus[key]
+            if isinstance(obj_v1, pd.DataFrame):
+                pd.testing.assert_frame_equal(obj_v1, obj_plus)
+            else:
+                pd.testing.assert_series_equal(obj_v1, obj_plus)
 
 
 def test_add_strand_ratios_and_categories_to_featuremap(tmp_path):
