@@ -26,9 +26,6 @@ RUN pip install ${OUT_DIR}/*.whl
 ##################################################################
 FROM ${BASE_IMAGE}
 
-# Pick up Debian security patches released after the base image was built (e.g. perl CVEs)
-RUN apt-get update && apt-get upgrade -y && apt-get clean && rm -rf /var/lib/apt/lists/*
-
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
 # Copy pre-built virtual environment from build stage (no compilation in runtime)

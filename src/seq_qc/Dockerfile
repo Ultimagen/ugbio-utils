@@ -26,8 +26,6 @@ RUN pip install ${OUT_DIR}/*.whl
 ##################################################################
 FROM ${BASE_IMAGE}
 
-RUN apt-get update && apt-get upgrade -y && apt-get clean && rm -rf /var/lib/apt/lists/*
-
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
 # Copy pre-built virtual environment from build stage (no compilation in runtime)
