@@ -33,11 +33,12 @@ from ugbio_core.logger import logger
 from ugbio_core.vcfbed.variant_annotation import get_cycle_skip_dataframe
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
+from ugbio_srsnv.split_scheme import resolve_scheme_and_add_columns
 from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport, create_srsnv_report_html
 from ugbio_srsnv.srsnv_utils import (
     ET,
+    PE_DUPLEX_GROUP,
     ST,
-    add_is_mixed_to_featuremap_df,
 )
 
 FOLD_COL = "fold_id"
@@ -65,6 +66,16 @@ PROB_FOLD_TMPL = "prob_fold_{k}"
 
 SCORE = FeatureMapFields.BCSQ.value
 IS_CYCLE_SKIP = "is_cycle_skip"
+
+# Joint SNV + hmer-indel report dimension. snvfind tags homopolymer indels with X_IC (ins/del) and X_IL
+# (indel length); X_HMER_REF is the reference homopolymer length used to bin hmer-indel metrics.
+X_IC = "X_IC"
+X_IL = "X_IL"
+X_INDEL_CLASS = "X_INDEL_CLASS"  # snvfind: "hmer" | "non_hmer" -- discriminates the two indel classes
+VARIANT_TYPE = "variant_type"
+VARIANT_TYPE_SNV = "snv"
+VARIANT_TYPE_HMER_INDEL = "hmer_indel"
+VARIANT_TYPE_NONHMER_INDEL = "non_hmer_indel"
 
 EDIT_DIST_FEATURES = ["EDIST", "HAMDIST", "HAMDIST_FILT"]
 
@@ -112,6 +123,33 @@ def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA"
     result = result.loc[data_df.index]
 
     return result
+
+
+def compute_variant_type_column(data_df: pd.DataFrame) -> pd.Series:
+    """Label each featuremap row as SNV, homopolymer indel, or non-homopolymer indel (the report's axis).
+
+    In the joint DeepSRSNV mode snvfind emits SNVs plus indels; indels carry ``X_IC`` (``ins``/``del``) and
+    an ``X_INDEL_CLASS`` (``hmer``/``non_hmer``) discriminator. Rows without ``X_IC`` (SNVs, or any run
+    produced without indel emission) are labeled ``snv``. Indel rows are split by ``X_INDEL_CLASS``:
+    ``non_hmer`` -> ``non_hmer_indel``; anything else (including a missing column, for backward
+    compatibility with older hmer-only featuremaps) -> ``hmer_indel``. Returns a Series aligned to
+    ``data_df.index``.
+    """
+    if X_IC not in data_df.columns:
+        return pd.Series(VARIANT_TYPE_SNV, index=data_df.index)
+    ic = data_df[X_IC].astype(str).str.lower()
+    is_indel = ic.isin(["ins", "del"])
+    if X_INDEL_CLASS in data_df.columns:
+        is_non_hmer = is_indel & (data_df[X_INDEL_CLASS].astype(str).str.lower() == "non_hmer")
+    else:
+        is_non_hmer = pd.Series(np.zeros(len(data_df), dtype=bool), index=data_df.index)
+    is_hmer_indel = is_indel & ~is_non_hmer
+    labels = np.where(
+        is_non_hmer,
+        VARIANT_TYPE_NONHMER_INDEL,
+        np.where(is_hmer_indel, VARIANT_TYPE_HMER_INDEL, VARIANT_TYPE_SNV),
+    )
+    return pd.Series(labels, index=data_df.index)
 
 
 class _ModelWithTrainingResults:
@@ -276,13 +314,25 @@ def prepare_report(
     # Build params dictionary from metadata
     params = _build_params(metadata, user_meta, len(models))
 
-    # Add columns to featuremap_df
-    data_df = add_is_mixed_to_featuremap_df(
+    # Resolve the active split scheme (recipe) from the columns present and add the split columns +
+    # ordered read_group it needs. The mode is stored in params so SRSNVReport uses it directly.
+    data_df, scheme = resolve_scheme_and_add_columns(
         data_df,
         params["adapter_version"],
         params["categorical_features_names"],
     )
+    params["report_mode"] = scheme.mode.value
     data_df[IS_CYCLE_SKIP] = compute_is_cycle_skip_column(data_df)
+
+    # Joint SNV + hmer-indel report dimension (orthogonal to the read-group split scheme above).
+    # Auto-detected from the featuremap: hmer-indel rows carry X_IC. When present, the report can break
+    # metrics out by variant type and (via X_HMER_REF) by homopolymer length.
+    data_df[VARIANT_TYPE] = compute_variant_type_column(data_df)
+    params["has_hmer_indels"] = bool((data_df[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).any())
+    params["has_non_hmer_indels"] = bool((data_df[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL).any())
+    # paired-end-duplex use case: the scheme assigned the pe_duplex_group column (CS-family-derived
+    # SE/PE split). Gates the duplex-PE CS-concordance table/cell.
+    params["has_duplex_pe"] = PE_DUPLEX_GROUP in data_df.columns
 
     # Handle random seed
     rng = np.random.default_rng(random_seed) if random_seed is not None else None
@@ -322,6 +372,11 @@ def prepare_report(
         out_basename=basename,
         srsnv_metadata_file=srsnv_metadata,
         simple_pipeline=None,
+        split_mode=scheme.mode.value,
+        display_suffix=scheme.display_suffix,
+        has_hmer_indels=params["has_hmer_indels"],
+        has_non_hmer_indels=params["has_non_hmer_indels"],
+        has_duplex_pe=params["has_duplex_pe"],
     )
 
 

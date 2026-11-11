@@ -28,10 +28,14 @@ import pandas as pd
 import polars as pl
 import pytest
 from ugbio_srsnv.srsnv_utils import (
+    FS,
+    IS_CONSENSUS,
+    RS,
     _aggregate_probabilities_from_folds,
     _compute_snvq_prefactor,
     _find_filter_rows,
     _probability_rescaling,
+    add_is_consensus_to_featuremap_df,
     construct_trinuc_context_with_alt,
     get_base_error_rate_from_filters,
     get_base_recall_from_filters,
@@ -824,6 +828,20 @@ class TestConstructTrinucContextWithAlt:
         result = construct_trinuc_context_with_alt(frame)
         assert list(result) == ["ACGT", "TGCA"]
 
+    def test_ignores_x_alt_column(self):
+        """The report featuremap's ALT already holds the substitution; an X_ALT column is ignored."""
+        frame = pd.DataFrame(
+            {
+                "X_PREV1": ["A", "T"],
+                "REF": ["C", "G"],
+                "X_NEXT1": ["G", "C"],
+                "ALT": ["T", "A"],  # substitution in ALT (report convention)
+                "X_ALT": ["C", "G"],  # X_ALT == REF; must not affect the result
+            }
+        )
+        result = construct_trinuc_context_with_alt(frame)
+        assert list(result) == ["ACGT", "TGCA"]
+
 
 # ──────────────────────── get_trinuc_context_with_alt_fwd_vectorized ────
 
@@ -1531,3 +1549,17 @@ class TestSafeRocAucAdditional:
         y_pred = [0.1, 0.4, 0.6, 0.9, 0.3, 0.7]
         result = safe_roc_auc(y_true, y_pred)
         assert 0.5 < result <= 1.0
+
+
+# ──────────────────────── report mode detection / split columns ──────────────────────
+
+
+class TestAddIsConsensus:
+    """Test the fs>=1 & rs>=1 consensus derivation."""
+
+    def test_is_consensus_definition(self):
+        """A read is consensus iff it has >=1 forward and >=1 reverse read."""
+        data_df = pd.DataFrame({FS: [0, 1, 2, 0, 5], RS: [1, 1, 0, 0, 3]})
+        out = add_is_consensus_to_featuremap_df(data_df)
+        assert out[IS_CONSENSUS].tolist() == [False, True, False, False, True]
+        assert out[IS_CONSENSUS].dtype == bool

@@ -62,7 +62,7 @@ import polars as pl
 from ugbio_core.logger import logger as log
 from ugbio_core.vcf_utils import get_vcf_sample_names
 
-from ugbio_featuremap.featuremap_utils import FeatureMapFields
+from ugbio_featuremap.featuremap_utils import CELL_HMER_INDEL, CELL_SEP, FeatureMapFields, cell_key_expr
 from ugbio_featuremap.filter_dataframe import (
     FIELD_GNOMAD_AF,
     FIELD_ID,
@@ -86,8 +86,80 @@ from ugbio_featuremap.filter_dataframe import (
 
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
-CHUNK_BP_DEFAULT = 10_000_000  # 10 Mbp per processing chunk
+CHUNK_BP_DEFAULT = 10_000_000  # 10 Mbp per processing chunk (also the max clamp for adaptive sizing)
 MAX_DEBUG_FILES_TO_SHOW = 3  # Number of file paths to show in debug logs
+
+# --- Adaptive genome-window sizing for the VCF→Parquet region parallelism ---------------------
+# Each parallel worker streams its whole region into a single *exploded* Polars frame
+# (one row per read × ~44 list FORMAT fields), so its peak memory scales with
+# records-in-window × reads-per-locus. reads-per-locus is bounded by the pipeline's
+# max_coverage filter, so it is enough to bound the *record count* per window to keep any
+# single worker's frame bounded — regardless of how dense the featuremap is.
+#
+# We therefore size each window so it holds ~TARGET_RECORDS_PER_WINDOW records:
+#     window_bp = clamp(round(genome_bp * TARGET / max(total_records, 1)), MIN_WINDOW_BP, CHUNK_BP_DEFAULT)
+#
+# Sanity check (dense whole-genome duplex-hmer featuremap, ~349M records over a ~3.1 Gbp genome):
+#     3.1e9 * 300_000 / 3.49e8 ≈ 2.66e6  → ~2.7 Mbp windows (in the target 2-3 Mbp band).
+# A sparse featuremap stays at the 10 Mbp cap: the cap kicks in when
+#     total_records ≤ genome_bp * TARGET / CHUNK_BP_DEFAULT ≈ 3.1e9 * 300_000 / 1e7 ≈ 9.3e7,
+# i.e. below ~93M records genome-wide the window is clamped to 10 Mbp, so existing
+# small/sparse-file behavior is unchanged.
+TARGET_RECORDS_PER_WINDOW = 300_000  # aim for ~300k VCF records per parallel window
+MIN_WINDOW_BP = 250_000  # never go below 250 kbp windows (avoids pathological window explosion)
+COL_X_HMER_RUN = "X_HMER_RUN"  # length of the reference homopolymer run an hmer indel changes
+COL_X_IC = "X_IC"  # Indel-class column emitted by snvfind: "ins"/"del" for hmer-indels, null for SNVs
+
+# Duplex / consensus per-read tags used to classify a read's molecule type for the duplex oversampling of the
+# training set (ramp_ppmseq_duplex_pe consensus CRAMs, paired-end):
+#   * CS = the molecule id, shared across BOTH strands and BOTH mates -> the ONLY correct molecule key.
+#   * dx:i:1 marks a DUPLEX molecule (both strands present); absent (null) otherwise. It is coverage-based (set on
+#     every read of the molecule), so it tags a duplex molecule even when only one strand flagged the variant
+#     here (the informative case). This is the only duplex marker used (DS is not used for classification).
+#   * po = the molecular strand as pair orientation (F1R2 / F2R1); the two strands of a duplex have opposite po.
+#   * nf/nr = consensus family sizes keyed by alignment orientation; on paired data the two mates of ONE strand
+#     have opposite nf/nr, so nf/nr is NOT the molecular strand (used only for "is this a consensus read").
+#   * MI is per-strand, so it must NOT be used to pair the two strands.
+COL_NF = "nf"
+COL_NR = "nr"
+COL_CS = "CS"
+COL_DX = "dx"
+COL_PO = "po"
+COL_X_INDEL_CLASS = "X_INDEL_CLASS"  # "hmer"/"non_hmer" on indel rows; absent -> indels treated as hmer
+COL_CHROM = "CHROM"
+COL_POS = "POS"
+
+# duplex_group categories (see _add_duplex_group_column). "full" = coverage (dx==1, from the consensus CRAM);
+# "both strands flag" is observed agreement in the featuremap (keyed on CS + variant):
+#   duplex_pe_full – dx==1: duplex molecule (both strands present)
+#   duplex         – no dx but this molecule flags the variant on both strands (both po orientations)
+#   ssc            – single-strand consensus (only one strand flags)
+#   singleton      – no consensus family (nf==0 and nr==0)
+# Only reads that SHOW the variant appear in the featuremap, so a non-dx molecule whose other strand matched
+# reference (emitted no row) is not distinguishable from ssc here — that finer split needs the CRAM/tensor.
+DUPLEX_GROUP_COL = "duplex_group"
+DUPLEX_GROUP_DUPLEX_PE_FULL = "duplex_pe_full"
+DUPLEX_GROUP_DUPLEX = "duplex"
+DUPLEX_GROUP_SSC = "ssc"
+DUPLEX_GROUP_SINGLETON = "singleton"
+# Default priority orders (highest first); FP and TP use the same completeness ladder.
+DUPLEX_PRIORITY_FP = [
+    DUPLEX_GROUP_DUPLEX_PE_FULL,
+    DUPLEX_GROUP_DUPLEX,
+    DUPLEX_GROUP_SSC,
+    DUPLEX_GROUP_SINGLETON,
+]
+
+
+def _validate_duplex_oversample_priority(duplex_oversample_priority: list[str] | None) -> None:
+    """Raise ``ValueError`` if ``duplex_oversample_priority`` names anything but a duplex_group tier."""
+    if not duplex_oversample_priority:
+        return
+    unknown = [t for t in duplex_oversample_priority if t not in DUPLEX_PRIORITY_FP]
+    if unknown:
+        raise ValueError(
+            f"Unknown duplex_oversample_priority tier(s) {unknown}; valid tiers: {', '.join(DUPLEX_PRIORITY_FP)}"
+        )
 
 
 def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> None:
@@ -565,6 +637,87 @@ def _resolve_bedtools_command() -> str:
     return path
 
 
+def _parse_vcf_contigs(vcf_path: str, bcftools_path: str) -> list[tuple[str, int]]:
+    """
+    Parse ``##contig=<ID=...,length=...>`` lines from the VCF header.
+
+    Only IDs that are strictly alphanumeric (letters / digits only) are kept, matching
+    the contigs that :func:`_generate_genomic_regions` will actually window over.
+
+    Returns
+    -------
+    list[tuple[str, int]]
+        List of ``(contig_id, length)`` tuples.
+
+    Raises
+    ------
+    RuntimeError
+        If no suitable ``##contig`` lines are found.
+    """
+    contig_re = re.compile(r"##contig=<ID=([^,>]+),length=(\d+)")
+    header = subprocess.check_output([bcftools_path, "view", "-h", vcf_path], text=True)
+    contigs: list[tuple[str, int]] = [
+        (cid, int(length))
+        for cid, length in (m.groups() for m in contig_re.finditer(header))
+        if re.fullmatch(r"[A-Za-z0-9]+", cid)
+    ]
+    if not contigs:
+        raise RuntimeError("No suitable ##contig lines found in VCF header")
+    return contigs
+
+
+def _count_vcf_records(vcf_path: str, bcftools_path: str) -> int | None:
+    """
+    Return the total number of records in a VCF, read cheaply from its index.
+
+    Uses ``bcftools index -n`` which reads the record count from the ``.tbi``/``.csi``
+    index without scanning the file body (fast even for whole-genome featuremaps).
+
+    Returns
+    -------
+    int | None
+        The record count, or ``None`` if it cannot be determined (e.g. missing index
+        or an unexpected bcftools output). Callers should fall back to a fixed window
+        size in that case rather than doing a slow ``bcftools view | wc``.
+    """
+    try:
+        out = subprocess.check_output([bcftools_path, "index", "-n", vcf_path], text=True).strip()
+        return int(out)
+    except (subprocess.CalledProcessError, ValueError, OSError) as exc:
+        log.warning(
+            f"Could not determine VCF record count via 'bcftools index -n' ({exc}); "
+            "falling back to the fixed default window size for region sizing"
+        )
+        return None
+
+
+def _choose_window_bp(
+    total_records: int,
+    genome_bp: int,
+    *,
+    target_records_per_window: int = TARGET_RECORDS_PER_WINDOW,
+    min_window_bp: int = MIN_WINDOW_BP,
+    max_window_bp: int = CHUNK_BP_DEFAULT,
+) -> int:
+    """
+    Choose a genome window size (bp) by variant-record density.
+
+    Sizes windows so each holds roughly ``target_records_per_window`` records, which bounds
+    each parallel worker's exploded frame (records × reads-per-locus) regardless of how dense
+    the featuremap is::
+
+        window_bp = clamp(round(genome_bp * target / max(total_records, 1)), min_window_bp, max_window_bp)
+
+    The result is monotonic: more records → smaller-or-equal window. A sparse featuremap is
+    clamped to ``max_window_bp`` (the historical fixed default), leaving small-file behavior
+    unchanged.
+    """
+    if genome_bp <= 0:
+        return max_window_bp
+    raw = round(genome_bp * target_records_per_window / max(total_records, 1))
+    return int(max(min_window_bp, min(raw, max_window_bp)))
+
+
 def _generate_genomic_regions(
     vcf_path: str,
     jobs: int,
@@ -579,18 +732,7 @@ def _generate_genomic_regions(
     ~10× ``jobs``.
     """
     log.debug("Extracting contig information from VCF header")
-    # Extract contig lengths from header
-    contig_re = re.compile(r"##contig=<ID=([^,>]+),length=(\d+)")
-    header = subprocess.check_output([bcftools_path, "view", "-h", vcf_path], text=True)
-    # Keep only IDs that are strictly alphanumeric (letters / digits only)
-    contigs: list[tuple[str, int]] = [
-        (cid, int(length))
-        for cid, length in (m.groups() for m in contig_re.finditer(header))
-        if re.fullmatch(r"[A-Za-z0-9]+", cid)
-    ]
-
-    if not contigs:
-        raise RuntimeError("No suitable ##contig lines found in VCF header")
+    contigs = _parse_vcf_contigs(vcf_path, bcftools_path)
     log.debug(f"Found {len(contigs)} contigs: {contigs[:5]}{'...' if len(contigs) > 5 else ''}")  # noqa PLR2004
 
     # Write genome.sizes tmp file
@@ -707,14 +849,518 @@ def _get_awk_script_path(mode: str = "explode") -> str:
     raise FileNotFoundError(f"AWK script not found: {awk_script}")
 
 
-def _merge_parquet_files_lazy(  # noqa: PLR0912
+def _add_duplex_group_column(frame: pl.DataFrame) -> pl.DataFrame:
+    """Annotate each read row with its molecule ``duplex_group`` (see the DUPLEX_GROUP_* constants).
+
+    Classification (per read):
+      * ``duplex_pe_full`` – ``dx == 1``: a duplex molecule (both strands present). dx is coverage-based, so this
+                             tags the molecule even when only one strand flagged the variant here.
+      * ``duplex``         – no dx but this molecule (keyed on ``CS`` + variant) flags the variant on BOTH strands:
+                             both ``po`` orientations (F1R2 and F2R1) among its rows. Rows without a valid ``po``
+                             carry no strand info and never make a molecule ``duplex`` (nf/nr is alignment
+                             orientation on paired data, not the molecular strand).
+      * ``ssc``            – single-strand consensus (only one strand flags).
+      * ``singleton``      – no consensus family (nf==0 and nr==0).
+
+    Keyed on ``CS`` (never ``MI`` — MI is per-strand). Only reads that SHOW the variant appear in the featuremap, so a
+    non-dx molecule whose other strand matched reference (emitted no row) is indistinguishable from ssc here.
+    Molecules never span regions, so this is safe per part-file.
+    """
+    has_nf = COL_NF in frame.columns
+    has_nr = COL_NR in frame.columns
+    nf = pl.col(COL_NF).cast(pl.Int64, strict=False).fill_null(0) if has_nf else pl.lit(0)
+    nr = pl.col(COL_NR).cast(pl.Int64, strict=False).fill_null(0) if has_nr else pl.lit(0)
+    dx_full = (
+        (pl.col(COL_DX).cast(pl.Int64, strict=False) == 1).fill_null(value=False)
+        if COL_DX in frame.columns
+        else pl.lit(value=False)
+    )
+    # Molecular strand = po (F1R2 / F2R1). nf/nr is alignment orientation on paired data, NOT the strand, so it is
+    # never used here. A read without a valid po (or a frame without a po column) carries no strand info: it can
+    # still be duplex_pe_full (dx), ssc or singleton, but never "duplex" by observed two-strand agreement.
+    if COL_PO in frame.columns:
+        po = pl.col(COL_PO).cast(pl.Utf8)
+        strand_a = (po == "F1R2").fill_null(value=False)
+        strand_b = (po == "F2R1").fill_null(value=False)
+    else:
+        strand_a = strand_b = pl.lit(value=False)
+    frame = frame.with_columns(
+        strand_a.alias("_is_fwd"),
+        strand_b.alias("_is_rev"),
+        ((nf > 0) | (nr > 0)).alias("_is_consensus"),
+        dx_full.alias("_ds_full"),
+    )
+    # Molecule key: CS + the variant descriptors (indel descriptors keep an ins and a del at the same anchor
+    # from being treated as the same variant). CS spans both strands + both ends; if CS is absent, fall back to
+    # per-row scope so behavior degrades to "single observation".
+    mol_keys = [
+        c for c in (COL_CHROM, COL_POS, "REF", "ALT", COL_X_IC, "X_IL", "X_INDEL_SEQ", COL_CS) if c in frame.columns
+    ]
+    if COL_CS in frame.columns and mol_keys:
+        has_f = pl.col("_is_fwd").any().over(mol_keys)
+        has_r = pl.col("_is_rev").any().over(mol_keys)
+    else:  # no molecule key available -> classify each row on its own observation
+        has_f, has_r = pl.col("_is_fwd"), pl.col("_is_rev")
+    frame = frame.with_columns(
+        pl.when(pl.col("_ds_full"))
+        .then(pl.lit(DUPLEX_GROUP_DUPLEX_PE_FULL))
+        .when(~pl.col("_is_consensus"))
+        .then(pl.lit(DUPLEX_GROUP_SINGLETON))
+        .when(has_f & has_r)
+        .then(pl.lit(DUPLEX_GROUP_DUPLEX))
+        .otherwise(pl.lit(DUPLEX_GROUP_SSC))
+        .alias(DUPLEX_GROUP_COL)
+    )
+    return frame.drop("_is_fwd", "_is_rev", "_is_consensus", "_ds_full")
+
+
+def _part_seed(seed: int | None, i: int) -> int | None:
+    """Per-part-file sampling seed: ``seed + i``, or ``None`` (unseeded / random) when no seed was given."""
+    return None if seed is None else seed + i
+
+
+def _balanced_sample(
+    frame: pl.DataFrame,
+    n: int,
+    indel_snv_balance_fraction: float | None,
+    seed: int,
+) -> pl.DataFrame:
+    """Pick ``n`` rows from ``frame``; if a balance fraction is given, keep ~that fraction of indel rows."""
+    if frame.height <= n:
+        return frame
+
+    def _take(sub: pl.DataFrame, k: int) -> pl.DataFrame:
+        if sub.height <= k:
+            return sub
+        return sub.sample(n=k, seed=seed)
+
+    if indel_snv_balance_fraction is None:
+        return _take(frame, n)
+    pred = (
+        pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False)
+        if COL_X_IC in frame.columns
+        else pl.lit(value=False)
+    )
+    indel_df = frame.filter(pred)
+    snv_df = frame.filter(~pred)
+    want_indel = min(round(indel_snv_balance_fraction * n), indel_df.height)
+    want_snv = min(n - want_indel, snv_df.height)
+    want_indel = min(indel_df.height, n - want_snv)  # refill if SNV-scarce
+    parts = []
+    if want_indel > 0:
+        parts.append(_take(indel_df, want_indel))
+    if want_snv > 0:
+        parts.append(_take(snv_df, want_snv))
+    return pl.concat(parts, how="vertical") if parts else frame.head(0)
+
+
+def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR0915
+    parquet_files: list[str],
+    output_path: str,
+    downsample_reads: int,
+    downsample_seed: int | None,
+    duplex_oversample_priority: list[str],
+    indel_snv_balance_fraction: float | None,
+    min_group_fraction: float | None = None,
+) -> None:
+    """Downsample to ``downsample_reads`` while preserving reads by ``duplex_group`` priority.
+
+    The size budget is filled top-down in ``duplex_oversample_priority`` order: every row of a higher-priority
+    group is kept before any of a lower-priority group. This enriches (e.g.) concordant-duplex reads relative
+    to SSC/singletons without duplicating any row. When a balance fraction is set, it is applied within each
+    subsampled group so indel FPs are not decimated there.
+
+    ``min_group_fraction`` (0..1, optional) adds a per-``duplex_group`` FLOOR: before the priority fill, every
+    present group is guaranteed at least ``min(round(min_group_fraction * budget), its count)`` rows; the
+    remaining budget is then distributed top-down by priority (so duplex enrichment still uses the surplus).
+    This prevents a flooded high-priority tier (e.g. duplex_pe_full after dropping the dup filter) from
+    starving lower tiers such as SSC. With ``min_group_fraction`` unset the behavior is byte-identical to the
+    strict top-down fill (a single boundary group is subsampled; lower groups dropped).
+    """
+    seed = downsample_seed if downsample_seed is not None else 0
+
+    # Pass 1: annotate each part with duplex_group (per-part is safe — molecules don't span regions) and
+    # tally global per-group counts (and per-(group, indel/SNV) counts, used to pre-sample each stratum at its
+    # own rate when balancing).
+    balance = indel_snv_balance_fraction is not None
+    annotated_files: list[str] = []
+    counts: dict[str, int] = {}
+    indel_counts: dict[str, int] = {}
+    for f in parquet_files:
+        part = _add_duplex_group_column(pl.read_parquet(f))
+        tmp = f + ".dg.parquet"
+        part.write_parquet(tmp)
+        annotated_files.append(tmp)
+        for grp, c in part.group_by(DUPLEX_GROUP_COL).len().iter_rows():
+            counts[grp] = counts.get(grp, 0) + int(c)
+        if balance and COL_X_IC in part.columns:
+            is_indel = pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False)
+            for grp, c in part.filter(is_indel).group_by(DUPLEX_GROUP_COL).len().iter_rows():
+                indel_counts[grp] = indel_counts.get(grp, 0) + int(c)
+
+    total = sum(counts.values())
+    budget = min(downsample_reads, total)
+
+    # Priority order: configured groups first (in order), then any unlisted groups (stable) last.
+    ordered = [g for g in duplex_oversample_priority if g in counts]
+    ordered += [g for g in counts if g not in ordered]
+
+    keep_n: dict[str, int] = dict.fromkeys(ordered, 0)
+    remaining = budget
+    # Phase 1 (optional): reserve a per-group floor so no present group is starved below the floor.
+    if min_group_fraction:
+        floor = round(min_group_fraction * budget)
+        for g in ordered:
+            f = min(floor, counts[g], remaining)
+            keep_n[g] = f
+            remaining -= f
+    # Phase 2: distribute the remaining budget top-down by priority (surplus -> duplex enrichment).
+    for g in ordered:
+        take = min(counts[g] - keep_n[g], remaining)
+        keep_n[g] += take
+        remaining -= take
+
+    full_groups = [g for g, n in keep_n.items() if n > 0 and n == counts[g]]
+    partial_groups = [g for g, n in keep_n.items() if 0 < n < counts[g]]
+
+    log.info(
+        f"Duplex priority-preserve downsample: counts={counts} budget={budget} min_frac={min_group_fraction} "
+        f"full_keep={full_groups} partial={partial_groups} keep_n={keep_n}"
+    )
+
+    # Per-(partial group, indel/SNV) pre-sample fractions when balancing. A single uniform
+    # group fraction would decimate the (rare) indel stratum before the balanced exact-trim, so the realized indel
+    # fraction would stay at its natural rate instead of the target. Pre-sample each stratum at the rate its
+    # balanced target needs (same targets as _balanced_sample), so the trim can reach the target.
+    stratum_frac: dict[str, tuple[float, float]] = {}
+    if balance:
+        for g in partial_groups:
+            n_ind = indel_counts.get(g, 0)
+            n_snv = counts[g] - n_ind
+            want_ind = min(round(indel_snv_balance_fraction * keep_n[g]), n_ind)
+            want_snv = min(keep_n[g] - want_ind, n_snv)
+            want_ind = min(n_ind, keep_n[g] - want_snv)  # refill if SNV-scarce
+            stratum_frac[g] = (
+                min(1.0, want_ind / n_ind * 1.05 + 1000.0 / n_ind) if n_ind else 0.0,
+                min(1.0, want_snv / n_snv * 1.05 + 1000.0 / n_snv) if n_snv else 0.0,
+            )
+
+    # Pass 2: collect fully-kept groups in full, and a memory-bounded per-part pre-sample of each partial group.
+    kept: list[pl.DataFrame] = []
+    for i, tmp in enumerate(annotated_files):
+        part = pl.read_parquet(tmp)
+        if full_groups:
+            kept.append(part.filter(pl.col(DUPLEX_GROUP_COL).is_in(full_groups)))
+        for g in partial_groups:
+            b = part.filter(pl.col(DUPLEX_GROUP_COL) == g)
+            if b.height:
+                frac = min(1.0, keep_n[g] / counts[g] * 1.05 + 1000.0 / counts[g])
+                if g in stratum_frac and COL_X_IC in b.columns:
+                    frac_ind, frac_snv = stratum_frac[g]
+                    pred = pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False)
+                    kept.append(b.filter(pred).sample(fraction=frac_ind, seed=seed + i))
+                    kept.append(b.filter(~pred).sample(fraction=frac_snv, seed=seed + i))
+                else:
+                    kept.append(b.sample(fraction=frac, seed=seed + i))
+
+    if kept:
+        merged = pl.concat(kept, how="vertical")
+    else:
+        merged = _add_duplex_group_column(pl.read_parquet(annotated_files[0])).head(0)
+
+    # Exact-trim each partial group to its target (balanced/uniform sample); leave full-kept groups intact.
+    for g in partial_groups:
+        gdf = merged.filter(pl.col(DUPLEX_GROUP_COL) == g)
+        rest_df = merged.filter(pl.col(DUPLEX_GROUP_COL) != g)
+        gdf = _balanced_sample(gdf, keep_n[g], indel_snv_balance_fraction, seed)
+        merged = pl.concat([rest_df, gdf], how="vertical")
+
+    # Drop the helper column, shuffle deterministically so groups interleave, write.
+    merged = merged.drop(DUPLEX_GROUP_COL).sample(fraction=1.0, shuffle=True, seed=seed)
+    realized = merged.height
+    log.info(f"Duplex priority-preserve realized: {realized} rows (target {budget})")
+    merged.write_parquet(output_path)
+
+    for f in annotated_files:
+        Path(f).unlink(missing_ok=True)
+    for f in parquet_files:
+        Path(f).unlink(missing_ok=True)
+
+
+def _sample_pool_from_parts(
+    parquet_files: list[str],
+    pool_pred: pl.Expr,
+    n_pool: int,
+    target: int,
+    downsample_seed: int | None,
+    *,
+    seed_offset: int,
+) -> pl.DataFrame:
+    """Sample ``target`` rows matching ``pool_pred`` across part-files with bounded memory.
+
+    Each part is filtered to the pool and Bernoulli-sampled at a slightly inflated global fraction
+    (so the concatenation almost surely holds >= ``target`` rows), then trimmed exactly to ``target``.
+    Peak memory is one filtered part plus ~``target`` rows. Part ``i`` uses seed
+    ``_part_seed(downsample_seed, i + seed_offset)`` so different pools draw independent streams.
+    Returns an empty frame with the pool's schema when nothing is kept.
+    """
+    if n_pool <= 0 or target <= 0:
+        empty = [pl.scan_parquet(f).filter(pool_pred) for f in parquet_files]
+        return pl.concat(empty, how="vertical").head(0).collect()
+    keep_frac = min(1.0, (target / n_pool) * 1.05 + 1000.0 / n_pool)
+    parts = []
+    for i, f in enumerate(parquet_files):
+        part_seed = _part_seed(downsample_seed, i + seed_offset)
+        parts.append(pl.read_parquet(f).filter(pool_pred).sample(fraction=keep_frac, seed=part_seed))
+    pool_df = pl.concat(parts, how="vertical")
+    if pool_df.height > target:
+        pool_df = pool_df.sample(n=target, seed=downsample_seed)
+    return pool_df
+
+
+def _stratified_downsample_by_variant_type(
+    parquet_files: list[str],
+    output_path: str,
+    downsample_reads: int,
+    downsample_seed: int | None,
+    indel_snv_balance_fraction: float,
+) -> None:
+    """
+    Downsample the merged training set to ``downsample_reads`` rows while rebalancing the
+    mix of hmer-indel rows (``X_IC`` in {"ins", "del"}) and SNV rows so indels make up
+    approximately ``indel_snv_balance_fraction`` of the output.
+
+    This is best-effort and never upsamples/duplicates: if either pool is scarce, the
+    realized fraction drifts toward what the data can supply (the deficit is refilled from
+    the other pool up to ``downsample_reads``). Both pools use the same memory-bounded
+    per-part sampling as the uniform path (see :func:`_sample_pool_from_parts`), so memory
+    scales with the targets, not with the pool sizes. The combined survivors are fully
+    shuffled (deterministically) so types interleave.
+
+    Parameters
+    ----------
+    parquet_files : list[str]
+        Part-files to merge; assumed to share a schema containing the ``X_IC`` column.
+    output_path : str
+        Output path for the merged, rebalanced parquet file.
+    downsample_reads : int
+        Target total row count (best-effort upper bound).
+    downsample_seed : int | None
+        Random seed; all sampling/shuffling is derived from this value only (with the
+        per-part ``+ i`` offset convention used by the uniform multi-part path).
+    indel_snv_balance_fraction : float
+        Target indel fraction of the output.
+    """
+    # Null-safe predicates: SNV rows carry a null X_IC, and `null.is_in(...)` yields null
+    # (not False), so negating the raw predicate would silently drop SNV rows. fill_null(False)
+    # makes "not an indel" == "SNV" hold for null/other values.
+    pred = pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False)
+    snv_pred = ~pred
+
+    # Count indel vs SNV rows across parts lazily (bounded memory).
+    part_indel_counts = [pl.scan_parquet(f).filter(pred).select(pl.len()).collect().item() for f in parquet_files]
+    part_total_counts = [pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files]
+    n_indel = sum(part_indel_counts)
+    n_total = sum(part_total_counts)
+    n_snv = n_total - n_indel
+
+    # Best-effort targets (never exceed available supply).
+    target_total = min(downsample_reads, n_indel + n_snv)
+    want_indel = round(indel_snv_balance_fraction * target_total)
+    target_indel = min(want_indel, n_indel)
+    target_snv = min(target_total - target_indel, n_snv)
+    target_indel = min(n_indel, target_total - target_snv)  # refill if SNV-scarce
+
+    log.info(
+        f"Stratified downsample: {n_indel} indel + {n_snv} SNV rows -> "
+        f"target {target_indel} indel + {target_snv} SNV "
+        f"(target fraction {indel_snv_balance_fraction})"
+    )
+
+    # Both pools use memory-bounded per-part sampling, then an exact trim. Indels are NOT rare on WGS with hmer
+    # indels enabled (e.g. 171M post-filter indel rows at 100X), so they must never be materialized in full.
+    # SNVs keep their historical per-part seeds (offset 0 -> unchanged SNV sample); indels get an independent stream.
+    indel_df = _sample_pool_from_parts(
+        parquet_files, pred, n_indel, target_indel, downsample_seed, seed_offset=len(parquet_files)
+    )
+    snv_df = _sample_pool_from_parts(parquet_files, snv_pred, n_snv, target_snv, downsample_seed, seed_offset=0)
+
+    # Combine and deterministically shuffle so indel/SNV rows interleave.
+    merged_df = pl.concat([indel_df, snv_df], how="vertical")
+    merged_df = merged_df.sample(fraction=1.0, shuffle=True, seed=downsample_seed)
+
+    realized_indel = merged_df.filter(pred).height
+    realized_total = merged_df.height
+    realized_fraction = (realized_indel / realized_total) if realized_total else 0.0
+    log.info(
+        f"Stratified downsample realized: {realized_indel} indel + {realized_total - realized_indel} SNV "
+        f"= {realized_total} rows (indel fraction {realized_fraction:.4f})"
+    )
+
+    merged_df.write_parquet(output_path)
+
+    for f in parquet_files:
+        Path(f).unlink(missing_ok=True)
+
+
+def _write_per_class_counts(parquet_files: list[str], out_json: str) -> dict:
+    """Tally post-filter, PRE-downsample row counts per variant class and write them as JSON.
+
+    These are the raw-after-filter counts per class (snv / hmer_indel / non_hmer_indel) used as the
+    per-class error numerator for per-class SNVQ recalibration; they must be taken before downsampling
+    because the training downsample is class-stratified (indel balance + duplex priority). Lazy per-file
+    scans keep this memory-bounded. Class predicate mirrors compute_variant_type_column: indel iff X_IC in
+    {ins,del}; non-hmer iff X_INDEL_CLASS=="non_hmer"; else hmer; SNV otherwise.
+    """
+    schema = pl.scan_parquet(parquet_files[0]).collect_schema().names() if parquet_files else []
+    has_ic = COL_X_IC in schema
+    has_cls = COL_X_INDEL_CLASS in schema
+    total = n_indel = n_nonhmer = 0
+    for f in parquet_files:
+        lf = pl.scan_parquet(f)
+        total += lf.select(pl.len()).collect().item()
+        if has_ic:
+            indel = pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False)
+            n_indel += lf.filter(indel).select(pl.len()).collect().item()
+            if has_cls:
+                nh = indel & (pl.col(COL_X_INDEL_CLASS).cast(pl.Utf8).str.to_lowercase() == "non_hmer")
+                n_nonhmer += lf.filter(nh).select(pl.len()).collect().item()
+    counts = {
+        "snv": total - n_indel,
+        "hmer_indel": n_indel - n_nonhmer,
+        "non_hmer_indel": n_nonhmer,
+        "total": total,
+    }
+    # Per hmer run-length bin (cell keys "hmer_indel|<bin>", from X_HMER_RUN): the per-bin error numerators.
+    if has_ic and COL_X_HMER_RUN in schema:
+        cell = cell_key_expr(schema).alias("_cell")
+        per_cell: dict[str, int] = {}
+        for f in parquet_files:
+            for key, n in pl.scan_parquet(f).select(cell).group_by("_cell").len().collect().iter_rows():
+                if key.startswith(CELL_HMER_INDEL + CELL_SEP):
+                    per_cell[key] = per_cell.get(key, 0) + int(n)
+        counts.update(dict(sorted(per_cell.items())))
+    Path(out_json).write_text(json.dumps(counts, indent=2))
+    log.info(f"Per-class pre-downsample counts -> {out_json}: {counts}")
+    return counts
+
+
+SAMPLE_WEIGHT_COL = "sample_weight"
+_STRATUM_COL = "_sampling_stratum"
+
+
+def _annotate_sampling_strata(parquet_files: list[str], *, use_duplex_group: bool) -> dict[str, int]:
+    """Tag every pre-downsample row with its sampling stratum (in place) and return the stratum counts.
+
+    The stratum is everything the downsampler conditions on: the recalibration cell (variant class + hmer
+    run-length bin, which also covers the indel/SNV balance) and — when the duplex priority ladder runs — the
+    molecule-level ``duplex_group``. It must be computed BEFORE downsampling: ``duplex_group`` is a molecule-level
+    window that changes once reads are dropped. Within a stratum every sampler is random, so ``n_pre / n_post``
+    per stratum is an exact importance weight (finer strata stay unbiased).
+    """
+    counts: dict[str, int] = {}
+    for f in parquet_files:
+        part = pl.read_parquet(f)
+        parts = [cell_key_expr(part.columns)]
+        if use_duplex_group:
+            part = _add_duplex_group_column(part)
+            parts.append(pl.col(DUPLEX_GROUP_COL))
+        part = part.with_columns(pl.concat_str(parts, separator="/").alias(_STRATUM_COL))
+        if use_duplex_group:
+            part = part.drop(DUPLEX_GROUP_COL)
+        for key, n in part.group_by(_STRATUM_COL).len().iter_rows():
+            counts[key] = counts.get(key, 0) + int(n)
+        part.write_parquet(f)
+    return counts
+
+
+def _attach_sample_weight(output_path: str, pre_counts: dict[str, int]) -> None:
+    """Replace the stratum tag in the downsampled output with ``sample_weight = n_pre / n_post`` per stratum."""
+    post = pl.scan_parquet(output_path).group_by(_STRATUM_COL).len().collect()
+    weights = post.with_columns(
+        (pl.col(_STRATUM_COL).replace_strict(pre_counts, return_dtype=pl.Float64) / pl.col("len").cast(pl.Float64))
+        .cast(pl.Float32)
+        .alias(SAMPLE_WEIGHT_COL)
+    ).drop("len")
+    log.info(
+        "Sampling weights per stratum (n_pre/n_post): "
+        + ", ".join(f"{k}={w:.3g}" for k, w in sorted(weights.iter_rows()))
+    )
+    # Strata the downsample dropped entirely (e.g. a low-priority tier without a floor) cannot be re-weighted:
+    # recalibration simply has no rows for them. Report the lost pre-downsample mass so the gap is visible.
+    kept = set(weights[_STRATUM_COL].to_list())
+    lost = {k: n for k, n in pre_counts.items() if k not in kept}
+    if lost:
+        n_lost, n_total = sum(lost.values()), sum(pre_counts.values())
+        log.warning(
+            f"Downsample dropped {len(lost)} sampling strata entirely ({n_lost}/{n_total} = "
+            f"{n_lost / n_total:.2%} of pre-downsample rows; not representable by sample_weight): "
+            + ", ".join(f"{k}={n}" for k, n in sorted(lost.items(), key=lambda kv: -kv[1])[:20])
+        )
+    tmp = output_path + ".w.parquet"
+    (
+        pl.scan_parquet(output_path)
+        .join(weights.lazy(), on=_STRATUM_COL, how="left", maintain_order="left")
+        .drop(_STRATUM_COL)
+        .sink_parquet(tmp)
+    )
+    shutil.move(tmp, output_path)
+
+
+def _merge_parquet_files_lazy(  # noqa: PLR0913
     parquet_files: list[str],
     output_path: str,
     downsample_reads: int | None = None,
     downsample_seed: int | None = None,
+    indel_snv_balance_fraction: float | None = None,
+    duplex_oversample_priority: list[str] | None = None,
+    duplex_group_min_fraction: float | None = None,
+    per_class_counts_json: str | None = None,
+) -> None:
+    """Merge part-files (optionally downsampling) and record what the downsample kept.
+
+    ``per_class_counts_json``: pre-downsample per-class / per-hmer-bin row counts (recalibration numerators).
+    When the downsample actually drops rows, the output gets a per-row ``sample_weight`` (pre/post count of the
+    row's sampling stratum) so recalibration can undo the oversampling (duplex priority, indel/SNV balance).
+    Sampling itself is unchanged: the stratum tag is an extra column and every sampler selects
+    rows by seed, independent of the column set. See :func:`_merge_parquet_files_dispatch` for the strategies.
+    """
+    _validate_duplex_oversample_priority(duplex_oversample_priority)
+    if per_class_counts_json and parquet_files:
+        _write_per_class_counts(parquet_files, per_class_counts_json)
+
+    pre_counts = None
+    if downsample_reads is not None and parquet_files:
+        total_rows = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
+        if total_rows > downsample_reads:
+            schema_names = pl.scan_parquet(parquet_files[0]).collect_schema().names()
+            use_dg = bool(duplex_oversample_priority) and COL_CS in schema_names
+            pre_counts = _annotate_sampling_strata(parquet_files, use_duplex_group=use_dg)
+
+    _merge_parquet_files_dispatch(
+        parquet_files,
+        output_path,
+        downsample_reads,
+        downsample_seed,
+        indel_snv_balance_fraction,
+        duplex_oversample_priority,
+        duplex_group_min_fraction,
+    )
+    if pre_counts is not None:
+        _attach_sample_weight(output_path, pre_counts)
+
+
+def _merge_parquet_files_dispatch(  # noqa: PLR0912, PLR0915, C901
+    parquet_files: list[str],
+    output_path: str,
+    downsample_reads: int | None = None,
+    downsample_seed: int | None = None,
+    indel_snv_balance_fraction: float | None = None,
+    duplex_oversample_priority: list[str] | None = None,
+    duplex_group_min_fraction: float | None = None,
 ) -> None:
     """
-    Merge multiple Parquet files using Polars lazy evaluation for memory efficiency.
+    Merge multiple Parquet files using Polars lazy evaluation for memory efficiency (downsample dispatch).
 
     Parameters
     ----------
@@ -727,7 +1373,60 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912
         is less than this value, all reads are returned.
     downsample_seed : int | None
         Random seed for downsampling (optional, for reproducibility)
+    indel_snv_balance_fraction : float | None
+        If specified (and downsampling is active), rebalance the downsampled set so that
+        hmer-indel rows (X_IC in {"ins", "del"}) make up this fraction of the output,
+        instead of the default uniform downsample. No-op if unset, if the X_IC column is
+        absent, if there are no indel rows, or if the dataset fits within downsample_reads.
     """
+    # Duplex priority-preserve downsample: opt-in (duplex_oversample_priority set) and only when it can
+    # change the result. Short-circuits to the paths below (byte-identical) when: no priority requested,
+    # no downsample target, the CS molecule column is absent (non-duplex run), or the dataset already fits.
+    if duplex_oversample_priority and downsample_reads is not None and parquet_files:
+        try:
+            schema_names = pl.scan_parquet(parquet_files[0]).collect_schema().names()
+        except Exception:  # noqa: BLE001 - be conservative; fall back on any schema error
+            schema_names = []
+        if COL_CS in schema_names:
+            total_rows = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
+            if total_rows > downsample_reads:
+                _priority_preserve_downsample(
+                    parquet_files,
+                    output_path,
+                    downsample_reads,
+                    downsample_seed,
+                    duplex_oversample_priority,
+                    indel_snv_balance_fraction,
+                    duplex_group_min_fraction,
+                )
+                return
+
+    # Stratified (indel/SNV-balanced) downsample: opt-in and only when it can change the
+    # result. Any of the following short-circuits back to the byte-identical uniform path:
+    #   - no target fraction requested
+    #   - no downsample target (downsample_reads is None)
+    #   - the X_IC column is absent from the merged schema
+    #   - there are 0 indel rows to balance against
+    #   - the dataset already fits within downsample_reads (nothing is dropped)
+    if indel_snv_balance_fraction is not None and downsample_reads is not None and parquet_files:
+        try:
+            schema_names = pl.scan_parquet(parquet_files[0]).collect_schema().names()
+        except Exception:  # noqa: BLE001 - be conservative; fall back to uniform on any schema error
+            schema_names = []
+        if COL_X_IC in schema_names:
+            pred = pl.col(COL_X_IC).is_in(["ins", "del"])
+            n_indel = sum(pl.scan_parquet(f).filter(pred).select(pl.len()).collect().item() for f in parquet_files)
+            total_rows = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
+            if n_indel > 0 and total_rows > downsample_reads:
+                _stratified_downsample_by_variant_type(
+                    parquet_files,
+                    output_path,
+                    downsample_reads,
+                    downsample_seed,
+                    indel_snv_balance_fraction,
+                )
+                return
+
     if not parquet_files:
         log.warning("No Parquet files to merge - creating empty output file")
         empty_df = pl.DataFrame({"CHROM": [], "POS": [], "REF": [], "ALT": []})
@@ -759,27 +1458,38 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912
         f"{'...' if len(parquet_files) > MAX_DEBUG_FILES_TO_SHOW else ''}"
     )
 
-    lazy_frames = [pl.scan_parquet(f) for f in parquet_files]
-
-    if log.isEnabledFor(logging.DEBUG):
-        lazy_frames_size = [frame.select(pl.len()).collect().item() for frame in lazy_frames]
-        log.debug(f"Individual Parquet file sizes (rows): {', '.join(map(str, lazy_frames_size))}")
-
-    merged_lazy = pl.concat(lazy_frames, how="vertical")
-
     if downsample_reads is None:
+        # Stream all part-files straight to disk (memory-bounded).
+        merged_lazy = pl.concat([pl.scan_parquet(f) for f in parquet_files], how="vertical")
         log.debug(f"Writing merged Parquet to: {output_path}")
         merged_lazy.sink_parquet(output_path)
     else:
-        merged_df = merged_lazy.collect()
-        if merged_df.height <= downsample_reads:
-            log.debug(
-                f"Dataset has {merged_df.height} rows, which is <= requested {downsample_reads} - keeping all rows"
-            )
-            merged_df.write_parquet(output_path)
+        # Memory-bounded downsampling: never materialize the full merged frame (it can be
+        # hundreds of millions of rows when filters are permissive, which OOMs a plain
+        # `concat().collect()`). Instead sample each part-file independently at the global
+        # keep-fraction (uniform across the genome since every region is sampled at the same
+        # rate), concatenate the small survivors, then exact-trim to `downsample_reads`.
+        part_lengths = [pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files]
+        total_rows = sum(part_lengths)
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"Individual Parquet file sizes (rows): {', '.join(map(str, part_lengths))}")
+
+        if total_rows <= downsample_reads:
+            log.debug(f"Dataset has {total_rows} rows, which is <= requested {downsample_reads} - keeping all rows")
+            pl.concat([pl.scan_parquet(f) for f in parquet_files], how="vertical").sink_parquet(output_path)
         else:
-            log.info(f"Sampling {downsample_reads} rows from {merged_df.height} total rows")
-            merged_df.sample(n=downsample_reads, seed=downsample_seed).write_parquet(output_path)
+            log.info(f"Sampling {downsample_reads} rows from {total_rows} total rows (per-part-file, memory-bounded)")
+            # Oversample slightly per part-file so the concatenated survivors comfortably exceed
+            # the target despite Bernoulli variance; the final exact-trim yields exactly the target.
+            keep_frac = min(1.0, (downsample_reads / total_rows) * 1.05 + 1000.0 / total_rows)
+            sampled_parts = [
+                pl.read_parquet(f).sample(fraction=keep_frac, seed=_part_seed(downsample_seed, i))
+                for i, f in enumerate(parquet_files)
+            ]
+            merged_df = pl.concat(sampled_parts, how="vertical")
+            if merged_df.height > downsample_reads:
+                merged_df = merged_df.sample(n=downsample_reads, seed=downsample_seed)
+            merged_df.write_parquet(output_path)
 
     for f in parquet_files:
         Path(f).unlink(missing_ok=True)
@@ -1055,12 +1765,12 @@ def _drop_fields(
     return info_meta, fmt_meta
 
 
-def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
+def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
     vcf: str,
     out: str,
     drop_info: set[str] | None = None,
     drop_format: set[str] | None = None,
-    chunk_bp: int = CHUNK_BP_DEFAULT,
+    chunk_bp: int | None = None,
     jobs: int = DEFAULT_JOBS,
     list_mode: str = "explode",
     log_level: int = logging.INFO,
@@ -1069,6 +1779,10 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
     read_filter_json_key: str | None = None,
     downsample_reads: int | None = None,
     downsample_seed: int | None = None,
+    indel_snv_balance_fraction: float | None = None,
+    duplex_oversample_priority: list[str] | None = None,
+    duplex_group_min_fraction: float | None = None,
+    per_class_counts_json: str | None = None,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -1089,8 +1803,12 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
         INFO fields to exclude
     drop_format : set[str] | None
         FORMAT fields to exclude
-    chunk_bp : int
-        Maximum number of base-pairs per chunk (default 10 Mbp).
+    chunk_bp : int | None
+        Base-pairs per processing chunk (genome window). If None (default), the window is
+        sized adaptively by variant-record density (see ``_choose_window_bp``) so each parallel
+        worker's exploded frame stays bounded on dense featuremaps, clamped to
+        ``CHUNK_BP_DEFAULT`` (10 Mbp) as the maximum. If an explicit value is given, adaptive
+        sizing is disabled and that value is used verbatim.
     jobs : int
         Number of parallel jobs (0 = auto-detect CPU cores)
     list_mode : str
@@ -1111,7 +1829,12 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
         is less than this value, all reads are returned.
     downsample_seed : int | None
         Random seed for downsampling (optional, for reproducibility)
+    indel_snv_balance_fraction : float | None
+        If specified, rebalance the downsampled set so hmer-indel rows make up this fraction
+        of the output (see `_merge_parquet_files_lazy`). No-op if unset or if there is no
+        X_IC column / no indels / the dataset fits within downsample_reads.
     """
+    _validate_duplex_oversample_priority(duplex_oversample_priority)
     log.info(f"Input: {vcf}")
     log.info(f"Output: {out}")
     log.info(f"List mode: {list_mode}")
@@ -1208,13 +1931,32 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
             if isinstance(read_filters, dict) and KEY_FILTERS in read_filters:
                 log.info(f"Filter configuration contains {len(read_filters[KEY_FILTERS])} filter rules")
 
+        # Choose the genome window size. If chunk_bp was not explicitly overridden, size it
+        # adaptively by variant-record density so each worker's exploded frame stays bounded on
+        # dense featuremaps; an explicit chunk_bp disables adaptivity and is used verbatim.
+        if chunk_bp is None:
+            total_records = _count_vcf_records(vcf, bcftools)
+            if total_records is None:
+                window_bp = CHUNK_BP_DEFAULT
+                log.info(f"Record count unavailable; using fixed window size {window_bp:,} bp")
+            else:
+                genome_bp = sum(length for _, length in _parse_vcf_contigs(vcf, bcftools))
+                window_bp = _choose_window_bp(total_records, genome_bp)
+                log.info(
+                    f"Adaptive window sizing: total_records={total_records:,}, "
+                    f"genome_bp={genome_bp:,}, chosen window={window_bp:,} bp"
+                )
+        else:
+            window_bp = chunk_bp
+            log.info(f"Using explicit window size {window_bp:,} bp (adaptive sizing disabled)")
+
         # Generate genomic regions (fixed windows via bedtools)
         regions = _generate_genomic_regions(
             vcf,
             jobs,
             bcftools,
             bedtools,
-            window_size=chunk_bp,
+            window_size=window_bp,
         )
         log.info(f"Created {len(regions)} regions for parallel processing")
         log.debug(f"First 5 regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
@@ -1279,7 +2021,16 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
                     "Check log for details. If using read filters, they may be filtering out all data."
                 )
 
-            _merge_parquet_files_lazy(part_files, out, downsample_reads, downsample_seed)
+            _merge_parquet_files_lazy(
+                part_files,
+                out,
+                downsample_reads,
+                downsample_seed,
+                indel_snv_balance_fraction,
+                duplex_oversample_priority,
+                duplex_group_min_fraction,
+                per_class_counts_json,
+            )
 
         final_row_count = pl.scan_parquet(out).select(pl.len()).collect().item()
         log.info(f"Conversion completed: {out} ({final_row_count:,} rows)")
@@ -1606,9 +2357,12 @@ def _cast_ref_alt_columns() -> list[pl.Expr]:
     X_ALT is *not* included here because it is already processed via the
     INFO/FORMAT loops; adding it again would create duplicate aliases.
     """
+    # REF/ALT are kept as plain strings rather than single-base categorical Enums: homopolymer indels
+    # (DeepSRSNV joint mode) produce multi-base alleles (e.g. REF="CC", ALT="C"), on which a strict
+    # single-base Enum cast fails. String is consistent across regions (SNV-only files are unaffected).
     return [
-        _cast_expr(REF, {"type": "String", "cat": REF_ALLELE_CATS}),
-        _cast_expr(ALT, {"type": "String", "cat": ALT_ALLELE_CATS}),
+        _cast_expr(REF, {"type": "String", "cat": None}),
+        _cast_expr(ALT, {"type": "String", "cat": None}),
     ]
 
 
@@ -1653,8 +2407,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--chunk-bp",
         type=int,
-        default=CHUNK_BP_DEFAULT,
-        help=f"Base-pairs per processing chunk (default {CHUNK_BP_DEFAULT} bp)",
+        default=None,
+        help=(
+            "Base-pairs per processing chunk (genome window). If omitted, the window is sized "
+            f"adaptively by variant-record density, capped at {CHUNK_BP_DEFAULT} bp. Passing an "
+            "explicit value disables adaptive sizing and uses that value verbatim."
+        ),
     )
     parser.add_argument(
         "--list-mode",
@@ -1697,8 +2455,62 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Random seed for reproducible downsampling",
     )
+    parser.add_argument(
+        "--indel-snv-balance-fraction",
+        type=float,
+        default=None,
+        help=(
+            "Target hmer-indel fraction of the downsampled training set. If set, the "
+            "downsample rebalances indel (X_IC in {ins,del}) vs SNV rows toward this "
+            "fraction instead of uniform sampling. No-op if unset or no X_IC column."
+        ),
+    )
+    parser.add_argument(
+        "--duplex-oversample-priority",
+        default=None,
+        help=(
+            "Comma-separated ordered list of duplex_group tiers to preserve during downsampling, highest "
+            "priority first (e.g. 'duplex_pe_full,duplex,ssc,singleton'). When set, the downsample fills the "
+            "--downsample-reads budget top-down by tier (keep-all of a higher tier before any of a lower tier; "
+            "only the boundary tier is subsampled), enriching full-PE-duplex / duplex reads over ssc. No-op if "
+            "unset, if the CS column is absent (non-duplex run), or if the data already fits the budget. Valid tiers: "
+            + ", ".join(DUPLEX_PRIORITY_FP)
+            + "."
+        ),
+    )
+    parser.add_argument(
+        "--duplex-group-min-fraction",
+        type=float,
+        default=None,
+        help=(
+            "Per-duplex_group FLOOR (0..1) applied during the priority-preserve downsample: every present "
+            "duplex_group (duplex_pe_full/duplex/ssc/singleton) is guaranteed at least this fraction of the "
+            "--downsample-reads budget (capped by its available count) before the remaining budget is filled "
+            "top-down by --duplex-oversample-priority. Prevents a flooded high-priority tier from starving "
+            "lower tiers (e.g. SSC). No-op unless --duplex-oversample-priority is also set."
+        ),
+    )
+    parser.add_argument(
+        "--per-class-counts-json",
+        default=None,
+        help=(
+            "Write post-filter, PRE-downsample row counts per variant class (snv/hmer_indel/non_hmer_indel) "
+            "to this JSON. These raw-after-filter per-class counts are the error numerator for per-class SNVQ "
+            "recalibration (must precede the class-stratified training downsample)."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args(argv)
+
+    duplex_oversample_priority = (
+        [t.strip() for t in args.duplex_oversample_priority.split(",") if t.strip()]
+        if args.duplex_oversample_priority
+        else None
+    )
+    try:
+        _validate_duplex_oversample_priority(duplex_oversample_priority)
+    except ValueError as e:
+        parser.error(str(e))
 
     # Parse expand columns
     expand_columns: dict[str, int] | None = None
@@ -1731,6 +2543,10 @@ def main(argv: list[str] | None = None) -> None:
         read_filter_json_key=args.read_filter_json_key,
         downsample_reads=args.downsample_reads,
         downsample_seed=args.downsample_seed,
+        indel_snv_balance_fraction=args.indel_snv_balance_fraction,
+        duplex_oversample_priority=duplex_oversample_priority,
+        duplex_group_min_fraction=args.duplex_group_min_fraction,
+        per_class_counts_json=args.per_class_counts_json,
     )
 
 

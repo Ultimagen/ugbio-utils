@@ -14,8 +14,9 @@ import pandas as pd
 import seaborn as sns
 import sklearn
 import xgboost as xgb
-from matplotlib import colors
+from matplotlib import colors, gridspec
 from matplotlib import lines as mlines
+from matplotlib.patches import Patch
 from scipy.interpolate import interp1d
 from scipy.stats import binom
 from sklearn.dummy import DummyClassifier
@@ -35,13 +36,31 @@ from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions, PpmseqCategories
 
 from ugbio_srsnv.shap_plotting import SHAPPlotter
 from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
+from ugbio_srsnv.split_scheme import (
+    h5_key as split_h5_key,
+)
+from ugbio_srsnv.split_scheme import (
+    resolve_scheme,
+    resolve_scheme_and_add_columns,
+)
 from ugbio_srsnv.srsnv_utils import (
+    CS_FAMILY_SIZE,
+    CS_N_CAND,
+    CS_N_CROSSING,
+    CS_N_PE_PAIRS,
+    CS_N_SUPPORTING,
+    CS_SEC_SUPPORT,
     ET,
     ET_FILLNA,
+    FS,
     MAX_PHRED,
+    PE_DUPLEX_GROUP,
+    PE_DUPLEX_GROUP_PE,
+    PE_DUPLEX_GROUP_SIMPLEX_PE,
+    READ_GROUP,
+    RS,
     ST,
     ST_FILLNA,
-    add_is_mixed_to_featuremap_df,
     construct_trinuc_context_with_alt,
     get_base_recall_from_filters,
     phred_to_prob,
@@ -55,13 +74,32 @@ from ugbio_srsnv.trinuc_histogram_plotting import calc_and_plot_trinuc_hist
 # featuremap_df column names. TODO: make more generic?
 ML_PROB_1_TEST = "prob_orig"  # TODO: Maybe prob_recal?
 ML_QUAL_1_TEST = "MQUAL"
+NONHMER_INDEL_MAX_LEN = 20  # |X_IL| plot cap; matches snvfind --nonhmer-indel-max-len upper bound
 ML_LOGIT_TEST = "ML_logit_test"
 LABEL = "label"
 QUAL = FeatureMapFields.SNVQ.value
+X_HMER_REF = FeatureMapFields.X_HMER_REF.value
+X_IC = "X_IC"  # snvfind indel class: "ins" | "del" (present on homopolymer-indel rows)
+X_IL = "X_IL"  # snvfind indel length (|X_IL|)
+X_HMER_RUN = "X_HMER_RUN"  # snvfind: affected reference homopolymer run length
+X_HMER_BASE = "X_HMER_BASE"  # snvfind: the repeated base of the affected homopolymer run
+X_HMER_PRE = "X_HMER_PRE"  # snvfind: reference base immediately 5' of the affected run
+X_HMER_POST = "X_HMER_POST"  # snvfind: reference base immediately 3' of the affected run
+# GATK-style tandem-repeat tags emitted by snvfind for indels (used by the non-hmer STR section)
+RU = "RU"  # tandem-repeat unit / motif (bases); repeat period = len(RU)
+RPA = "RPA"  # number of repeat-unit copies in the alt allele
+STR = "STR"  # flag: the indel is a whole-unit short tandem repeat (set <-> RU present)
+X_NEXT1 = FeatureMapFields.X_NEXT1.value  # base at POS+1 == first base of the affected hmer run
+REF = FeatureMapFields.REF.value
+VARIANT_TYPE_SNV = "snv"
+VARIANT_TYPE = "variant_type"  # per-row snv | hmer_indel | non_hmer_indel (set by compute_variant_type_column)
+VARIANT_TYPE_HMER_INDEL = "hmer_indel"
+VARIANT_TYPE_NONHMER_INDEL = "non_hmer_indel"
 IS_MIXED = "is_mixed"
 IS_MIXED_START = "is_mixed_start"
 IS_MIXED_END = "is_mixed_end"
 FOLD_ID = "fold_id"
+
 EDIST = FeatureMapFields.EDIST.value
 SCORE = FeatureMapFields.BCSQ.value
 INDEX = FeatureMapFields.INDEX.value
@@ -76,7 +114,10 @@ edist_filter = f"{EDIST} <= 5"
 HQ_SNV_filter = f"{SCORE} >= 79"
 CSKP_SNV_filter = f"{SCORE} >= 100"
 read_end_filter = f"{INDEX} > 12 and {INDEX} < ({LENGTH} - 12)"
-mixed_read_filter = IS_MIXED  # TODO use adapter_version
+# LoD filters below reference IS_MIXED; in consensus mode the split column carries the
+# consensus flag, so these *_mixed_only filters become consensus-only. The LoD block in
+# create_report is currently disabled, so this has no live effect. TODO: use adapter_version.
+mixed_read_filter = IS_MIXED
 default_LoD_filters = {  # noqa: N816
     "no_filter": f"{SCORE} >= 0",
     "HQ_SNV": f"{HQ_SNV_filter} and {edist_filter}",
@@ -284,10 +325,27 @@ def create_srsnv_report_html(
     out_basename,
     srsnv_metadata_file,
     simple_pipeline=None,
+    split_mode: str = "mixed",
+    display_suffix: str = "mixed_start",
+    *,
+    has_hmer_indels: bool = False,
+    has_non_hmer_indels: bool = False,
+    has_duplex_pe: bool = False,
 ):
     if len(out_basename) > 0 and not out_basename.endswith("."):
         out_basename += "."
     report_html = Path(out_path) / f"{out_basename}report.html"
+    # hmer-indel section plot path (reconstructed by the same convention create_report uses). The plot
+    # file exists only when has_hmer_indels; the notebook cell is guarded on has_hmer_indels.
+    hmer_indel_by_class_plot = os.path.join(out_path, f"{out_basename}hmer_indel_by_class")
+    hmer_indel_fq_recall_plot = os.path.join(out_path, f"{out_basename}hmer_indel_fq_recall")
+    hmer_indel_context_plot = os.path.join(out_path, f"{out_basename}hmer_indel_context")
+    logit_histogram_hmer_indel = os.path.join(out_path, f"{out_basename}logit_histogram_hmer_indel")
+    # non-hmer indel section (parallel to hmer; files exist only when has_non_hmer_indels).
+    logit_histogram_non_hmer_indel = os.path.join(out_path, f"{out_basename}logit_histogram_non_hmer_indel")
+    non_hmer_indel_by_class_plot = os.path.join(out_path, f"{out_basename}non_hmer_indel_by_class")
+    non_hmer_indel_str_plot = os.path.join(out_path, f"{out_basename}non_hmer_indel_str")
+    non_hmer_indel_str_context_plot = os.path.join(out_path, f"{out_basename}non_hmer_indel_str_context")
 
     [
         FQ_vs_recall_plot,  # noqa: N806
@@ -319,7 +377,20 @@ def create_srsnv_report_html(
         "output_qual_per_feature": output_qual_per_feature,
         "qual_histogram": qual_histogram,
         "logit_histogram": logit_histogram,
+        "logit_histogram_hmer_indel": logit_histogram_hmer_indel,
+        "logit_histogram_non_hmer_indel": logit_histogram_non_hmer_indel,
         "calibration_fn_with_hist": calibration_fn_with_hist,
+        "split_mode": split_mode,
+        "display_suffix": display_suffix,
+        "has_hmer_indels": has_hmer_indels,
+        "has_non_hmer_indels": has_non_hmer_indels,
+        "has_duplex_pe": has_duplex_pe,
+        "hmer_indel_by_class_plot": hmer_indel_by_class_plot,
+        "hmer_indel_fq_recall_plot": hmer_indel_fq_recall_plot,
+        "hmer_indel_context_plot": hmer_indel_context_plot,
+        "non_hmer_indel_by_class_plot": non_hmer_indel_by_class_plot,
+        "non_hmer_indel_str_plot": non_hmer_indel_str_plot,
+        "non_hmer_indel_str_context_plot": non_hmer_indel_str_context_plot,
     }
 
     generate_report(
@@ -1476,6 +1547,7 @@ class SRSNVReport:
         self.params = params
         self.use_gpu_for_shap = use_gpu_for_shap
         self.out_path = out_path
+        base_name = base_name or ""  # None -> no prefix (not the literal "None")
         self.base_name = base_name
         self.lod_filters = lod_filters
         self.lod_label = lod_label
@@ -1549,15 +1621,25 @@ class SRSNVReport:
             logger.info(f"Adding {IS_FORWARD} column to data_df as negation of {REV}")
             self.data_df.loc[:, IS_FORWARD] = self.data_df[REV].astype(int) != 1
 
-        # Add is_mixed columns if they don't exist
-        if IS_MIXED not in self.data_df.columns:
-            logger.info(f"Adding {IS_MIXED}, {IS_MIXED_START} columns to data_df")
+        # Resolve the read-split "recipe" (scheme). The scheme may be provided by the caller
+        # (params["report_mode"], set by the CLI) or auto-detected from the dataframe columns.
+        report_mode_param = self.params.get("report_mode")
+        if report_mode_param:
+            self.scheme = resolve_scheme(mode=report_mode_param)
+        else:
+            self.scheme = resolve_scheme(self.data_df)
+        self.report_mode = self.scheme.mode  # kept for metadata / backward compat
 
+        # Add the split column(s) if they don't exist yet (e.g. when SRSNVReport is constructed
+        # directly, without going through prepare_report which already adds them).
+        if READ_GROUP not in self.data_df.columns:
+            logger.info(f"Adding split column(s) for split scheme {self.scheme.mode.value} to data_df")
             adapter_version = self.params.get("adapter_version", None)
             categorical_features = [f["name"] for f in self.srsnv_metadata["features"] if f.get("type") == "c"]
-            self.data_df = add_is_mixed_to_featuremap_df(
+            self.data_df, self.scheme = resolve_scheme_and_add_columns(
                 self.data_df, adapter_version=adapter_version, categorical_features_names=categorical_features
             )
+            self.report_mode = self.scheme.mode
 
         # add logits to data_df
         self.data_df[ML_LOGIT_TEST] = prob_to_logit(
@@ -1570,6 +1652,75 @@ class SRSNVReport:
         _, preds_train = split_validation_training_preds(all_model_probs, fold_arr=self.data_df[FOLD_ID].to_numpy())
         self.data_df["ML_prob_train"] = preds_train
         self.data_df["ML_logit_train"] = prob_to_logit(preds_train, max_value=self.max_qual)
+
+    # ──────────────────────── split-scheme helpers ────────────────────────
+    # These give every figure/table method a uniform, scheme-agnostic interface: iterate
+    # `self.scheme.variants`, get group masks / colors / h5 keys from the variant. No method
+    # switches on the scheme.
+
+    @property
+    def _display_variant(self):
+        return self.scheme.display_variant
+
+    @property
+    def tag_axis(self):
+        return self.scheme.tag_axis
+
+    def _display_groups(self):
+        """Ordered list of the display variant's group labels."""
+        return list(self._display_variant.groups)
+
+    def _group_masks(self, variant=None, data_df=None):
+        """Yield ``(label, boolean_mask)`` per group, in order, for a variant (default: display)."""
+        if variant is None:
+            variant = self._display_variant
+        if data_df is None:
+            data_df = self.data_df
+        yield from variant.group_masks(data_df).items()
+
+    def _variant_palette(self, variant=None):
+        """Stable ``{label: color}`` for a variant: its declared colors, else a seaborn palette."""
+        if variant is None:
+            variant = self._display_variant
+        if variant.colors:
+            return dict(variant.colors)
+        colors = sns.color_palette(n_colors=len(variant.groups))
+        return dict(zip(variant.groups, colors, strict=False))
+
+    def _is_legacy_variant(self, variant):
+        """True for the legacy (base-key) variant of a multi-variant scheme (mixed's both-ends)."""
+        return len(self.scheme.variants) > 1 and variant is self.scheme.legacy_variant
+
+    def _has_dual_split(self):
+        """True when the scheme keeps a distinct legacy + display table (ppmSeq mixed only).
+
+        Single-grouping schemes (consensus/none) render one per-group table; the dual-split path
+        additionally emits the historical 3-way (start / both-ends) run-info & quality rows.
+        """
+        return len(self.scheme.variants) > 1
+
+    def _variant_roc_groups(self, variant):
+        """Ordered ``[(name, mask), ...]`` and the ROC-table index for a variant.
+
+        Binary variants (``pos`` set) keep the historical ``[pos, neg]`` order and
+        ``["Total", "{pos} only", "{neg} only"]`` index; N-group variants list one row per group.
+        """
+        masks = variant.group_masks(self.data_df)
+        if variant.pos is not None:
+            groups = [(variant.pos, masks[variant.pos]), (variant.neg, masks[variant.neg])]
+            index = ["Total", f"{variant.pos} only", f"{variant.neg} only"]
+        else:
+            groups = list(masks.items())
+            index = ["Total", *[f"{label} only" for label in variant.groups]]
+        return groups, index
+
+    def _write_variant_table(self, base, variant, obj):
+        """Write ``obj`` to the variant's h5 key, and also to the bare ``base`` key when the scheme
+        has no explicit legacy (``suffix==''``) variant (so keys_to_convert / json conversion works).
+        """
+        obj.to_hdf(self.output_h5_filename, key=split_h5_key(base, variant), mode="a")
+        if variant.is_display and all(v.suffix != "" for v in self.scheme.variants):
+            obj.to_hdf(self.output_h5_filename, key=base, mode="a")
 
     def _save_plt(self, output_filename: str = None, fig=None, *, tight_layout=True, **kwargs):
         if output_filename is not None:
@@ -1738,7 +1889,9 @@ class SRSNVReport:
         return recall, fq
 
     @exception_handler
-    def plot_fq_recall(self, output_filename: str = None, *, only_calculate: bool = False, font_size: int = 24):
+    def plot_fq_recall(  # noqa: C901
+        self, output_filename: str = None, *, only_calculate: bool = False, font_size: int = 24
+    ):
         """Calculate precision and recall metrics for SRSNV quality thresholds.
 
         Parameters
@@ -1768,12 +1921,8 @@ class SRSNVReport:
         self.base_recall = base_recall
         self.base_fq = base_fq
 
-        # Legacy conditions using IS_MIXED (both ends) and IS_MIXED_START separately
-        conditions_legacy = {"all reads": None}
-        if IS_MIXED in self.data_df.columns and self.data_df[IS_MIXED].any():
-            conditions_legacy["mixed both ends"] = self.data_df[IS_MIXED]
-        if IS_MIXED_START in self.data_df.columns and self.data_df[IS_MIXED_START].any():
-            conditions_legacy["mixed start"] = self.data_df[IS_MIXED_START]
+        # Legacy variant conditions (mixed: the historical both-ends + start conditions).
+        conditions_legacy = self._fq_conditions(self.scheme.legacy_variant)
         pr_df_legacy = pr_df.copy()
         for label, condition in conditions_legacy.items():
             recall, fq = self._calc_threshold_based_fq_recall(pr_df_legacy["MQUAL"].to_numpy(), condition=condition)
@@ -1781,11 +1930,8 @@ class SRSNVReport:
             pr_df_legacy[f"FQ_{label}"] = fq
         pr_df_legacy.to_hdf(self.output_h5_filename, key="FQ_recall_LoD", mode="a")
 
-        # New conditions using IS_MIXED_START only
-        conditions = {"all reads": None}
-        if IS_MIXED_START in self.data_df.columns:
-            if self.data_df[IS_MIXED_START].any():
-                conditions["mixed"] = self.data_df[IS_MIXED_START]
+        # Display variant conditions (one curve per read group, or the binary positive group).
+        conditions = self._fq_conditions(self._display_variant)
 
         if only_calculate:
             for label, condition in conditions.items():
@@ -1806,7 +1952,21 @@ class SRSNVReport:
             ax.grid(visible=True)
             self._save_plt(output_filename, fig)
         self.pr_df = pr_df
-        self.pr_df.to_hdf(self.output_h5_filename, key="FQ_recall_LoD_mixed_start", mode="a")
+        self.pr_df.to_hdf(self.output_h5_filename, key=split_h5_key("FQ_recall_LoD", self._display_variant), mode="a")
+
+    def _fq_conditions(self, variant):
+        """Ordered ``{label: mask|None}`` FQ-recall conditions for a variant.
+
+        Uses the variant's ``fq_conditions_fn`` when set (mixed's historical both-ends/start
+        conditions); otherwise ``{"all reads": None}`` plus one condition per non-empty group.
+        """
+        if variant.fq_conditions_fn is not None:
+            return variant.fq_conditions_fn(self.data_df)
+        conditions = {"all reads": None}
+        for label, mask in variant.group_masks(self.data_df).items():
+            if mask.any():
+                conditions[label] = pd.Series(mask, index=self.data_df.index)
+        return conditions
 
     def get_dataset_sizes(self):
         """Calculate dataset sizes for different folds and overall."""
@@ -1866,17 +2026,125 @@ class SRSNVReport:
             }
         return dataset_sizes
 
+    def _calc_run_info_table_by_group(self):  # noqa: C901
+        """Consensus/none: build run info + quality summary with one column per read group.
+
+        Writes the same 5 h5 keys as the binary path; legacy and display tables are identical
+        (no start/end distinction). Column/label order follows the ordered read groups.
+        """
+        version_info = {
+            ("Pipeline version", ""): (self.params.get("pipeline_version", None)),
+            ("Docker image", ""): self.params.get("docker_image", None),
+            ("Adapter version", ""): self.params.get("adapter_version", None),
+            ("Report created on", ""): datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        n_tp = self.data_df[LABEL].sum()
+        n_fp = (~self.data_df[LABEL]).sum()
+        general_info = {
+            ("Sample name", ""): self.base_name[:-1],
+            ("Median training read length", ""): np.median(self.data_df[LENGTH]),
+            ("Median training coverage", ""): np.median(self.data_df[READ_COUNT]),
+            ("Training set, % TP reads", ""): signif(self.data_df[LABEL].mean() * 100, 3),
+        }
+        for label, mask in self._group_masks():
+            tp_pct = (mask & self.data_df[LABEL].to_numpy()).sum() / n_tp if n_tp else np.nan
+            fp_pct = (mask & (~self.data_df[LABEL]).to_numpy()).sum() / n_fp if n_fp else np.nan
+            general_info[(f"{label} training reads", "% of TP")] = f"{signif(100 * tp_pct, 3)}%"
+            general_info[(f"{label} training reads", "% of FP")] = f"{signif(100 * fp_pct, 3)}%"
+
+        tp_df = self.data_df[self.data_df[LABEL]]
+        median_qual = tp_df[QUAL].median()
+        recall_at_0 = self._get_recall_at_snvq(snvq=0)
+        roc_auc_phred = prob_to_phred(
+            self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="run info total"),
+            max_value=self.max_qual,
+        )
+        snvq_thresholds = self._snvq_thresholds()
+        # Per-group stats keyed by group label
+        grp_median, grp_recall0, grp_recall, grp_roc = {}, {}, {}, {}
+        for label, mask in self._group_masks():
+            cond = pd.Series(mask, index=self.data_df.index)
+            grp_median[label] = tp_df[cond.loc[tp_df.index]][QUAL].median()
+            grp_recall0[label] = self._get_recall_at_snvq(snvq=0, condition=cond)
+            grp_recall[label] = {s: self._get_recall_at_snvq(snvq=s, condition=cond) for s in snvq_thresholds}
+            sub = self.data_df[mask]
+            grp_roc[label] = prob_to_phred(
+                self._safe_roc_auc(sub[LABEL], sub[ML_PROB_1_TEST], name=f"run info {label}"), max_value=self.max_qual
+            )
+
+        groups = list(self._display_variant.groups)
+        performance_info = {("Median SNVQ", "All reads"): signif(median_qual, SIG_DIGITS)}
+        for label in groups:
+            performance_info[("Median SNVQ", label)] = signif(grp_median[label], SIG_DIGITS)
+        for snvq in snvq_thresholds:
+            performance_info[(f"Recall at SNVQ={snvq}", "All reads")] = signif(
+                self._get_recall_at_snvq(snvq=snvq) / recall_at_0, SIG_DIGITS
+            )
+            for label in groups:
+                denom = grp_recall0[label]
+                performance_info[(f"Recall at SNVQ={snvq}", label)] = signif(
+                    grp_recall[label][snvq] / denom if denom else np.nan, SIG_DIGITS
+                )
+        performance_info[("Pre-filter Recall", "All reads")] = signif(recall_at_0, SIG_DIGITS)
+        for label in groups:
+            performance_info[("Pre-filter Recall", label)] = signif(grp_recall0[label], SIG_DIGITS)
+        performance_info[("ROC AUC (Phred)", "All reads")] = signif(roc_auc_phred, SIG_DIGITS)
+        for label in groups:
+            performance_info[("ROC AUC (Phred)", label)] = signif(grp_roc[label], SIG_DIGITS)
+
+        # Paired-end duplex per-image CS-family stats: median per group (and overall), when present.
+        cs_stat_rows = (
+            ("Median CS family size", CS_FAMILY_SIZE),
+            ("Median reads crossing / CS", CS_N_CROSSING),
+            ("Median reads supporting / CS", CS_N_SUPPORTING),
+            ("Median PE pairs / CS", CS_N_PE_PAIRS),
+            ("Median CS candidates", CS_N_CAND),
+            ("Median dropped-cand support", CS_SEC_SUPPORT),
+        )
+        group_masks = dict(self._group_masks())
+        for row_label, col in cs_stat_rows:
+            if col not in self.data_df.columns:
+                continue
+            col_num = pd.to_numeric(self.data_df[col], errors="coerce")
+            performance_info[(row_label, "All reads")] = signif(col_num.median(), SIG_DIGITS)
+            for label in groups:
+                mask = group_masks.get(label)
+                performance_info[(row_label, label)] = (
+                    signif(col_num[mask].median(), SIG_DIGITS) if mask is not None else np.nan
+                )
+
+        training_info = {("Number of CV folds", ""): self.params["num_CV_folds"]}
+        dataset_sizes = self.get_dataset_sizes()
+        run_info_table = pd.Series({**general_info, **version_info}, name="")
+        run_quality_summary_table = pd.Series({**performance_info}, name="")
+        training_info_table = pd.Series({**training_info, **dataset_sizes}, name="")
+        # Single display grouping: write to the display variant's suffixed key + bare base key.
+        variant = self._display_variant
+        self._write_variant_table("run_info_table", variant, run_info_table)
+        self._write_variant_table("run_quality_summary_table", variant, run_quality_summary_table)
+        training_info_table.to_hdf(self.output_h5_filename, key="training_info_table", mode="a")
+
     @exception_handler
     def calc_run_info_table(self):  # noqa: PLR0915
         """Calculate run_info_table, a table with general run information."""
         # Generate Run Info table
         logger.info("Generating Run Info table")
-        # Legacy mixed percent using IS_MIXED (both ends)
-        TP_mixed_percent_legacy = (self.data_df[IS_MIXED] & self.data_df[LABEL]).sum() / (self.data_df[LABEL].sum())  # noqa: N806
-        FP_mixed_percent_legacy = (self.data_df[IS_MIXED] & ~self.data_df[LABEL]).sum() / ((~self.data_df[LABEL]).sum())  # noqa: N806
-        # New mixed percent using IS_MIXED_START
-        TP_mixed_percent = (self.data_df[IS_MIXED_START] & self.data_df[LABEL]).sum() / (self.data_df[LABEL].sum())  # noqa: N806
-        FP_mixed_percent = (self.data_df[IS_MIXED_START] & ~self.data_df[LABEL]).sum() / ((~self.data_df[LABEL]).sum())  # noqa: N806
+        # Schemes with a single display grouping use the per-group path; ppmSeq (mixed) keeps its
+        # dual legacy(both-ends)/display(start) tables with the historical 3-way performance rows.
+        if not self._has_dual_split():
+            self._calc_run_info_table_by_group()
+            return
+        pos = self._display_variant.pos
+        display_col = IS_MIXED_START
+        legacy_col = IS_MIXED
+        n_tp = self.data_df[LABEL].sum()
+        n_fp = (~self.data_df[LABEL]).sum()
+        # Legacy positive-group percent using the legacy split column (IS_MIXED both ends for ppmSeq)
+        TP_mixed_percent_legacy = (self.data_df[legacy_col] & self.data_df[LABEL]).sum() / n_tp  # noqa: N806
+        FP_mixed_percent_legacy = (self.data_df[legacy_col] & ~self.data_df[LABEL]).sum() / n_fp  # noqa: N806
+        # New positive-group percent using the display split column
+        TP_mixed_percent = (self.data_df[display_col] & self.data_df[LABEL]).sum() / n_tp  # noqa: N806
+        FP_mixed_percent = (self.data_df[display_col] & ~self.data_df[LABEL]).sum() / n_fp  # noqa: N806
         general_info_base = {
             ("Sample name", ""): self.base_name[:-1],
             ("Median training read length", ""): np.median(self.data_df[LENGTH]),
@@ -1885,33 +2153,33 @@ class SRSNVReport:
         }
         general_info = {
             **general_info_base,
-            ("Mixed training reads", "% of TP"): f"{signif(100 * TP_mixed_percent, 3)}%",
-            ("Mixed training reads", "% of FP"): f"{signif(100 * FP_mixed_percent, 3)}%",
+            (f"{pos} training reads", "% of TP"): f"{signif(100 * TP_mixed_percent, 3)}%",
+            (f"{pos} training reads", "% of FP"): f"{signif(100 * FP_mixed_percent, 3)}%",
         }
         general_info_legacy = {
             **general_info_base,
-            ("Mixed training reads", "% of TP"): f"{signif(100 * TP_mixed_percent_legacy, 3)}%",
-            ("Mixed training reads", "% of FP"): f"{signif(100 * FP_mixed_percent_legacy, 3)}%",
+            (f"{pos} training reads", "% of TP"): f"{signif(100 * TP_mixed_percent_legacy, 3)}%",
+            (f"{pos} training reads", "% of FP"): f"{signif(100 * FP_mixed_percent_legacy, 3)}%",
         }
         # Performance info
-        mixed_start_df = self.data_df[self.data_df[IS_MIXED_START]]
-        mixed_both_df = self.data_df[self.data_df[IS_MIXED]]
+        mixed_start_df = self.data_df[self.data_df[display_col]]
+        mixed_both_df = self.data_df[self.data_df[legacy_col]]
         tp_df = self.data_df[self.data_df[LABEL]]
-        tp_mixed_start_df = tp_df[tp_df[IS_MIXED_START]]
-        tp_mixed_both_df = tp_df[tp_df[IS_MIXED]]
+        tp_mixed_start_df = tp_df[tp_df[display_col]]
+        tp_mixed_both_df = tp_df[tp_df[legacy_col]]
         median_qual = tp_df[QUAL].median()
         median_qual_mixed_start = tp_mixed_start_df[QUAL].median()
         median_qual_mixed_both = tp_mixed_both_df[QUAL].median()
         recall_at_0 = self._get_recall_at_snvq(snvq=0)
-        recall_at_0_mixed_start = self._get_recall_at_snvq(snvq=0, condition=self.data_df[IS_MIXED_START])
-        recall_at_0_mixed_both = self._get_recall_at_snvq(snvq=0, condition=self.data_df[IS_MIXED])
-        snvq_thresholds = [50, 60, 70]
+        recall_at_0_mixed_start = self._get_recall_at_snvq(snvq=0, condition=self.data_df[display_col])
+        recall_at_0_mixed_both = self._get_recall_at_snvq(snvq=0, condition=self.data_df[legacy_col])
+        snvq_thresholds = self._snvq_thresholds()
         recalls = {}
         for snvq in snvq_thresholds:
             recalls[snvq] = {
                 "all": self._get_recall_at_snvq(snvq=snvq),
-                "mixed_start": self._get_recall_at_snvq(snvq=snvq, condition=self.data_df[IS_MIXED_START]),
-                "mixed_both": self._get_recall_at_snvq(snvq=snvq, condition=self.data_df[IS_MIXED]),
+                "mixed_start": self._get_recall_at_snvq(snvq=snvq, condition=self.data_df[display_col]),
+                "mixed_both": self._get_recall_at_snvq(snvq=snvq, condition=self.data_df[legacy_col]),
             }
         roc_auc_phred = prob_to_phred(
             self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="run info total"),
@@ -1929,42 +2197,43 @@ class SRSNVReport:
         # each metric having all its categories together before the next metric appears.
         performance_info = {
             ("Median SNVQ", "All reads"): signif(median_qual, SIG_DIGITS),
-            ("Median SNVQ", "Mixed"): signif(median_qual_mixed_start, SIG_DIGITS),
+            ("Median SNVQ", pos): signif(median_qual_mixed_start, SIG_DIGITS),
         }
         for snvq in snvq_thresholds:
             performance_info[(f"Recall at SNVQ={snvq}", "All reads")] = signif(
                 recalls[snvq]["all"] / recall_at_0, SIG_DIGITS
             )
-            performance_info[(f"Recall at SNVQ={snvq}", "Mixed")] = signif(
+            performance_info[(f"Recall at SNVQ={snvq}", pos)] = signif(
                 recalls[snvq]["mixed_start"] / recall_at_0_mixed_start, SIG_DIGITS
             )
         performance_info[("Pre-filter Recall", "All reads")] = signif(recall_at_0, SIG_DIGITS)
-        performance_info[("Pre-filter Recall", "Mixed")] = signif(recall_at_0_mixed_start, SIG_DIGITS)
+        performance_info[("Pre-filter Recall", pos)] = signif(recall_at_0_mixed_start, SIG_DIGITS)
         performance_info[("ROC AUC (Phred)", "All reads")] = signif(roc_auc_phred, SIG_DIGITS)
-        performance_info[("ROC AUC (Phred)", "Mixed")] = signif(roc_auc_phred_mixed_start, SIG_DIGITS)
+        performance_info[("ROC AUC (Phred)", pos)] = signif(roc_auc_phred_mixed_start, SIG_DIGITS)
 
-        # Legacy performance info with 3-way split for backward-compatible h5 storage
+        # Legacy performance info with 3-way split for backward-compatible h5 storage.
+        # In non-mixed modes the "start" and "both ends" sub-splits are identical.
         performance_info_legacy = {
             ("Median SNVQ", "All reads"): signif(median_qual, SIG_DIGITS),
-            ("Median SNVQ", "Mixed, start"): signif(median_qual_mixed_start, SIG_DIGITS),
-            ("Median SNVQ", "Mixed, both ends"): signif(median_qual_mixed_both, SIG_DIGITS),
+            ("Median SNVQ", f"{pos}, start"): signif(median_qual_mixed_start, SIG_DIGITS),
+            ("Median SNVQ", f"{pos}, both ends"): signif(median_qual_mixed_both, SIG_DIGITS),
         }
         for snvq in snvq_thresholds:
             performance_info_legacy[(f"Recall at SNVQ={snvq}", "All reads")] = signif(
                 recalls[snvq]["all"] / recall_at_0, SIG_DIGITS
             )
-            performance_info_legacy[(f"Recall at SNVQ={snvq}", "Mixed, start")] = signif(
+            performance_info_legacy[(f"Recall at SNVQ={snvq}", f"{pos}, start")] = signif(
                 recalls[snvq]["mixed_start"] / recall_at_0_mixed_start, SIG_DIGITS
             )
-            performance_info_legacy[(f"Recall at SNVQ={snvq}", "Mixed, both ends")] = signif(
+            performance_info_legacy[(f"Recall at SNVQ={snvq}", f"{pos}, both ends")] = signif(
                 recalls[snvq]["mixed_both"] / recall_at_0_mixed_both, SIG_DIGITS
             )
         performance_info_legacy[("Pre-filter Recall", "All reads")] = signif(recall_at_0, SIG_DIGITS)
-        performance_info_legacy[("Pre-filter Recall", "Mixed, start")] = signif(recall_at_0_mixed_start, SIG_DIGITS)
-        performance_info_legacy[("Pre-filter Recall", "Mixed, both ends")] = signif(recall_at_0_mixed_both, SIG_DIGITS)
+        performance_info_legacy[("Pre-filter Recall", f"{pos}, start")] = signif(recall_at_0_mixed_start, SIG_DIGITS)
+        performance_info_legacy[("Pre-filter Recall", f"{pos}, both ends")] = signif(recall_at_0_mixed_both, SIG_DIGITS)
         performance_info_legacy[("ROC AUC (Phred)", "All reads")] = signif(roc_auc_phred, SIG_DIGITS)
-        performance_info_legacy[("ROC AUC (Phred)", "Mixed, start")] = signif(roc_auc_phred_mixed_start, SIG_DIGITS)
-        performance_info_legacy[("ROC AUC (Phred)", "Mixed, both ends")] = signif(roc_auc_phred_mixed_both, SIG_DIGITS)
+        performance_info_legacy[("ROC AUC (Phred)", f"{pos}, start")] = signif(roc_auc_phred_mixed_start, SIG_DIGITS)
+        performance_info_legacy[("ROC AUC (Phred)", f"{pos}, both ends")] = signif(roc_auc_phred_mixed_both, SIG_DIGITS)
         # Info about versions
         version_info = {
             ("Pipeline version", ""): (self.params.get("pipeline_version", None)),
@@ -2109,152 +2378,93 @@ class SRSNVReport:
         num_cv_folds = self.params["num_CV_folds"]
         holdout_fold_cond = self.data_df[FOLD_ID].isna()
 
-        def _calc_roc_auc_dict(mix_condition, label_suffix=""):
-            auc_total = prob_to_phred(
-                self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name=f"total{label_suffix}"),
-                max_value=self.max_qual,
-            )
-            auc_mixed = prob_to_phred(
-                self._safe_roc_auc(
-                    self.data_df.loc[mix_condition, LABEL],
-                    self.data_df.loc[mix_condition, ML_PROB_1_TEST],
-                    name=f"mixed{label_suffix}",
-                ),
-                max_value=self.max_qual,
-            )
-            auc_non_mixed = prob_to_phred(
-                self._safe_roc_auc(
-                    self.data_df.loc[~mix_condition, LABEL],
-                    self.data_df.loc[~mix_condition, ML_PROB_1_TEST],
-                    name=f"non-mixed{label_suffix}",
-                ),
-                max_value=self.max_qual,
-            )
-            auc_per_fold = []
-            auc_per_fold_mixed = []
-            auc_per_fold_non_mixed = []
-            auc_on_holdout = []
-            auc_on_holdout_mixed = []
-            auc_on_holdout_non_mixed = []
-            error_on_holdout = []
+        def _calc_roc_auc_dict(groups, label_suffix=""):  # noqa: C901
+            """Compute ROC-AUC stats for the whole set plus each group in ``groups``.
+
+            ``groups`` is an ordered list of ``(name, boolean_mask)``. The returned dict maps each
+            statistic to a list ``[total, *per_group]`` aligned with ``["Total", *group_names]``.
+            """
+            data_df = self.data_df
+
+            def _auc(mask, name):
+                sub = data_df.loc[mask]
+                return prob_to_phred(
+                    self._safe_roc_auc(sub[LABEL], sub[ML_PROB_1_TEST], name=name), max_value=self.max_qual
+                )
+
+            all_mask = np.ones(len(data_df), dtype=bool)
+            auc_total = _auc(all_mask, f"total{label_suffix}")
+            auc_per_group = [_auc(mask, f"{gname}{label_suffix}") for gname, mask in groups]
+
+            auc_per_fold_total = []
+            auc_per_fold_groups = [[] for _ in groups]
+            auc_on_holdout_total = []
+            auc_on_holdout_groups = [[] for _ in groups]
+            # Track which series (by name) already produced a NaN on holdout, to stop recomputing.
+            error_on_holdout = set()
             for k in range(num_cv_folds):
-                fold_cond = self.data_df[FOLD_ID] == k
-                mix_fold_cond = fold_cond & mix_condition
-                nonmix_fold_cond = fold_cond & ~mix_condition
-                auc_per_fold.append(
-                    prob_to_phred(
-                        self._safe_roc_auc(
-                            self.data_df.loc[fold_cond, LABEL],
-                            self.data_df.loc[fold_cond, ML_PROB_1_TEST],
-                            name=f"fold {k} total{label_suffix}",
-                        )
-                    )
-                )
-                auc_per_fold_mixed.append(
-                    prob_to_phred(
-                        self._safe_roc_auc(
-                            self.data_df.loc[mix_fold_cond, LABEL],
-                            self.data_df.loc[mix_fold_cond, ML_PROB_1_TEST],
-                            name=f"fold {k} mixed{label_suffix}",
-                        ),
-                        max_value=self.max_qual,
-                    )
-                )
-                auc_per_fold_non_mixed.append(
-                    prob_to_phred(
-                        self._safe_roc_auc(
-                            self.data_df.loc[nonmix_fold_cond, LABEL],
-                            self.data_df.loc[nonmix_fold_cond, ML_PROB_1_TEST],
-                            name=f"fold {k} non-mixed{label_suffix}",
-                        ),
-                        max_value=self.max_qual,
-                    )
-                )
+                fold_cond = (data_df[FOLD_ID] == k).to_numpy()
+                auc_per_fold_total.append(_auc(fold_cond, f"fold {k} total{label_suffix}"))
+                for gi, (gname, mask) in enumerate(groups):
+                    auc_per_fold_groups[gi].append(_auc(fold_cond & mask, f"fold {k} {gname}{label_suffix}"))
                 if holdout_fold_cond.sum() > holdout_fold_size_thresh:
+                    ho = holdout_fold_cond.to_numpy()
+                    preds_ho = data_df.loc[ho, f"prob_fold_{k}"]
                     if "total" not in error_on_holdout:
-                        preds = self.data_df.loc[holdout_fold_cond, f"prob_fold_{k}"]
-                        auc_on_holdout.append(
-                            prob_to_phred(
-                                self._safe_roc_auc(
-                                    self.data_df.loc[holdout_fold_cond, LABEL],
-                                    preds,
-                                    name=f"holdout total{label_suffix}",
-                                )
-                            )
+                        val = prob_to_phred(
+                            self._safe_roc_auc(data_df.loc[ho, LABEL], preds_ho, name=f"holdout total{label_suffix}")
                         )
-                        if np.isnan(auc_on_holdout[-1]):
-                            error_on_holdout.append("total")
+                        auc_on_holdout_total.append(val)
+                        if np.isnan(val):
+                            error_on_holdout.add("total")
                     else:
-                        auc_on_holdout.append(np.nan)
-                    mix_holdout_cond = holdout_fold_cond & mix_condition
-                    nonmix_holdout_cond = holdout_fold_cond & ~mix_condition
-                    if "mixed" not in error_on_holdout:
-                        preds = self.data_df.loc[mix_holdout_cond, f"prob_fold_{k}"]
-                        auc_on_holdout_mixed.append(
-                            prob_to_phred(
+                        auc_on_holdout_total.append(np.nan)
+                    for gi, (gname, mask) in enumerate(groups):
+                        if gname not in error_on_holdout:
+                            gho = ho & mask
+                            val = prob_to_phred(
                                 self._safe_roc_auc(
-                                    self.data_df.loc[mix_holdout_cond, LABEL],
-                                    preds,
-                                    name=f"holdout mixed{label_suffix}",
+                                    data_df.loc[gho, LABEL],
+                                    data_df.loc[gho, f"prob_fold_{k}"],
+                                    name=f"holdout {gname}{label_suffix}",
                                 ),
                                 max_value=self.max_qual,
                             )
-                        )
-                        if np.isnan(auc_on_holdout_mixed[-1]):
-                            error_on_holdout.append("mixed")
-                    else:
-                        auc_on_holdout_mixed.append(np.nan)
-                    if "nonmixed" not in error_on_holdout:
-                        preds = self.data_df.loc[nonmix_holdout_cond, f"prob_fold_{k}"]
-                        auc_on_holdout_non_mixed.append(
-                            prob_to_phred(
-                                self._safe_roc_auc(
-                                    self.data_df.loc[nonmix_holdout_cond, LABEL],
-                                    preds,
-                                    name=f"holdout non-mixed{label_suffix}",
-                                ),
-                                max_value=self.max_qual,
-                            )
-                        )
-                        if np.isnan(auc_on_holdout_non_mixed[-1]):
-                            error_on_holdout.append("nonmixed")
+                            auc_on_holdout_groups[gi].append(val)
+                            if np.isnan(val):
+                                error_on_holdout.add(gname)
+                        else:
+                            auc_on_holdout_groups[gi].append(np.nan)
 
             result = {
-                "ROC AUC": [auc_total, auc_mixed, auc_non_mixed],
+                "ROC AUC": [auc_total, *auc_per_group],
                 "ROC AUC per fold mean": [
-                    np.array(auc_per_fold).mean(),
-                    np.array(auc_per_fold_mixed).mean(),
-                    np.array(auc_per_fold_non_mixed).mean(),
+                    np.array(auc_per_fold_total).mean(),
+                    *[np.array(g).mean() for g in auc_per_fold_groups],
                 ],
                 "ROC AUC per fold std": [
-                    np.array(auc_per_fold).std(),
-                    np.array(auc_per_fold_mixed).std(),
-                    np.array(auc_per_fold_non_mixed).std(),
+                    np.array(auc_per_fold_total).std(),
+                    *[np.array(g).std() for g in auc_per_fold_groups],
                 ],
             }
             if holdout_fold_cond.sum() > holdout_fold_size_thresh:
                 result["ROC AUC on holdout mean"] = [
-                    np.array(auc_on_holdout).mean(),
-                    np.array(auc_on_holdout_mixed).mean(),
-                    np.array(auc_on_holdout_non_mixed).mean(),
+                    np.array(auc_on_holdout_total).mean(),
+                    *[np.array(g).mean() for g in auc_on_holdout_groups],
                 ]
                 result["ROC AUC on holdout std"] = [
-                    np.array(auc_on_holdout).std(),
-                    np.array(auc_on_holdout_mixed).std(),
-                    np.array(auc_on_holdout_non_mixed).std(),
+                    np.array(auc_on_holdout_total).std(),
+                    *[np.array(g).std() for g in auc_on_holdout_groups],
                 ]
             return result
 
-        # Legacy table using IS_MIXED (both ends) for backward compatibility
-        auc_table_dict_legacy = _calc_roc_auc_dict(self.data_df[IS_MIXED], label_suffix=" legacy")
-        pd.DataFrame(auc_table_dict_legacy, index=["Total", "Mixed only", "Non-mixed only"]).T.to_hdf(
-            self.output_h5_filename, key="roc_auc_table", mode="a"
-        )
-        # New table using IS_MIXED_START
-        auc_table_dict = _calc_roc_auc_dict(self.data_df[IS_MIXED_START])
-        pd.DataFrame(auc_table_dict, index=["Total", "Mixed only", "Non-mixed only"]).T.to_hdf(
-            self.output_h5_filename, key="roc_auc_table_mixed_start", mode="a"
-        )
+        # One table per variant. Binary variants (pos/neg set) keep the historical
+        # "{pos} only"/"{neg} only" row order; N-group variants list one row per group.
+        for variant in self.scheme.variants:
+            groups, auc_index = self._variant_roc_groups(variant)
+            label_suffix = " legacy" if self._is_legacy_variant(variant) else ""
+            auc_dict = _calc_roc_auc_dict(groups, label_suffix=label_suffix)
+            self._write_variant_table("roc_auc_table", variant, pd.DataFrame(auc_dict, index=auc_index).T)
 
     @exception_handler
     def calc_run_quality_table(
@@ -2273,6 +2483,58 @@ class SRSNVReport:
             qual_stat_ps = [0.05, 0.1, 0.25, 0.5, 0.75, 0.90, 0.95]
         if cols_for_stats is None:
             cols_for_stats = {QUAL: QUAL, ML_QUAL_1_TEST: "ML_qual", ML_LOGIT_TEST: "ML_logit"}
+        logger.info("Generating Run Quality table")
+
+        def _quality_table(conds_dict):
+            """Describe QUAL/ML_qual/ML_logit per condition and stack into a table (drop 'count')."""
+            stats = pd.concat(
+                [
+                    self.data_df.loc[cond, list(cols_for_stats.keys())]
+                    .describe(percentiles=qual_stat_ps)
+                    .rename(columns={stat_key: stat_name + key for stat_key, stat_name in cols_for_stats.items()})
+                    for key, cond in conds_dict.items()
+                ],
+                axis=1,
+            )
+            return pd.DataFrame(signif(stats.values, SIG_DIGITS), index=stats.index, columns=stats.columns).drop(
+                index="count"
+            )
+
+        base_conds = {
+            "": np.ones(self.data_df[LABEL].shape, dtype=bool),
+            "_TP": self.data_df[LABEL].to_numpy(),
+            "_FP": (~self.data_df[LABEL]).to_numpy(),
+        }
+
+        if not self._has_dual_split():
+            # Single-grouping scheme (consensus / none): one TP column per read group. The internal
+            # join keys use the group label directly (kept literal for col_order); display uses the
+            # same labels.
+            display_variant = self._display_variant
+            tp = self.data_df[LABEL].to_numpy()
+            conds = dict(base_conds)
+            for label, mask in self._group_masks():
+                conds[f"_TP_{label}"] = mask & tp
+            run_quality_table = _quality_table(conds)
+            display_columns = []
+            for qcol in (QUAL, "ML_qual"):
+                display_columns.append((qcol, "FP", ""))
+                display_columns.append((qcol, "TP", "overall"))
+                for label in display_variant.groups:
+                    display_columns.append((qcol, "TP", label))
+            col_order = [
+                "_".join(cols) if cols[2] not in ["", "overall"] else "_".join(cols[:2]) for cols in display_columns
+            ]
+            run_quality_table_display = run_quality_table.loc[:, col_order].copy()
+            run_quality_table_display.columns = pd.MultiIndex.from_tuples(display_columns)
+            # No legacy/both-ends distinction: write the same table to the display key + bare base.
+            self._write_variant_table("run_quality_table", display_variant, run_quality_table.T)
+            run_quality_table_display.to_hdf(self.output_h5_filename, key="run_quality_table_display", mode="a")
+            return
+
+        # Dual-split scheme (ppmSeq mixed) — unchanged historical output.
+        legacy_variant = self.scheme.legacy_variant
+        display_variant = self._display_variant
         if display_columns is None:
             display_columns = [
                 (QUAL, "FP", ""),
@@ -2284,66 +2546,109 @@ class SRSNVReport:
                 ("ML_qual", "TP", "mixed"),
                 ("ML_qual", "TP", "non-mixed"),
             ]
-
-        logger.info("Generating Run Quality table")
-        # Legacy table using IS_MIXED (both ends) for backward-compatible h5 storage
+        # Note: the "_TP_mixed"/"_TP_non-mixed" keys below are internal join keys (matched by
+        # col_order); they stay literal regardless of scheme. Only the displayed MultiIndex labels
+        # are swapped to the variant's split labels further down.
+        label = self.data_df[LABEL].to_numpy()
+        legacy_masks = legacy_variant.group_masks(self.data_df)
+        display_masks = display_variant.group_masks(self.data_df)
+        # Legacy table using the legacy variant's positive group (IS_MIXED both ends for ppmSeq)
         conds_dict_legacy = {
-            "": np.ones(self.data_df[LABEL].shape, dtype=bool),
-            "_TP": self.data_df[LABEL],
-            "_FP": ~self.data_df[LABEL],
-            "_TP_mixed": np.logical_and(self.data_df[IS_MIXED], self.data_df[LABEL]),
-            "_TP_non-mixed": np.logical_and(~self.data_df[IS_MIXED], self.data_df[LABEL]),
+            **base_conds,
+            "_TP_mixed": legacy_masks[legacy_variant.pos] & label,
+            "_TP_non-mixed": legacy_masks[legacy_variant.neg] & label,
         }
-        qual_stats_legacy = pd.concat(
-            [
-                self.data_df.loc[cond, list(cols_for_stats.keys())]
-                .describe(percentiles=qual_stat_ps)
-                .rename(columns={stat_key: stat_name + key for stat_key, stat_name in cols_for_stats.items()})
-                for key, cond in conds_dict_legacy.items()
-            ],
-            axis=1,
-        )
-        run_quality_table_legacy = pd.DataFrame(
-            signif(qual_stats_legacy.values, SIG_DIGITS),
-            index=qual_stats_legacy.index,
-            columns=qual_stats_legacy.columns,
-        ).drop(index="count")
-        run_quality_table_legacy.T.to_hdf(self.output_h5_filename, key="run_quality_table", mode="a")
+        _quality_table(conds_dict_legacy).T.to_hdf(self.output_h5_filename, key="run_quality_table", mode="a")
 
-        # New table using IS_MIXED_START for display and new h5 key
+        # New table using the display variant's positive group for display and new h5 key
         conds_dict = {
-            "": np.ones(self.data_df[LABEL].shape, dtype=bool),
-            "_TP": self.data_df[LABEL],
-            "_FP": ~self.data_df[LABEL],
-            "_TP_mixed": np.logical_and(self.data_df[IS_MIXED_START], self.data_df[LABEL]),
-            "_TP_non-mixed": np.logical_and(~self.data_df[IS_MIXED_START], self.data_df[LABEL]),
+            **base_conds,
+            "_TP_mixed": display_masks[display_variant.pos] & label,
+            "_TP_non-mixed": display_masks[display_variant.neg] & label,
         }
-        qual_stats_description = {
-            key: self.data_df.loc[cond, list(cols_for_stats.keys())]
-            .describe(percentiles=qual_stat_ps)
-            .rename(columns={stat_key: stat_name + key for stat_key, stat_name in cols_for_stats.items()})
-            for key, cond in conds_dict.items()
-        }
-
-        qual_stats_description = pd.concat(list(qual_stats_description.values()), axis=1)
-        run_quality_table = pd.DataFrame(
-            signif(qual_stats_description.values, SIG_DIGITS),
-            index=qual_stats_description.index,
-            columns=qual_stats_description.columns,
-        ).drop(index="count")
+        run_quality_table = _quality_table(conds_dict)
 
         col_order = [
             "_".join(cols) if cols[2] not in ["", "overall"] else "_".join(cols[:2]) for cols in display_columns
         ]
         run_quality_table_display = run_quality_table.loc[:, col_order].copy()
-        run_quality_table_display.columns = pd.MultiIndex.from_tuples(display_columns)
+        # Swap the literal "mixed"/"non-mixed" display labels for this variant's split labels
+        # (the join keys used for col_order above stay literal).
+        label_remap = {"mixed": display_variant.pos_lc, "non-mixed": display_variant.neg_lc}
+        display_columns_relabeled = [(a, b, label_remap.get(c, c)) for a, b, c in display_columns]
+        run_quality_table_display.columns = pd.MultiIndex.from_tuples(display_columns_relabeled)
         # Log in hdf5
         run_quality_table.T.to_hdf(self.output_h5_filename, key="run_quality_table_mixed_start", mode="a")
         run_quality_table_display.to_hdf(self.output_h5_filename, key="run_quality_table_display", mode="a")
 
+    def _render_summary_table_figure(self, summary_df: pd.DataFrame, output_filename: str = None):
+        """Render a 2-column (Median SNVQ, % of reads) summary table as a matplotlib figure."""
+        fig, ax = plt.subplots(figsize=(6, max(2, 0.6 * len(summary_df) + 1)))
+        ax.axis("off")
+        table = ax.table(
+            cellText=summary_df.values,
+            rowLabels=summary_df.index,
+            colLabels=summary_df.columns,
+            cellLoc="center",
+            rowLoc="center",
+            loc="center",
+        )
+        _disable_auto_fontsize = False
+        table.auto_set_font_size(_disable_auto_fontsize)
+        table.set_fontsize(12)
+        table.scale(1.2, 1.8)
+        # Style header row
+        for j in range(len(summary_df.columns)):
+            table[0, j].set_facecolor("#4472C4")
+            table[0, j].set_text_props(color="white", fontweight="bold")
+        # Style row labels
+        for i in range(len(summary_df)):
+            table[i + 1, -1].set_facecolor("#D9E2F3")
+        self._save_plt(output_filename, fig=fig)
+
+    def _quality_per_split_group(self, output_filename: str = None):
+        """Generic per-read-group median SNVQ + % of reads table (used when a scheme has no
+        ppmSeq start x end cross-tab hook).
+
+        Groups TP reads by the ordered ``read_group`` categorical (e.g. single read / one strand /
+        duplex) and writes the summary to the display variant's suffixed key plus the bare
+        ``ppmseq_category_quality_table`` / ``ppmseq_category_quantity_table`` keys (so
+        keys_to_convert / h5->json conversion finds them).
+        """
+        variant = self._display_variant
+        data_df_tp = self.data_df[self.data_df[LABEL]].copy()
+        total_count = len(data_df_tp)
+        # Group by the ordered read_group categorical; reindex to keep group order and include
+        # any empty groups as 0 rows.
+        grouped = data_df_tp.groupby(READ_GROUP, dropna=False, observed=False)[QUAL]
+        median_qual = grouped.median().reindex(list(variant.groups))
+        pct_reads = (grouped.count().reindex(list(variant.groups)).fillna(0) / total_count) * 100
+        summary_df = pd.DataFrame({"Median SNVQ": median_qual, "% of reads": pct_reads})
+        summary_df.index = summary_df.index.astype(str)
+        summary_df.index.name = self.tag_axis
+        summary_df["Median SNVQ"] = summary_df["Median SNVQ"].apply(lambda x: signif(x, 3))
+        summary_df["% of reads"] = summary_df["% of reads"].apply(lambda x: signif(x, 2))
+
+        # Display table under the variant's suffixed key.
+        summary_df.to_hdf(self.output_h5_filename, key=split_h5_key("ppmseq_category_quality_table", variant), mode="a")
+        # Bare base keys so downstream keys_to_convert / h5->json conversion finds them.
+        summary_df["Median SNVQ"].to_hdf(self.output_h5_filename, key="ppmseq_category_quality_table", mode="a")
+        summary_df["% of reads"].to_hdf(self.output_h5_filename, key="ppmseq_category_quantity_table", mode="a")
+
+        self._render_summary_table_figure(summary_df, output_filename=output_filename)
+
     @exception_handler
     def quality_per_ppmseq_tags(self, output_filename: str = None):  # noqa: C901, PLR0915
-        """Generate table of median quality and data quantity per start ppmseq tag."""
+        """Generate table of median quality and data quantity per read-split group.
+
+        Schemes that provide a start x end ppmSeq cross-tab (``scheme.ppmseq_crosstab``) render the
+        legacy 2D tables plus the 1D start-tag display table. Other schemes fall back to a generic
+        per-read-group summary with the same h5 keys.
+        """
+        if not self.scheme.ppmseq_crosstab:
+            self._quality_per_split_group(output_filename=output_filename)
+            return
+
         data_df_tp = self.data_df[self.data_df[LABEL]].copy()
         # Determine start and end tag columns
         ppmseq_fillna_tags_in_data = ST_FILLNA in data_df_tp.columns and ET_FILLNA in data_df_tp.columns
@@ -2408,7 +2713,7 @@ class SRSNVReport:
             pct_reads = pct_reads.drop(index=PpmseqCategories.END_UNREACHED.value)
         summary_df = pd.DataFrame({"Median SNVQ": median_qual, "% of reads": pct_reads})
         summary_df.index = summary_df.index.astype(str)
-        summary_df.index.name = "ppmSeq tag"
+        summary_df.index.name = self.tag_axis
         summary_df["Median SNVQ"] = summary_df["Median SNVQ"].apply(lambda x: signif(x, 3))
         summary_df["% of reads"] = summary_df["% of reads"].apply(lambda x: signif(x, 2))
 
@@ -2416,28 +2721,7 @@ class SRSNVReport:
         summary_df.to_hdf(self.output_h5_filename, key="ppmseq_category_quality_table_mixed_start", mode="a")
 
         # Render as a table figure
-        fig, ax = plt.subplots(figsize=(6, max(2, 0.6 * len(summary_df) + 1)))
-        ax.axis("off")
-        table = ax.table(
-            cellText=summary_df.values,
-            rowLabels=summary_df.index,
-            colLabels=summary_df.columns,
-            cellLoc="center",
-            rowLoc="center",
-            loc="center",
-        )
-        _disable_auto_fontsize = False
-        table.auto_set_font_size(_disable_auto_fontsize)
-        table.set_fontsize(12)
-        table.scale(1.2, 1.8)
-        # Style header row
-        for j in range(len(summary_df.columns)):
-            table[0, j].set_facecolor("#4472C4")
-            table[0, j].set_text_props(color="white", fontweight="bold")
-        # Style row labels
-        for i in range(len(summary_df)):
-            table[i + 1, -1].set_facecolor("#D9E2F3")
-        self._save_plt(output_filename, fig=fig)
+        self._render_summary_table_figure(summary_df, output_filename=output_filename)
 
     @exception_handler
     def training_progress_plot(self, output_filename: str = None, ylims=None):
@@ -2622,9 +2906,22 @@ class SRSNVReport:
     ):
         logger.info("Calculating trinuc context statistics")
 
+        # The display variant declares how to split the trinuc quality panel. Mixed uses the raw
+        # is_mixed bool (trinuc_split_col set, group_specs=None -> the plotter auto-detects, keeping
+        # trinuc_stats byte-identical). N-group schemes leave trinuc_split_col=None: we materialize
+        # the read_group column and pass explicit group_specs.
+        variant = self._display_variant
+        split_col = variant.trinuc_split_col
+        group_specs = variant.trinuc_group_specs
+        if split_col is None:
+            split_col = READ_GROUP
+            palette = self._variant_palette(variant)
+            # calc_trinuc_stats names group columns "mixed=<group value>"; match that prefix.
+            group_specs = [(f"mixed={label}", label, palette[label]) for label in variant.groups]
+
         # Call the new plotting function
         fig, stats_df = calc_and_plot_trinuc_hist(
-            self.data_df,
+            self._snv_rows(),
             trinuc_col=TRINUC_CONTEXT_WITH_ALT,
             label_col=LABEL,
             labels=[True, False],
@@ -2637,27 +2934,44 @@ class SRSNVReport:
             motif_orientation=motif_orientation,
             q1=0.1,
             q2=0.9,
-            # Split quality panels by start-tag mixed status (is_mixed_start), consistent with the
-            # rest of the report. The legacy both-ends `is_mixed` collapses to all-False on start-only
-            # ppmSeq libraries (no `et` tag), which would force a single "all reads" curve.
-            is_mixed_col=IS_MIXED_START,
+            split_col=split_col,
+            group_specs=group_specs,
         )
         stats_df.to_hdf(self.output_h5_filename, key="trinuc_stats", mode="a")
 
         self._save_plt(output_filename=output_filename, fig=fig)
 
+    def _snv_rows(self) -> pd.DataFrame:
+        """SNV rows of the report dataframe (all rows when there is no ``variant_type`` column).
+
+        SNV-only figures (the trinuc-context plot) must not see indel rows: an indel's REF/ALT are multi-base, and
+        the seq-direction trinuc helper reads only the first 4 characters of a reverse-strand context, which can
+        turn an indel into a valid-looking SNV trinuc (e.g. A+CC+T+C -> GGTA) and contaminate the SNV stats.
+        """
+        if VARIANT_TYPE not in self.data_df.columns:
+            return self.data_df
+        return self.data_df[self.data_df[VARIANT_TYPE] == VARIANT_TYPE_SNV]
+
+    def _feature_group_series(self):
+        """Ordered list of (group_label, color) for the per-feature quality curves.
+
+        Colors come from the display variant (mixed declares Non-mixed=tab:red, Mixed=tab:green;
+        N-group schemes fall back to a seaborn palette), in the variant's group order.
+        """
+        palette = self._variant_palette()
+        return [(label, palette[label]) for label in self._display_variant.groups]
+
     def _plot_feature_qual_stats(
         self, stats_for_plot, ax, c_true="tab:green", c_false="tab:red", min_count=100, fb_kws=None, step_kws=None
     ):
-        """Generate a plot of quality median + 10-90 percentile range, for mixed and non-mixed reads."""
+        """Generate a plot of quality median + 10-90 percentile range, per read group."""
         fb_kws = fb_kws or {}
         step_kws = step_kws or {}
         col = stats_for_plot.columns[0]
         polys, lines = [], []
-        for is_mixed, color in zip(
-            [~stats_for_plot[IS_MIXED_START], stats_for_plot[IS_MIXED_START]], [c_false, c_true], strict=False
-        ):
-            qual_df = stats_for_plot.loc[is_mixed & stats_for_plot[LABEL] & (stats_for_plot["count"] > min_count), :]
+        for label, color in self._feature_group_series():
+            group_mask = stats_for_plot[READ_GROUP].astype(str) == str(label)
+            qual_df = stats_for_plot.loc[group_mask & stats_for_plot[LABEL] & (stats_for_plot["count"] > min_count), :]
             fb_kws["color"] = color
             step_kws["color"] = color
             if qual_df.shape[0] > 0:
@@ -2686,7 +3000,7 @@ class SRSNVReport:
             q2 [float]: upper quantile for interquartile range
             bin_edges [list]: bin edges for discretization. If it is None, use discrete (integer) values
         """
-        required_cols = [col, LABEL, IS_MIXED_START, QUAL]
+        required_cols = [col, LABEL, READ_GROUP, QUAL]
 
         # If binning is needed, create binned column in a view/subset
         if bin_edges is not None:
@@ -2697,7 +3011,7 @@ class SRSNVReport:
             # Use a view of the original dataframe (no copy needed)
             subset = self.data_df[required_cols]
 
-        stats_for_plot = subset.groupby([col, LABEL, IS_MIXED_START], observed=True).agg(
+        stats_for_plot = subset.groupby([col, LABEL, READ_GROUP], observed=True).agg(
             median_qual=(QUAL, "median"),
             quantile1_qual=(QUAL, lambda x: x.quantile(q1)),
             quantile3_qual=(QUAL, lambda x: x.quantile(q2)),
@@ -2783,17 +3097,24 @@ class SRSNVReport:
             ncol=1,
             frameon=False,
         )
-        # Next two lines are to display correctly the legend if there are no mixed reads
+        # Replace missing handles (e.g. an empty group) so the legend still renders.
         lines = [line if line is not None else empty_handle for line in lines]
         polys = [poly if poly is not None else empty_handle for poly in polys]
+        # One legend block per read group, in group order.
+        group_labels = [label for label, _ in self._feature_group_series()]
+        legend_handles = []
+        legend_texts = []
+        for gi, label in enumerate(group_labels):
+            legend_handles += [empty_handle, lines[gi], polys[gi]]
+            legend_texts += [label, "median", "10%-90% range"]
         fig.legend(
-            [empty_handle, lines[0], polys[0], empty_handle, lines[1], polys[1]],
-            ["Non-mixed", "median", "10%-90% range", "Mixed", "median", "10%-90% range"],
+            legend_handles,
+            legend_texts,
             fontsize=legend_fontsize,
             title_fontsize=legend_fontsize,
             loc="lower center",
             bbox_to_anchor=(0.7, -0.15),
-            ncol=2,
+            ncol=len(group_labels),
             frameon=False,
         )
         self._save_plt(output_filename=output_filename, fig=fig)
@@ -2813,8 +3134,10 @@ class SRSNVReport:
         return pd.DataFrame(hist_dict)
 
     @exception_handler
-    def plot_quality_histogram(self, *, plot_interpolating_function: bool = False, output_filename: str = None):
-        """Plot a histogram of qual values for TP reads, both mixed and non-mixed."""
+    def plot_quality_histogram(  # noqa: PLR0915
+        self, *, plot_interpolating_function: bool = False, output_filename: str = None
+    ):
+        """Plot a histogram of qual values for TP reads, split by the mode's read groups."""
         # label_fontsize = 12
         # ticklabelsfontsize = 12
         logger.info("Plotting SNVQ histogram")
@@ -2828,41 +3151,64 @@ class SRSNVReport:
             axes = [ax]
 
         plot_df = self.data_df[self.data_df[LABEL]].copy()
+        hue_col = self.tag_axis
+        legacy_variant = self.scheme.legacy_variant
+        display_variant = self._display_variant
 
-        # Legacy histogram with 3 categories for backward-compatible h5 storage
+        # Legacy histogram for backward-compatible h5 storage. ppmSeq (mixed) uses a 3-category
+        # split (non-mixed / exactly one end / both ends); other schemes group by the legacy
+        # variant's read groups.
         plot_df_legacy = plot_df.copy()
-        plot_df_legacy["ppmSeq tags"] = "non-mixed"
-        plot_df_legacy.loc[plot_df_legacy[IS_MIXED_START] ^ plot_df_legacy[IS_MIXED_END], "ppmSeq tags"] = (
-            "mixed, exactly one end"
-        )
-        plot_df_legacy.loc[plot_df_legacy[IS_MIXED_START] & plot_df_legacy[IS_MIXED_END], "ppmSeq tags"] = (
-            "mixed, both ends"
-        )
+        neg_lc, pos_lc = display_variant.neg_lc, display_variant.pos_lc
+        if self.scheme.ppmseq_legacy_hist:
+            legacy_one_end = f"{pos_lc}, exactly one end"
+            legacy_both_ends = f"{pos_lc}, both ends"
+            plot_df_legacy[hue_col] = neg_lc
+            one_end_mask = plot_df_legacy[IS_MIXED_START] ^ plot_df_legacy[IS_MIXED_END]
+            both_ends_mask = plot_df_legacy[IS_MIXED_START] & plot_df_legacy[IS_MIXED_END]
+            plot_df_legacy.loc[one_end_mask, hue_col] = legacy_one_end
+            plot_df_legacy.loc[both_ends_mask, hue_col] = legacy_both_ends
+            legacy_hue_order = [neg_lc, legacy_one_end, legacy_both_ends]
+            legacy_palette = {neg_lc: "red", legacy_one_end: "blue", legacy_both_ends: "green"}
+            display_hue_order = [neg_lc, pos_lc]
+            display_palette = {neg_lc: "red", pos_lc: "blue"}
+            # Map the display groups to their lowercase labels (these become the h5 column names,
+            # so they must stay the literal "non-mixed"/"mixed" strings for byte-identical output).
+            lc_map = {display_variant.neg: neg_lc, display_variant.pos: pos_lc}
+            plot_df[hue_col] = [lc_map[g] for g in display_variant.group_fn(plot_df)]
+        else:
+            # N-group schemes: legacy plot equals the display plot (no start/end distinction).
+            plot_df_legacy[hue_col] = np.asarray(legacy_variant.group_fn(plot_df_legacy)).astype(str)
+            plot_df[hue_col] = np.asarray(display_variant.group_fn(plot_df)).astype(str)
+            legacy_hue_order = list(legacy_variant.groups)
+            display_hue_order = list(display_variant.groups)
+            legacy_palette = {str(k): v for k, v in self._variant_palette(legacy_variant).items()}
+            display_palette = {str(k): v for k, v in self._variant_palette(display_variant).items()}
+        legacy_col_name = legacy_variant.hist_col_name or self.tag_axis
+        display_col_name = display_variant.hist_col_name or self.tag_axis
         fig_legacy, ax_legacy = plt.subplots(figsize=(12, 7))
         g_legacy = sns.histplot(
             data=plot_df_legacy,
             x=QUAL,
-            hue="ppmSeq tags",
-            hue_order=["non-mixed", "mixed, exactly one end", "mixed, both ends"],
+            hue=hue_col,
+            hue_order=legacy_hue_order,
             element="step",
             stat="density",
             common_norm=False,
             linewidth=1,
             ax=ax_legacy,
-            palette={"non-mixed": "red", "mixed, exactly one end": "blue", "mixed, both ends": "green"},
+            palette=legacy_palette,
         )
-        hist_data_df_legacy = self._get_histogram_data(g_legacy, col_name=IS_MIXED)
+        hist_data_df_legacy = self._get_histogram_data(g_legacy, col_name=legacy_col_name)
         hist_data_df_legacy.to_hdf(self.output_h5_filename, key="quality_histogram", mode="a")
         plt.close(fig_legacy)
 
-        # New histogram with 2 categories for display
-        plot_df["ppmSeq tags"] = "non-mixed"
-        plot_df.loc[plot_df[IS_MIXED_START], "ppmSeq tags"] = "mixed"
+        # New histogram (display groups)
         g = sns.histplot(
             data=plot_df,
             x=QUAL,
-            hue="ppmSeq tags",
-            hue_order=["non-mixed", "mixed"],
+            hue=hue_col,
+            hue_order=display_hue_order,
             element="step",
             stat="density",
             common_norm=False,
@@ -2870,7 +3216,7 @@ class SRSNVReport:
             kde_kws={"bw_adjust": 3},
             linewidth=1,
             ax=ax,
-            palette={"non-mixed": "red", "mixed": "blue"},
+            palette=display_palette,
         )
         sns.move_legend(
             ax,
@@ -2879,8 +3225,8 @@ class SRSNVReport:
         ax.set_ylabel("Density")  # , fontsize=label_fontsize)
         ax.grid(visible=True)
         xlims = [0.99 * plot_df[QUAL].min(), plot_df[QUAL].max() * 1.01]
-        hist_data_df = self._get_histogram_data(g, col_name=IS_MIXED_START)
-        hist_data_df.to_hdf(self.output_h5_filename, key="quality_histogram_mixed_start", mode="a")
+        hist_data_df = self._get_histogram_data(g, col_name=display_col_name)
+        hist_data_df.to_hdf(self.output_h5_filename, key=split_h5_key("quality_histogram", display_variant), mode="a")
         if plot_interpolating_function:
             xs = np.arange(self.eps, np.floor(self.data_df[ML_QUAL_1_TEST].max()), 0.1)
             ax = axes[1]
@@ -2910,23 +3256,50 @@ class SRSNVReport:
         fig.tight_layout()
         self._save_plt(output_filename=output_filename, fig=fig)
 
-    def _plot_logit_histogram(self, plot_df, ax, alpha=0.4, mixed_col=IS_MIXED_START):
-        """Plot a single histogram of logit values, by: FP, TP mixed, TP non-mixed.
+    def _logit_extra_cols(self):
+        """Columns (besides read_group) that the active scheme's variant group_fns read, so the
+        logit-histogram slice includes them. Only columns present in data_df are returned.
 
-        ``mixed_col`` selects which column defines a "mixed" read. It defaults to IS_MIXED_START
-        (start ppmSeq tag is MIXED) to match the report's simplified mixed definition; pass
-        IS_MIXED for the legacy both-ends definition.
+        Covers every scheme's raw group inputs (mixed: is_mixed/_start; consensus: fs/rs); a new scheme
+        should add its raw group columns here so its group_fn can run on the sliced frame. The pe-duplex
+        group_fn reads the pre-assigned ``pe_duplex_group`` column directly (it is not recomputed from raw
+        inputs), so include it too."""
+        candidates = [IS_MIXED, IS_MIXED_START, FS, RS, PE_DUPLEX_GROUP]
+        return [c for c in candidates if c in self.data_df.columns]
+
+    def _plot_logit_variant(self, plot_df, ax, variant, alpha=0.4):
+        """Plot one logit histogram for a variant: FP + one TP series per group.
+
+        Binary variants (``variant.pos`` set) reproduce the historical FP / TP {pos_lc} / TP {neg_lc}
+        series and palette (FP blue, neg red, pos green). N-group variants get one TP series per
+        group with a seaborn palette.
         """
-        plot_df[""] = plot_df[LABEL].astype(str)
-        plot_df.loc[~plot_df[LABEL], ""] = "FP"
-        plot_df.loc[plot_df[LABEL] & plot_df[mixed_col], ""] = "TP mixed"
-        plot_df.loc[plot_df[LABEL] & ~plot_df[mixed_col], ""] = "TP non-mixed"
+        grp = np.asarray(variant.group_fn(plot_df))
+        if variant.pos is not None:
+            tp_pos = f"TP {variant.pos_lc}"
+            tp_neg = f"TP {variant.neg_lc}"
+            plot_df[""] = plot_df[LABEL].astype(str)
+            plot_df.loc[~plot_df[LABEL], ""] = "FP"
+            plot_df.loc[plot_df[LABEL] & (grp == variant.pos), ""] = tp_pos
+            plot_df.loc[plot_df[LABEL] & (grp == variant.neg), ""] = tp_neg
+            hue_order = ["FP", tp_pos, tp_neg]
+            palette = {"FP": "tab:blue", tp_neg: "red", tp_pos: "green"}
+        else:
+            tp_labels = [f"TP {label}" for label in variant.groups]
+            plot_df[""] = "FP"
+            for label in variant.groups:
+                plot_df.loc[plot_df[LABEL] & (grp == label), ""] = f"TP {label}"
+            group_colors = list(sns.color_palette(n_colors=len(variant.groups)))
+            # FP is the negative baseline -> neutral gray, so it never collides with the first TP
+            # group (the seaborn palette starts at tab:blue, which previously matched FP's blue).
+            palette = {"FP": "tab:gray", **dict(zip(tp_labels, group_colors, strict=False))}
+            hue_order = ["FP", *tp_labels]
         sns.histplot(
             data=plot_df,
             x=ML_LOGIT_TEST,
             hue="",
-            hue_order=["FP", "TP mixed", "TP non-mixed"],
-            palette={"FP": "tab:blue", "TP non-mixed": "red", "TP mixed": "green"},
+            hue_order=hue_order,
+            palette=palette,
             element="step",
             stat="density",
             common_norm=False,
@@ -2934,50 +3307,1095 @@ class SRSNVReport:
             ax=ax,
         )
 
-    @exception_handler
-    def plot_logit_histograms(self, *, plot_by_fold: bool = True, output_filename: str = None):
-        """Plot a histogram of logit values, by: FP, TP mixed, TP non-mixed.
-        If plot_by_fold is True, overlay histograms for each fold.
+    def _render_logit_figure(self, plot_df_all, output_filename, *, write_h5, plot_by_fold):
+        """Render one logit histogram (FP + per-group TP), optionally writing the legacy+display h5 keys.
+
+        Shared by the SNV and hmer-indel logit figures; ``write_h5`` is True only for the SNV figure so
+        the legacy ``logit_histogram`` h5 keys keep their historical meaning.
         """
-        # label_fontsize = 12
-        # ticklabelsfontsize = 12
-        logger.info("Plotting logit histogram")
+        legacy_variant = self.scheme.legacy_variant
+        display_variant = self._display_variant
 
-        plot_df_all = self.data_df[[ML_LOGIT_TEST, LABEL, IS_MIXED, IS_MIXED_START, FOLD_ID]].copy()
+        if write_h5:
+            # Legacy histogram (legacy variant) for backward-compatible h5 storage.
+            fig_legacy, ax_legacy = plt.subplots(figsize=(12, 7))
+            self._plot_logit_variant(plot_df_all.copy(), ax_legacy, legacy_variant)
+            self._get_histogram_data(ax_legacy, col_name="").to_hdf(
+                self.output_h5_filename, key="logit_histogram", mode="a"
+            )
+            plt.close(fig_legacy)
 
-        # Legacy histogram data (both-ends IS_MIXED) for backward-compatible h5 storage
-        fig_legacy, ax_legacy = plt.subplots(figsize=(12, 7))
-        self._plot_logit_histogram(plot_df_all.copy(), ax_legacy, mixed_col=IS_MIXED)
-        hist_data_df_legacy = self._get_histogram_data(ax_legacy, col_name="")
-        hist_data_df_legacy.to_hdf(self.output_h5_filename, key="logit_histogram", mode="a")
-        plt.close(fig_legacy)
-
-        # New histogram (IS_MIXED_START) for display and new h5 key
         fig, ax = plt.subplots(figsize=(12, 7))
-        plot_df = plot_df_all.copy()
-        self._plot_logit_histogram(plot_df, ax, mixed_col=IS_MIXED_START)
-        hist_data_df = self._get_histogram_data(ax, col_name="")
-        hist_data_df.to_hdf(self.output_h5_filename, key="logit_histogram_mixed_start", mode="a")
+        self._plot_logit_variant(plot_df_all.copy(), ax, display_variant)
+        if write_h5:
+            self._get_histogram_data(ax, col_name="").to_hdf(
+                self.output_h5_filename, key=split_h5_key("logit_histogram", display_variant), mode="a"
+            )
 
         if plot_by_fold:
             plt.close(fig)
             fig, ax = plt.subplots(figsize=(12, 7))
-            plot_dfs = [plot_df_all[plot_df_all[FOLD_ID] == k] for k in range(len(self.models))]
-            for plot_df in plot_dfs:
-                self._plot_logit_histogram(plot_df.copy(), ax, alpha=0.15, mixed_col=IS_MIXED_START)
+            for k in range(len(self.models)):
+                self._plot_logit_variant(plot_df_all[plot_df_all[FOLD_ID] == k].copy(), ax, display_variant, alpha=0.15)
 
-        sns.move_legend(
-            ax,
-            "upper left",
-        )
-        ax.set_ylabel("Density")  # , fontsize=label_fontsize)
+        sns.move_legend(ax, "upper left")
+        ax.set_ylabel("Density")
         ax.grid(visible=True)
-        xmin, xmax = [0.99 * self.data_df[ML_LOGIT_TEST].min(), self.data_df[ML_LOGIT_TEST].max() * 1.01]
-        ax.set_xlabel("ML logit")  # , fontsize=label_fontsize)
+        ax.set_xlabel("ML logit")
+        xmin, xmax = 0.99 * self.data_df[ML_LOGIT_TEST].min(), self.data_df[ML_LOGIT_TEST].max() * 1.01
         ax.set_xlim([xmin, xmax])
         fig.tight_layout()
-        # plt.show()
         self._save_plt(output_filename=output_filename, fig=fig)
+        plt.close(fig)
+
+    @exception_handler
+    def plot_logit_histograms(
+        self,
+        *,
+        plot_by_fold: bool = True,
+        output_filename: str = None,
+        output_filename_hmer_indel: str = None,
+        output_filename_non_hmer_indel: str = None,
+    ):
+        """Plot logit-value histograms (FP + one TP series per group), overlaid per fold if requested.
+
+        When the per-row ``variant_type`` column is present the figure is split in two: an SNV figure
+        (``output_filename``, which also carries the legacy/display ``logit_histogram`` h5 keys) and, for
+        runs that contain hmer-indel rows, a separate hmer-indel figure (``output_filename_hmer_indel``,
+        figure only). SNV-only runs (no ``variant_type`` column) behave exactly as before.
+        """
+        logger.info("Plotting logit histogram")
+        cols = [ML_LOGIT_TEST, LABEL, READ_GROUP, FOLD_ID, *self._logit_extra_cols()]
+        if VARIANT_TYPE in self.data_df.columns and VARIANT_TYPE not in cols:
+            cols = [*cols, VARIANT_TYPE]
+        plot_df_all = self.data_df[cols].copy()
+
+        if VARIANT_TYPE in plot_df_all.columns:
+            snv_df = plot_df_all[plot_df_all[VARIANT_TYPE] == VARIANT_TYPE_SNV]
+        else:
+            snv_df = plot_df_all
+        self._render_logit_figure(snv_df, output_filename, write_h5=True, plot_by_fold=plot_by_fold)
+
+        if output_filename_hmer_indel is not None and self._has_hmer_indel_rows():
+            hmer_df = plot_df_all[plot_df_all[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL]
+            self._render_logit_figure(hmer_df, output_filename_hmer_indel, write_h5=False, plot_by_fold=plot_by_fold)
+
+        if output_filename_non_hmer_indel is not None and self._has_non_hmer_indel_rows():
+            non_hmer_df = plot_df_all[plot_df_all[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL]
+            self._render_logit_figure(
+                non_hmer_df, output_filename_non_hmer_indel, write_h5=False, plot_by_fold=plot_by_fold
+            )
+
+    @exception_handler
+    def plot_hmer_indel_by_class(self, output_filename: str = None):  # noqa: PLR0915
+        """Homopolymer-indel TP SNVQ + count by indel class (ins/del) and affected homopolymer run length.
+
+        Bins by ``X_HMER_RUN`` (the length of the reference homopolymer run the indel actually
+        changes), NOT ``X_HMER_REF`` (which is measured at the VCF anchor base — usually the 5' flank
+        for deletions — and so reports the wrong homopolymer for ~34% of hmer-indels). Plots median
+        SNVQ (not MQUAL) and TP count vs that run length, one line per indel class (ins/del). Writes the
+        per-(read_group, indel_class, hmer_length) table
+        to the QC h5 under ``hmer_indel_class_stats``. Self-skips when there are no hmer-indel TP rows.
+        (A 1-mer bin is populated for insertions but empty for deletions, since a homopolymer deletion
+        shortens a run of length >=2.)
+        """
+        if any(c not in self.data_df.columns for c in (VARIANT_TYPE, X_IC, X_HMER_RUN)):
+            logger.info("plot_hmer_indel_by_class: variant_type / X_IC / X_HMER_RUN missing; skipping")
+            return
+        data = self.data_df
+        ind = data[(data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL) & data[LABEL].astype(bool)]
+        if ind.empty:
+            logger.info("plot_hmer_indel_by_class: no hmer-indel TP rows; skipping")
+            return
+        hmer_len = pd.to_numeric(ind[X_HMER_RUN], errors="coerce").clip(lower=1, upper=12)
+        base = pd.DataFrame(
+            {
+                "hmer_length": hmer_len.to_numpy(),
+                "indel_class": ind[X_IC].astype(str).str.lower().to_numpy(),
+                "snvq": pd.to_numeric(ind[QUAL], errors="coerce").to_numpy(),
+            },
+            index=ind.index,
+        )
+        # Split the lines by the active read-split groups when present (e.g. paired-end duplex:
+        # simplex / duplex SE / duplex PE), in addition to ins vs del. Falls back to a single "all" group
+        # (ins/del only) when there is no multi-group read_group column (non-duplex runs).
+        group_masks = None
+        if READ_GROUP in ind.columns:
+            rg = ind[READ_GROUP]
+            cats = list(rg.cat.categories) if isinstance(rg.dtype, pd.CategoricalDtype) else list(rg.dropna().unique())
+            present = [c for c in cats if (rg == c).to_numpy().any()]
+            if len(present) > 1:
+                group_masks = [(c, (rg == c).to_numpy()) for c in present]
+        if group_masks is None:
+            base["read_group"] = "all"
+            groups = ["all"]
+        else:
+            rg = pd.Series("", index=ind.index, dtype=object)
+            for lbl, mask in group_masks:
+                rg[np.asarray(mask, dtype=bool)] = lbl
+            base["read_group"] = rg.to_numpy()
+            base = base[base["read_group"] != ""]  # drop rows in no group (e.g. singletons)
+            groups = [lbl for lbl, _ in group_masks]
+        stats = (
+            base.dropna(subset=["hmer_length"])
+            .groupby(["read_group", "indel_class", "hmer_length"], observed=True)
+            .agg(median_snvq=("snvq", "median"), count=("snvq", "size"))
+            .reset_index()
+        )
+        stats.to_hdf(self.output_h5_filename, key="hmer_indel_class_stats", mode="a")
+        fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+        group_colors = dict(zip(groups, sns.color_palette(n_colors=len(groups)), strict=False))
+        # Distinguish indel class by BOTH linestyle and marker (solid circle = insertion, dashed X =
+        # deletion) and spell the class out in the legend, so ins vs del is unambiguous even when the
+        # read-group color split adds many lines (dashed-vs-solid alone reads poorly in the legend).
+        class_ls = {"ins": "-", "del": "--"}
+        class_marker = {"ins": "o", "del": "X"}
+        class_label = {"ins": "insertion", "del": "deletion"}
+        for (g, cls_name), grp_rows in stats.groupby(["read_group", "indel_class"], observed=True):
+            srt = grp_rows.sort_values("hmer_length")
+            color = group_colors.get(g, "black")
+            ls = class_ls.get(cls_name, "-")
+            mk = class_marker.get(cls_name, "o")
+            cls_full = class_label.get(cls_name, cls_name)
+            lbl = cls_full if groups == ["all"] else f"{g} · {cls_full}"
+            axes[0].plot(srt["hmer_length"], srt["median_snvq"], marker=mk, ls=ls, color=color, label=lbl)
+            axes[1].plot(srt["hmer_length"], srt["count"], marker=mk, ls=ls, color=color, label=lbl)
+        axes[0].set_xlabel("affected homopolymer run length")
+        axes[0].set_ylabel("median SNVQ (TP)")
+        axes[0].set_title("median SNVQ by class")
+        axes[1].set_xlabel("affected homopolymer run length")
+        axes[1].set_ylabel("TP count")
+        axes[1].set_title("TP count by class")
+        axes[1].set_yscale("log")
+        fig.suptitle("Homopolymer-indel by indel class and read-type")
+        for ax in axes:
+            ax.legend(fontsize=8)
+            ax.grid(visible=True, alpha=0.3)
+        self._save_plt(output_filename=output_filename, fig=fig)
+        plt.close(fig)
+
+    @exception_handler
+    def calc_hmer_indel_auc_table(self):
+        """ROC-AUC of MQUAL discriminating TP vs FP, split by group: SNV, hmer-indel, and ins / del.
+
+        The existing ``roc_auc_table`` splits by read-group (duplex/ppmSeq); this adds the orthogonal
+        variant-type / indel-class split. Written to the QC h5 under ``hmer_indel_auc_table`` (rendered as
+        a table by the report notebook). AUC is reported both raw and phred (``-10*log10(1-AUC)``).
+        """
+        from sklearn.metrics import roc_auc_score  # noqa: PLC0415  (optional [ml] dependency)
+
+        if VARIANT_TYPE not in self.data_df.columns or not (
+            self._has_hmer_indel_rows() or self._has_non_hmer_indel_rows()
+        ):
+            logger.info("calc_hmer_indel_auc_table: no indel rows; skipping")
+            return
+        data = self.data_df
+        y = data[LABEL].astype(int).to_numpy()
+        q = pd.to_numeric(data[ML_QUAL_1_TEST], errors="coerce").to_numpy()
+        cls = data[X_IC].astype(str).str.lower() if X_IC in data.columns else pd.Series("", index=data.index)
+        is_hmer = data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL
+        is_nonhmer = data[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL
+        groups = {"snv": (data[VARIANT_TYPE] == VARIANT_TYPE_SNV).to_numpy()}
+        if is_hmer.any():
+            groups["hmer_indel"] = is_hmer.to_numpy()
+            groups["hmer_indel:ins"] = (is_hmer & (cls == "ins")).to_numpy()
+            groups["hmer_indel:del"] = (is_hmer & (cls == "del")).to_numpy()
+        if is_nonhmer.any():
+            groups["non_hmer_indel"] = is_nonhmer.to_numpy()
+            groups["non_hmer_indel:ins"] = (is_nonhmer & (cls == "ins")).to_numpy()
+            groups["non_hmer_indel:del"] = (is_nonhmer & (cls == "del")).to_numpy()
+        rows = []
+        for name, mask in groups.items():
+            m = mask & np.isfinite(q)
+            yy, qq = y[m], q[m]
+            n_tp, n_fp = int((yy == 1).sum()), int((yy == 0).sum())
+            if n_tp > 0 and n_fp > 0:
+                auc = float(roc_auc_score(yy, qq))
+                auc_phred = float(-10 * np.log10(max(1 - auc, 1e-10)))
+            else:
+                auc, auc_phred = np.nan, np.nan
+            rows.append({"group": name, "roc_auc": auc, "roc_auc_phred": auc_phred, "n_TP": n_tp, "n_FP": n_fp})
+        pd.DataFrame(rows).to_hdf(self.output_h5_filename, key="hmer_indel_auc_table", mode="a")
+
+    def _has_hmer_indel_rows(self) -> bool:
+        """True when the report dataframe carries any hmer-indel rows (``variant_type == hmer_indel``)."""
+        return VARIANT_TYPE in self.data_df.columns and bool(
+            (self.data_df[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL).any()
+        )
+
+    def _has_non_hmer_indel_rows(self) -> bool:
+        """True when the report dataframe carries any non-hmer-indel rows (``variant_type == non_hmer_indel``)."""
+        return VARIANT_TYPE in self.data_df.columns and bool(
+            (self.data_df[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL).any()
+        )
+
+    def _snvq_thresholds(self) -> list[int]:
+        """SNVQ thresholds for the Recall@SNVQ rows. SNVQ90 is intentionally omitted: the recalibrated
+        SNVQ ceiling is counting-LUT-limited (~84 on typical runs), so Recall@SNVQ90 would be
+        structurally 0 rather than informative."""
+        return [50, 60, 70]
+
+    def _hmer_indel_class_conditions(self):
+        """Ordered ``{label: boolean mask}`` over the variant-type / indel-class axis.
+
+        Always ``snv (baseline)``. When hmer-indel rows are present: ``all indel`` + ``ins`` / ``del``
+        (the existing hmer axis, unchanged so hmer-only reports are byte-identical) and, when
+        ``X_HMER_RUN`` is available, additional homopolymer run-length bins ``hmer run 1-3`` / ``4-6`` /
+        ``7-9`` / ``10-12`` / ``13+`` (the 13+ bin is open — not clipped at 12). When non-hmer-indel
+        rows are present, additionally: ``non-hmer indel`` + ``non-hmer ins`` / ``non-hmer del``. Masks are
+        plain numpy bool arrays aligned to ``self.data_df``. Returns ``None`` when there are no indel rows
+        of either class.
+        """
+        if VARIANT_TYPE not in self.data_df.columns:
+            return None
+        data = self.data_df
+        vt = data[VARIANT_TYPE]
+        is_hmer = (vt == VARIANT_TYPE_HMER_INDEL).to_numpy()
+        is_nonhmer = (vt == VARIANT_TYPE_NONHMER_INDEL).to_numpy()
+        if not is_hmer.any() and not is_nonhmer.any():
+            return None
+        cls = data[X_IC].astype(str).str.lower().to_numpy() if X_IC in data.columns else np.array([""] * len(data))
+        conditions = {"snv (baseline)": (vt == VARIANT_TYPE_SNV).to_numpy()}
+        if is_hmer.any():
+            conditions["all indel"] = is_hmer
+            conditions["ins"] = is_hmer & (cls == "ins")
+            conditions["del"] = is_hmer & (cls == "del")
+            # Homopolymer run-length bins (X_HMER_RUN = affected reference run length; 13+ is open).
+            if X_HMER_RUN in data.columns:
+                run = pd.to_numeric(data[X_HMER_RUN], errors="coerce").to_numpy()
+                for _lbl, _lo, _hi in (
+                    ("hmer run 1-3", 1, 3),
+                    ("hmer run 4-6", 4, 6),
+                    ("hmer run 7-9", 7, 9),
+                    ("hmer run 10-12", 10, 12),
+                    ("hmer run 13+", 13, 10**9),
+                ):
+                    conditions[_lbl] = is_hmer & (run >= _lo) & (run <= _hi)
+        if is_nonhmer.any():
+            conditions["non-hmer indel"] = is_nonhmer
+            conditions["non-hmer ins"] = is_nonhmer & (cls == "ins")
+            conditions["non-hmer del"] = is_nonhmer & (cls == "del")
+        return conditions
+
+    @exception_handler
+    def calc_hmer_indel_run_info_table(self):
+        """SNVQ summary metrics for hmer indels, on the full read-type x indel-class cross-product.
+
+        Mirrors the SNV ``run_quality_summary_table`` (``_calc_run_info_table_by_group``) but on the
+        variant-type / indel-class axis crossed with the read-type split (the display scheme groups,
+        from ``self._group_masks()``). For every (indel-class, read-type) cell it
+        reports, using the shared recalibrated **SNVQ** (``QUAL``): Median SNVQ, conditional
+        ``Recall at SNVQ={50,60,70}`` (= ``#(SNVQ>=q & TP & mask) / #(TP & mask)`` — the prefilter
+        ``base_recall`` cancels, so this is report-only and directly comparable to the SNV conditional
+        recall), ROC-AUC(Phred), and TP/FP counts. A ``snv (baseline)`` class row is included for
+        comparison. Self-skips SNV-only runs. Writes the tidy table to the QC h5 under
+        ``run_quality_summary_table_hmer_indel``.
+        """
+        class_conds = self._hmer_indel_class_conditions()
+        if class_conds is None:
+            logger.info("calc_hmer_indel_run_info_table: no hmer-indel rows; skipping")
+            return
+        data = self.data_df
+        label = data[LABEL].to_numpy().astype(bool)
+        snvq = pd.to_numeric(data[QUAL], errors="coerce").to_numpy()
+        snvq_thresholds = self._snvq_thresholds()
+        # read-type groups + an "All reads" margin (all read types together).
+        rt_masks = [("All reads", np.ones(len(data), dtype=bool))]
+        for lbl, raw_mask in self._group_masks():
+            rt_masks.append((lbl, np.asarray(raw_mask, dtype=bool)))
+
+        rows = []
+        for cls_name, cls_mask in class_conds.items():
+            for rt_name, rt_mask in rt_masks:
+                mask = cls_mask & rt_mask
+                tp_mask = mask & label
+                fp_mask = mask & ~label
+                n_tp, n_fp = int(tp_mask.sum()), int(fp_mask.sum())
+                median_snvq = np.nanmedian(snvq[tp_mask]) if n_tp else np.nan
+                row = {
+                    "indel_class": cls_name,
+                    "read_type": rt_name,
+                    "Median SNVQ": signif(median_snvq, SIG_DIGITS),
+                }
+                for q in snvq_thresholds:
+                    # conditional recall among prefilter-passing TP reads (base_recall cancels)
+                    rec = (tp_mask & (snvq >= q)).sum() / n_tp if n_tp else np.nan
+                    row[f"Recall at SNVQ={q}"] = signif(rec, SIG_DIGITS)
+                if n_tp > 0 and n_fp > 0:
+                    sub = data[mask]
+                    auc_phred = prob_to_phred(
+                        self._safe_roc_auc(sub[LABEL], sub[ML_PROB_1_TEST], name=f"hmer indel {cls_name}/{rt_name}"),
+                        max_value=self.max_qual,
+                    )
+                else:
+                    auc_phred = np.nan
+                row["ROC AUC (Phred)"] = signif(auc_phred, SIG_DIGITS)
+                row["n_TP"] = n_tp
+                row["n_FP"] = n_fp
+                rows.append(row)
+        table = pd.DataFrame(rows)
+        table.to_hdf(self.output_h5_filename, key="run_quality_summary_table_hmer_indel", mode="a")
+
+    @exception_handler
+    def calc_pe_concordance_summary_table(self):
+        """Duplex-PE CS-family concordance SNVQ summary (PE reads only).
+
+        For the paired-end-duplex use case, restrict to PE reads (``pe_duplex_group`` in {simplex PE,
+        duplex PE}) and split them by CS-family concordance derived from the per-image CS stats:
+        **concordant** = ``cs_n_crossing == cs_n_supporting`` (every crossing family read carries the ALT),
+        **non-concordant** = ``cs_n_crossing > cs_n_supporting`` (some crossing reads disagree). For each
+        (indel-class, concordance) cell reports BOTH the TP (signal) and FP (noise) sides: n_TP, n_FP,
+        Median SNVQ (TP), Median SNVQ (FP), TP%>=60 (= conditional recall at 60), FP%>=60 (= high-SNVQ
+        leakage), and ROC-AUC(Phred) (TP-vs-FP separation). Self-skips unless the CS / pe-duplex columns
+        are present. Writes the tidy table to the QC h5 under ``run_quality_summary_table_pe_concordance``.
+        """
+        if any(c not in self.data_df.columns for c in (CS_N_CROSSING, CS_N_SUPPORTING, PE_DUPLEX_GROUP)):
+            logger.info("calc_pe_concordance_summary_table: CS / pe-duplex columns missing; skipping")
+            return
+        class_conds = self._hmer_indel_class_conditions()
+        if class_conds is None:
+            logger.info("calc_pe_concordance_summary_table: no indel rows; skipping")
+            return
+        data = self.data_df
+        label = data[LABEL].to_numpy().astype(bool)
+        snvq = pd.to_numeric(data[QUAL], errors="coerce").to_numpy()
+        pct60 = 60  # high-confidence SNVQ threshold (signal recall / noise leakage)
+        pe = data[PE_DUPLEX_GROUP].isin([PE_DUPLEX_GROUP_SIMPLEX_PE, PE_DUPLEX_GROUP_PE]).to_numpy()
+        cross = pd.to_numeric(data[CS_N_CROSSING], errors="coerce").to_numpy()
+        supp = pd.to_numeric(data[CS_N_SUPPORTING], errors="coerce").to_numpy()
+        conc_masks = [
+            ("concordant", pe & (cross == supp)),
+            ("non-concordant", pe & (cross > supp)),
+        ]
+        rows = []
+        for cls_name, cls_mask in class_conds.items():
+            for conc_name, conc_mask in conc_masks:
+                mask = cls_mask & conc_mask
+                tp_mask = mask & label
+                fp_mask = mask & ~label
+                n_tp, n_fp = int(tp_mask.sum()), int(fp_mask.sum())
+                row = {
+                    "indel_class": cls_name,
+                    "concordance": conc_name,
+                    "n_TP": n_tp,
+                    "n_FP": n_fp,
+                    "Median SNVQ (TP)": signif(np.nanmedian(snvq[tp_mask]) if n_tp else np.nan, SIG_DIGITS),
+                    "Median SNVQ (FP)": signif(np.nanmedian(snvq[fp_mask]) if n_fp else np.nan, SIG_DIGITS),
+                    "TP%>=60": signif(100 * (tp_mask & (snvq >= pct60)).sum() / n_tp if n_tp else np.nan, SIG_DIGITS),
+                    "FP%>=60": signif(100 * (fp_mask & (snvq >= pct60)).sum() / n_fp if n_fp else np.nan, SIG_DIGITS),
+                }
+                if n_tp > 0 and n_fp > 0:
+                    sub = data[mask]
+                    auc_phred = prob_to_phred(
+                        self._safe_roc_auc(sub[LABEL], sub[ML_PROB_1_TEST], name=f"pe conc {cls_name}/{conc_name}"),
+                        max_value=self.max_qual,
+                    )
+                else:
+                    auc_phred = np.nan
+                row["ROC AUC (Phred)"] = signif(auc_phred, SIG_DIGITS)
+                rows.append(row)
+        table = pd.DataFrame(rows)
+        table.to_hdf(self.output_h5_filename, key="run_quality_summary_table_pe_concordance", mode="a")
+
+    @exception_handler
+    def plot_hmer_indel_fq_recall(self, output_filename: str = None, *, font_size: int = 20):
+        """FQ-vs-recall curves for hmer indels (all indel + ins/del), reusing the SNV threshold-based
+        estimator with an indel condition.
+
+        Uses the shared ``self.base_recall`` (set by ``plot_fq_recall``, which must run first in
+        ``create_report``); the recall axis is therefore on the combined-prefilter basis (noted on the
+        plot). Writes the curves to the QC h5 under ``FQ_recall_LoD_hmer_indel``. Self-skips SNV-only runs.
+        """
+        if not self._has_hmer_indel_rows():
+            logger.info("plot_hmer_indel_fq_recall: no hmer-indel rows; skipping")
+            return
+        if getattr(self, "base_recall", None) is None:
+            logger.info("plot_hmer_indel_fq_recall: base_recall not set (plot_fq_recall must run first); skipping")
+            return
+        data = self.data_df
+        is_indel = data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL
+        cls = data[X_IC].astype(str).str.lower() if X_IC in data.columns else pd.Series("", index=data.index)
+        conditions = {
+            "all indel": is_indel,
+            "ins": is_indel & (cls == "ins"),
+            "del": is_indel & (cls == "del"),
+        }
+        mquals = np.array(self.srsnv_metadata["quality_recalibration_table"]).T[:, 0]
+        pr_df = pd.DataFrame({"MQUAL": mquals})
+        fig, ax = plt.subplots(figsize=(10, 6))
+        for label, cond in conditions.items():
+            cond_s = pd.Series(cond.to_numpy(), index=data.index)
+            if not cond_s.any():
+                continue
+            recall, fq = self._calc_threshold_based_fq_recall(pr_df["MQUAL"].to_numpy(), condition=cond_s)
+            pr_df[f"recall_{label}"] = recall
+            pr_df[f"FQ_{label}"] = fq
+            ax.plot(recall, fq, label=label, linewidth=2)
+        ax.set_xlabel("Recall (combined-prefilter basis)", fontsize=font_size)
+        ax.set_ylabel("Filter Quality (FQ)", fontsize=font_size)
+        ax.legend(fontsize=14, fancybox=True, framealpha=0.95)
+        ax.grid(visible=True)
+        self._save_plt(output_filename, fig)
+        plt.close(fig)
+        pr_df.to_hdf(self.output_h5_filename, key="FQ_recall_LoD_hmer_indel", mode="a")
+
+    # hmer-indel context figure layout constants (trinuc-style): 4 hmer-base blocks, each base-before
+    # group spans base-after x length; length capped for readability.
+    _HMER_CTX_LENS = list(range(1, 11))  # hmer length 1..10 (>=10 folded into 10)
+
+    def _hmer_indel_context_df(self) -> pd.DataFrame | None:
+        """Tidy per-(context, read-group) aggregation for the hmer-indel context figure.
+
+        Context dimensions (all from snvfind, geometry-correct for real + synthetic records):
+        - ins/del      : ``X_IC``
+        - hmer base    : ``X_HMER_BASE`` (the repeated base of the affected run)
+        - hmer length  : ``X_HMER_RUN``  (affected reference run length; capped at 10)
+        - base-before  : ``X_HMER_PRE``  (reference base 5' of the run)
+        - base-after   : ``X_HMER_POST`` (reference base 3' of the run)
+        One row per (ins/del, hmer base, base-before, base-after, hmer length, read group) with n_TP /
+        n_FP and median TP SNVQ. Returns ``None`` for SNV-only runs / missing snvfind context columns.
+        """
+        if not self._has_hmer_indel_rows():
+            return None
+        data = self.data_df
+        needed = {X_IC, X_HMER_BASE, X_HMER_RUN, X_HMER_PRE, X_HMER_POST}
+        missing = needed - set(data.columns)
+        if missing:
+            logger.warning("hmer-indel context figure skipped: missing snvfind columns %s", sorted(missing))
+            return None
+        ind = data[data[VARIANT_TYPE] == VARIANT_TYPE_HMER_INDEL].copy()
+        if ind.empty:
+            return None
+        bases = list("ACGT")
+        # read-group label per row (e.g. simplex SE / duplex PE) from the display scheme
+        group = pd.Series(index=ind.index, dtype=object)
+        for label, mask in self._group_masks(data_df=ind):
+            group[np.asarray(mask, dtype=bool)] = label
+        # hmer_len bins by X_HMER_RUN, the affected *reference* homopolymer run length. Expect no 1-mer
+        # DEL bin (a deletion shortens a ref run, so its affected run is >=2) and no 0-mer bin at all
+        # (run is always >=1; a 0-run insertion isn't classified as an hmer-indel) -- empty by construction.
+        ctx = pd.DataFrame(
+            {
+                "ins_del": ind[X_IC].astype(str).str.lower(),
+                "hmer_base": ind[X_HMER_BASE].astype(str).str.upper(),
+                "hmer_len": pd.to_numeric(ind[X_HMER_RUN], errors="coerce").clip(lower=1, upper=10),
+                "base_before": ind[X_HMER_PRE].astype(str).str.upper(),
+                "base_after": ind[X_HMER_POST].astype(str).str.upper(),
+                "read_group": group.to_numpy(),
+                "is_tp": ind[LABEL].astype(bool).to_numpy(),
+                "snvq": pd.to_numeric(ind[QUAL], errors="coerce").to_numpy(),
+            }
+        )
+        ctx = ctx[
+            ctx["ins_del"].isin(["ins", "del"])
+            & ctx["hmer_base"].isin(bases)
+            & ctx["base_before"].isin(bases)
+            & ctx["base_after"].isin(bases)
+            & ctx["hmer_len"].notna()
+        ]
+        if ctx.empty:
+            return None
+        ctx["hmer_len"] = ctx["hmer_len"].round().astype(int)
+        ctx["snvq_tp"] = ctx["snvq"].where(ctx["is_tp"])
+        keys = ["ins_del", "hmer_base", "base_before", "base_after", "hmer_len", "read_group"]
+        table = (
+            ctx.groupby(keys, observed=True)
+            .agg(n_TP=("is_tp", "sum"), n_rows=("is_tp", "size"), median_snvq_tp=("snvq_tp", "median"))
+            .reset_index()
+        )
+        table["n_FP"] = table["n_rows"] - table["n_TP"]
+        return table.drop(columns=["n_rows"])
+
+    @exception_handler
+    def calc_and_plot_hmer_indel_context_plot(self, output_filename: str = None):  # noqa: C901, PLR0915
+        """Context figure for hmer indels, laid out like the SNV trinuc-context figure.
+
+        One titled BAND per hmer base (A/C/G/T), stacked vertically so each base gets the full figure
+        width (the single-figure version was too cramped). Each band is an INS panel-pair over a DEL
+        panel-pair (the analogue of the trinuc fwd/rev pairs): a median-SNVQ quality panel on top of a
+        TP-vs-FP overlaid density panel, sharing a 3-level context axis: base-before -> base-after ->
+        hmer length (1..6, innermost ticks). For a given hmer base the flanking bases cannot equal it
+        (a maximal homopolymer run is bounded by a different base), so base-before / base-after range
+        only over the OTHER three bases. The quality panel draws one median-SNVQ step-line per read
+        type (the display scheme groups). Writes the tidy per-context table to the
+        QC h5 under ``hmer_indel_context_stats``. Self-skips SNV-only runs / missing snvfind columns.
+        """
+        table = self._hmer_indel_context_df()
+        if table is None:
+            logger.info("calc_and_plot_hmer_indel_context_plot: no hmer-indel context; skipping")
+            return
+        table.to_hdf(self.output_h5_filename, key="hmer_indel_context_stats", mode="a")
+
+        bases = list("ACGT")
+        lens = self._HMER_CTX_LENS
+        palette = self._variant_palette()
+        groups = [g for g in [lbl for lbl, _ in self._group_masks()] if g in set(table["read_group"])]
+        hist_colors = {"TP": "#3B76AF", "FP": "#C7382F"}
+        w_ba = len(lens)  # columns per base-after block (one per hmer length)
+        w_bb = 3 * w_ba  # columns per base-before block (3 possible base-after values, != hmer base)
+        n_cols = 3 * w_bb  # 3 base-before values (base-before / base-after cannot equal the hmer base)
+        xs = np.arange(n_cols)
+        xext = np.concatenate([[-0.5], xs, [n_cols - 0.5]])
+
+        # data-driven SNVQ y-range for the quality panels: min/max of the median SNVQ across all
+        # contexts + a small pad, shared across all bands so panels stay comparable. Falls back to
+        # 40-100 when there are no scored values.
+        _snvq_vals = pd.to_numeric(table["median_snvq_tp"], errors="coerce").dropna()
+        _pad, _min_span = 3.0, 10.0
+        if len(_snvq_vals):
+            y_lo = max(0.0, float(np.floor(_snvq_vals.min())) - _pad)
+            y_hi = min(float(self.max_qual) + 2, float(np.ceil(_snvq_vals.max())) + _pad)
+            if y_hi - y_lo < _min_span:  # widen a near-flat range downward
+                y_lo = max(0.0, y_hi - _min_span)
+        else:
+            y_lo, y_hi = 40.0, 100.0
+
+        # one titled band per hmer base, each a full-width INS pair over DEL pair
+        fig = plt.figure(figsize=(22, 40))
+        n_bands = len(bases)
+        top0, bot0, band_gap, pair_gap = 0.965, 0.045, 0.028, 0.014
+        band_h = (top0 - bot0 - band_gap * (n_bands - 1)) / n_bands
+        pair_h = (band_h - pair_gap) / 2.0
+
+        def _seps(ax, *, base_title=None):
+            for ib in range(3):
+                x0 = ib * w_bb - 0.5
+                ax.axvline(x0, color="k", ls="--", lw=1.0, alpha=0.8)
+                for ja in range(1, 3):
+                    ax.axvline(x0 + ja * w_ba, color="grey", lw=0.6, alpha=0.5)
+            if base_title is not None:
+                ax.annotate(
+                    f"hmer {base_title}",
+                    xy=(0.5, 1.0),
+                    xytext=(0, 8),
+                    xycoords="axes fraction",
+                    textcoords="offset points",
+                    ha="center",
+                    fontsize=15,
+                    fontweight="bold",
+                )
+
+        def _draw_pair(base, cls, gs):  # noqa: C901
+            others = [b for b in bases if b != base]
+            ctx_order = [(bb, ba, ln) for bb in others for ba in others for ln in lens]
+            kidx = {c: idx for idx, c in enumerate(ctx_order)}
+
+            def _ci(row):
+                return kidx.get((row["base_before"], row["base_after"], int(row["hmer_len"])))
+
+            sub_all = table[table["hmer_base"] == base]
+            sub = sub_all[sub_all["ins_del"] == cls]
+            qax = fig.add_subplot(gs[0])
+            hax = fig.add_subplot(gs[1], sharex=qax)
+            for g in groups:
+                gs_sub = sub[sub["read_group"] == g].copy()
+                if gs_sub.empty:
+                    continue
+                gs_sub["ci"] = gs_sub.apply(_ci, axis=1)
+                gs_sub = gs_sub.dropna(subset=["ci"])
+                if gs_sub.empty:
+                    continue
+                med = np.full(n_cols, np.nan)
+                for ci, rows in gs_sub.groupby("ci"):
+                    med[int(ci)] = np.nanmedian(rows["median_snvq_tp"].to_numpy())
+                qax.step(
+                    xext,
+                    np.concatenate([[med[0]], med, [med[-1]]]),
+                    where="mid",
+                    color=palette.get(g, "grey"),
+                    alpha=0.9,
+                    lw=1.1,
+                )
+            qax.axhline(60, color="k", ls=":", lw=0.8, alpha=0.5)
+            qax.set_ylabel(f"SNVQ ({cls})", fontsize=11)
+            qax.set_ylim(y_lo, y_hi)
+            qax.locator_params(axis="y", nbins=8)  # ~8 auto ticks over the data-driven range
+            qax.set_xlim(-0.5, n_cols - 0.5)
+            qax.grid(visible=True, axis="y", alpha=0.5, ls=":")
+            plt.setp(qax.get_xticklabels(), visible=False)
+            qax.tick_params(axis="x", length=0)
+            _seps(qax, base_title=(base if cls == "ins" else None))
+            tp, fp = np.zeros(n_cols), np.zeros(n_cols)
+            for _, row in sub.iterrows():
+                ci = _ci(row)
+                if ci is None:
+                    continue
+                tp[int(ci)] += row["n_TP"]
+                fp[int(ci)] += row["n_FP"]
+            tp = tp / tp.sum() if tp.sum() else tp
+            fp = fp / fp.sum() if fp.sum() else fp
+            hax.bar(xs, tp, color=hist_colors["TP"], width=1.0, alpha=0.5, label="TP")
+            hax.bar(xs, fp, color=hist_colors["FP"], width=1.0, alpha=0.5, label="FP")
+            hax.set_ylabel(f"Density ({cls})", fontsize=11)
+            hax.set_xlim(-0.5, n_cols - 0.5)
+            hax.set_ylim(0, max(tp.max(), fp.max(), 1e-6) * 1.05)
+            hax.grid(visible=True, axis="y", alpha=0.4, ls=":")
+            _seps(hax, base_title=None)
+            hax.set_xticks(xs)
+            hax.set_xticklabels([str(ln) for _bb in others for _ba in others for ln in lens], fontsize=7)
+            hax.tick_params(axis="x", length=0, pad=1)
+            for ib, bb in enumerate(others):
+                hax.annotate(
+                    bb,
+                    xy=(ib * w_bb + w_bb / 2, -0.115),
+                    xycoords=("data", "axes fraction"),
+                    ha="center",
+                    va="top",
+                    fontsize=12,
+                    fontweight="bold",
+                )
+                for ja, ba in enumerate(others):
+                    hax.annotate(
+                        ba,
+                        xy=(ib * w_bb + ja * w_ba + w_ba / 2, -0.06),
+                        xycoords=("data", "axes fraction"),
+                        ha="center",
+                        va="top",
+                        fontsize=9,
+                        color="#555",
+                    )
+            for yf, txt, fs, cc, wt in (
+                (-0.02, "hmer length →", 8, "black", "normal"),
+                (-0.06, "base-after →", 8, "#555", "normal"),
+                (-0.115, "base-before →", 10, "black", "bold"),
+            ):
+                hax.annotate(
+                    txt,
+                    xy=(-0.006, yf),
+                    xycoords="axes fraction",
+                    ha="right",
+                    va="top",
+                    fontsize=fs,
+                    color=cc,
+                    fontweight=wt,
+                )
+
+        for k, base in enumerate(bases):
+            band_top = top0 - k * (band_h + band_gap)
+            ins_top, ins_bot = band_top, band_top - pair_h
+            del_top, del_bot = ins_bot - pair_gap, ins_bot - pair_gap - pair_h
+            gs_ins = gridspec.GridSpec(2, 1, height_ratios=[1, 2], hspace=0.0, top=ins_top, bottom=ins_bot)
+            gs_del = gridspec.GridSpec(2, 1, height_ratios=[1, 2], hspace=0.0, top=del_top, bottom=del_bot)
+            _draw_pair(base, "ins", gs_ins)
+            _draw_pair(base, "del", gs_del)
+
+        grp_handles = [mlines.Line2D([0], [0], color=palette.get(g, "grey"), lw=2, label=g) for g in groups]
+        hist_handles = [
+            Patch(facecolor=hist_colors["TP"], alpha=0.5, label="TP"),
+            Patch(facecolor=hist_colors["FP"], alpha=0.5, label="FP"),
+        ]
+        fig.legend(
+            handles=grp_handles,
+            title="median SNVQ by read type",
+            loc="lower center",
+            bbox_to_anchor=(0.35, 0.008),
+            ncol=len(groups) or 1,
+            frameon=False,
+            fontsize=11,
+            title_fontsize=11,
+        )
+        fig.legend(
+            handles=hist_handles,
+            title="density (normalized within each hmer base × ins/del)",
+            loc="lower center",
+            bbox_to_anchor=(0.72, 0.008),
+            ncol=2,
+            frameon=False,
+            fontsize=11,
+            title_fontsize=11,
+        )
+        fig.suptitle(
+            "Hmer-indel context per hmer base — INS pair over DEL pair; base-before/after exclude the hmer base",
+            fontsize=16,
+        )
+        self._save_plt(output_filename=output_filename, fig=fig, tight_layout=False)
+        plt.close(fig)
+
+    def _indel_read_group_split(self, ind, base):
+        """Add a ``read_group`` column to ``base`` from ``ind[READ_GROUP]``; return (groups, base).
+
+        Mirrors the read-group split in ``plot_hmer_indel_by_class``: when a multi-group ``read_group``
+        column is present, one line per present group; otherwise a single ``"all"`` group. Rows in no
+        display group (e.g. singletons) are dropped.
+        """
+        base = base.copy()
+        group_masks = None
+        if READ_GROUP in ind.columns:
+            rg = ind[READ_GROUP]
+            cats = list(rg.cat.categories) if isinstance(rg.dtype, pd.CategoricalDtype) else list(rg.dropna().unique())
+            present = [c for c in cats if (rg == c).to_numpy().any()]
+            if len(present) > 1:
+                group_masks = [(c, (rg == c).to_numpy()) for c in present]
+        if group_masks is None:
+            base["read_group"] = "all"
+            return ["all"], base
+        rg = pd.Series("", index=ind.index, dtype=object)
+        for lbl, mask in group_masks:
+            rg[np.asarray(mask, dtype=bool)] = lbl
+        base["read_group"] = rg.to_numpy()
+        base = base[base["read_group"] != ""]
+        return [lbl for lbl, _ in group_masks], base
+
+    @staticmethod
+    def _plot_indel_class_lines(axes, stats, groups, *, x):
+        """Draw median-SNVQ (``axes[0]``) and count (``axes[1]``) lines vs ``x``, one per
+        (read_group, indel_class). Shared styling: color = read-group, ins = solid/●, del = dashed/✕,
+        full-word legend (same convention as the hmer by-class figure)."""
+        group_colors = dict(zip(groups, sns.color_palette(n_colors=len(groups)), strict=False))
+        class_ls = {"ins": "-", "del": "--"}
+        class_marker = {"ins": "o", "del": "X"}
+        class_label = {"ins": "insertion", "del": "deletion"}
+        for (g, cls_name), grp_rows in stats.groupby(["read_group", "indel_class"], observed=True):
+            srt = grp_rows.sort_values(x)
+            color = group_colors.get(g, "black")
+            ls = class_ls.get(cls_name, "-")
+            mk = class_marker.get(cls_name, "o")
+            cls_full = class_label.get(cls_name, cls_name)
+            lbl = cls_full if groups == ["all"] else f"{g} · {cls_full}"
+            axes[0].plot(srt[x], srt["median_snvq"], marker=mk, ls=ls, color=color, label=lbl)
+            axes[1].plot(srt[x], srt["count"], marker=mk, ls=ls, color=color, label=lbl)
+
+    @exception_handler
+    def plot_non_hmer_indel_by_class(self, output_filename: str = None):
+        """Non-homopolymer-indel TP SNVQ + count by indel class (ins/del) and indel length.
+
+        The non-hmer analogue of ``plot_hmer_indel_by_class``: bins TP non-hmer-indel rows by indel
+        length ``|X_IL|`` (clipped 1..20, the snvfind non-hmer synthesis maximum) and plots median SNVQ
+        and TP count vs length, one line per indel class (ins/del) × read-group. Writes the
+        per-(read_group, indel_class, indel_length) table to the QC h5 under ``non_hmer_indel_class_stats``.
+        Self-skips when there are no non-hmer TP rows / the required columns are missing.
+        """
+        if any(c not in self.data_df.columns for c in (VARIANT_TYPE, X_IC, X_IL)):
+            logger.info("plot_non_hmer_indel_by_class: variant_type / X_IC / X_IL missing; skipping")
+            return
+        data = self.data_df
+        ind = data[(data[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL) & data[LABEL].astype(bool)]
+        if ind.empty:
+            logger.info("plot_non_hmer_indel_by_class: no non-hmer-indel TP rows; skipping")
+            return
+        indel_len = pd.to_numeric(ind[X_IL], errors="coerce").abs().clip(lower=1, upper=NONHMER_INDEL_MAX_LEN)
+        base = pd.DataFrame(
+            {
+                "indel_length": indel_len.to_numpy(),
+                "indel_class": ind[X_IC].astype(str).str.lower().to_numpy(),
+                "snvq": pd.to_numeric(ind[QUAL], errors="coerce").to_numpy(),
+            },
+            index=ind.index,
+        )
+        groups, base = self._indel_read_group_split(ind, base)
+        stats = (
+            base.dropna(subset=["indel_length"])
+            .groupby(["read_group", "indel_class", "indel_length"], observed=True)
+            .agg(median_snvq=("snvq", "median"), count=("snvq", "size"))
+            .reset_index()
+        )
+        stats.to_hdf(self.output_h5_filename, key="non_hmer_indel_class_stats", mode="a")
+        fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+        self._plot_indel_class_lines(axes, stats, groups, x="indel_length")
+        axes[0].set_xlabel("non-homopolymer indel length (bp)")
+        axes[0].set_ylabel("median SNVQ (TP)")
+        axes[0].set_title("median SNVQ by class")
+        axes[1].set_xlabel("non-homopolymer indel length (bp)")
+        axes[1].set_ylabel("TP count")
+        axes[1].set_title("TP count by class")
+        axes[1].set_yscale("log")
+        fig.suptitle("Non-homopolymer-indel by indel class and read-type")
+        for ax in axes:
+            ax.legend(fontsize=8)
+            ax.grid(visible=True, alpha=0.3)
+        self._save_plt(output_filename=output_filename, fig=fig)
+        plt.close(fig)
+
+    @exception_handler
+    def plot_non_hmer_indel_str(self, output_filename: str = None):  # noqa: PLR0915
+        """Non-homopolymer STR (tandem-repeat) indel SNVQ + count by repeat period and copy number.
+
+        Restricts to TP non-hmer indels that sit in a tandem repeat (``STR`` set, i.e. ``RU`` present),
+        then shows median SNVQ and TP count vs (A) repeat-unit length / period = ``len(RU)`` (clipped
+        1..6) and (B) repeat copy number ``RPA`` (clipped 1..6), each split ins/del × read-group.
+        Writes the combined long-form table (``axis`` ∈ {period, copies}) to the QC h5 under
+        ``non_hmer_indel_str_stats``. Self-skips when absent.
+        """
+        if any(c not in self.data_df.columns for c in (VARIANT_TYPE, X_IC, RU, RPA)):
+            logger.info("plot_non_hmer_indel_str: variant_type / X_IC / RU / RPA missing; skipping")
+            return
+        data = self.data_df
+        ru = data[RU].astype(str)
+        is_str = (
+            (data[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL)
+            & data[LABEL].astype(bool)
+            & ru.ne(".")
+            & ru.ne("")
+            & ru.str.upper().str.fullmatch("[ACGT]+").fillna(value=False)
+        )
+        ind = data[is_str]
+        if ind.empty:
+            logger.info("plot_non_hmer_indel_str: no non-hmer STR TP rows; skipping")
+            return
+        base = pd.DataFrame(
+            {
+                "period": ind[RU].astype(str).str.len().clip(lower=1, upper=6).to_numpy(),
+                "copies": pd.to_numeric(ind[RPA], errors="coerce").clip(lower=1, upper=6).to_numpy(),
+                "indel_class": ind[X_IC].astype(str).str.lower().to_numpy(),
+                "snvq": pd.to_numeric(ind[QUAL], errors="coerce").to_numpy(),
+            },
+            index=ind.index,
+        )
+        groups, base = self._indel_read_group_split(ind, base)
+
+        def _agg(axis_col):
+            return (
+                base.dropna(subset=[axis_col])
+                .groupby(["read_group", "indel_class", axis_col], observed=True)
+                .agg(median_snvq=("snvq", "median"), count=("snvq", "size"))
+                .reset_index()
+                .rename(columns={axis_col: "value"})
+            )
+
+        by_period = _agg("period")
+        by_period["axis"] = "period"
+        by_copies = _agg("copies")
+        by_copies["axis"] = "copies"
+        pd.concat([by_period, by_copies], ignore_index=True).to_hdf(
+            self.output_h5_filename, key="non_hmer_indel_str_stats", mode="a"
+        )
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+        self._plot_indel_class_lines(
+            [axes[0, 0], axes[1, 0]], by_period.rename(columns={"value": "period"}), groups, x="period"
+        )
+        self._plot_indel_class_lines(
+            [axes[0, 1], axes[1, 1]], by_copies.rename(columns={"value": "copies"}), groups, x="copies"
+        )
+        axes[0, 0].set_title("median SNVQ by repeat period")
+        axes[0, 0].set_ylabel("median SNVQ (TP)")
+        axes[1, 0].set_title("TP count by repeat period")
+        axes[1, 0].set_ylabel("TP count")
+        axes[1, 0].set_yscale("log")
+        axes[1, 0].set_xlabel("repeat-unit length / period = len(RU) (bp; 6 = 6+)")
+        axes[0, 1].set_title("median SNVQ by repeat copies")
+        axes[1, 1].set_title("TP count by repeat copies")
+        axes[1, 1].set_yscale("log")
+        axes[1, 1].set_xlabel("repeat copy number RPA (6 = 6+)")
+        for ax in axes.ravel():
+            ax.legend(fontsize=7)
+            ax.grid(visible=True, alpha=0.3)
+        fig.suptitle("Non-homopolymer STR indels (tandem repeats)")
+        self._save_plt(output_filename=output_filename, fig=fig)
+        plt.close(fig)
+
+    _STR_CTX_PERIODS = [2, 3, 4]  # di / tri / tetra nucleotide bands
+    _STR_CTX_TOPK = 10  # top-K motifs per period band (by total count) kept on the x-axis
+
+    @staticmethod
+    def _canonical_repeat_unit(ru: str) -> str:
+        """Canonical tandem-repeat motif = min over all rotations of the unit and its reverse complement.
+
+        Groups phase/strand variants of the same repeat (AC/CA/GT/TG -> ``AC``). Returns ``""`` for
+        non-ACGT input.
+        """
+        ru = str(ru).upper()
+        if not ru or any(b not in "ACGT" for b in ru):
+            return ""
+        comp = {"A": "T", "C": "G", "G": "C", "T": "A"}
+        rc = "".join(comp[b] for b in reversed(ru))
+        rotations = [ru[i:] + ru[:i] for i in range(len(ru))] + [rc[i:] + rc[:i] for i in range(len(rc))]
+        return min(rotations)
+
+    def _non_hmer_str_context_df(self) -> pd.DataFrame | None:
+        """Tidy per-(period, motif, ins/del, read-group) aggregation for the STR context figure.
+
+        Restricts to non-hmer indel rows that carry a repeat unit (``RU``); the motif is canonicalized
+        (phase + strand collapsed) and the period = ``len(motif)`` kept to di/tri/tetra. One row per
+        (period, motif, ins/del, read group) with ``n_TP`` / ``n_FP`` / ``median_snvq_tp``. Returns
+        ``None`` for runs without non-hmer STR rows / missing columns.
+        """
+        if not self._has_non_hmer_indel_rows():
+            return None
+        data = self.data_df
+        missing = {X_IC, RU, RPA} - set(data.columns)
+        if missing:
+            logger.warning("non-hmer STR context figure skipped: missing columns %s", sorted(missing))
+            return None
+        ru = data[RU].astype(str)
+        sel = (data[VARIANT_TYPE] == VARIANT_TYPE_NONHMER_INDEL) & ru.ne(".") & ru.ne("")
+        ind = data[sel].copy()
+        if ind.empty:
+            return None
+        group = pd.Series(index=ind.index, dtype=object)
+        for label, mask in self._group_masks(data_df=ind):
+            group[np.asarray(mask, dtype=bool)] = label
+        ctx = pd.DataFrame(
+            {
+                "ins_del": ind[X_IC].astype(str).str.lower(),
+                "motif": ind[RU].map(self._canonical_repeat_unit).to_numpy(),
+                "read_group": group.to_numpy(),
+                "is_tp": ind[LABEL].astype(bool).to_numpy(),
+                "snvq": pd.to_numeric(ind[QUAL], errors="coerce").to_numpy(),
+            }
+        )
+        ctx["period"] = ctx["motif"].str.len()
+        ctx = ctx[ctx["ins_del"].isin(["ins", "del"]) & ctx["motif"].ne("") & ctx["period"].isin(self._STR_CTX_PERIODS)]
+        if ctx.empty:
+            return None
+        ctx["snvq_tp"] = ctx["snvq"].where(ctx["is_tp"])
+        table = (
+            ctx.groupby(["period", "motif", "ins_del", "read_group"], observed=True)
+            .agg(n_TP=("is_tp", "sum"), n_rows=("is_tp", "size"), median_snvq_tp=("snvq_tp", "median"))
+            .reset_index()
+        )
+        table["n_FP"] = table["n_rows"] - table["n_TP"]
+        return table.drop(columns=["n_rows"])
+
+    @exception_handler
+    def calc_and_plot_non_hmer_str_context_plot(self, output_filename: str = None):  # noqa: C901, PLR0915
+        """STR-indel context figure: one band per repeat period (di/tri/tetra), each an INS pair over a
+        DEL pair (median-SNVQ panel over a TP-vs-FP normalized-density panel), x-axis = repeat motif
+        (top-K per period). The motif-level analogue of the hmer context figure; repeat-tract flanks are
+        not shown (not emitted for non-hmer indels). Writes ``non_hmer_indel_str_context_stats`` to the
+        QC h5. Self-skips when there are no non-hmer STR rows.
+        """
+        table = self._non_hmer_str_context_df()
+        if table is None:
+            logger.info("calc_and_plot_non_hmer_str_context_plot: no non-hmer STR context; skipping")
+            return
+        table.to_hdf(self.output_h5_filename, key="non_hmer_indel_str_context_stats", mode="a")
+        palette = self._variant_palette()
+        groups = [g for g in [lbl for lbl, _ in self._group_masks()] if g in set(table["read_group"])]
+        hist_colors = {"TP": "#3B76AF", "FP": "#C7382F"}
+        periods = [p for p in self._STR_CTX_PERIODS if p in set(table["period"])]
+        if not periods:
+            logger.info("calc_and_plot_non_hmer_str_context_plot: no di/tri/tetra motifs; skipping")
+            return
+        motif_order = {}
+        for p in periods:
+            sub = table[table["period"] == p]
+            tot = sub.groupby("motif")[["n_TP", "n_FP"]].sum().sum(axis=1).sort_values(ascending=False)
+            motif_order[p] = list(tot.head(self._STR_CTX_TOPK).index)
+
+        _snvq_vals = pd.to_numeric(table["median_snvq_tp"], errors="coerce").dropna()
+        _pad, _min_span = 3.0, 10.0
+        if len(_snvq_vals):
+            y_lo = max(0.0, float(np.floor(_snvq_vals.min())) - _pad)
+            y_hi = min(float(self.max_qual) + 2, float(np.ceil(_snvq_vals.max())) + _pad)
+            if y_hi - y_lo < _min_span:
+                y_lo = max(0.0, y_hi - _min_span)
+        else:
+            y_lo, y_hi = 40.0, 100.0
+
+        fig = plt.figure(figsize=(20, 7 * len(periods)))
+        n_bands = len(periods)
+        top0, bot0, band_gap, pair_gap = 0.95, 0.07, 0.05, 0.016
+        band_h = (top0 - bot0 - band_gap * (n_bands - 1)) / n_bands
+        pair_h = (band_h - pair_gap) / 2.0
+        period_name = {2: "dinucleotide", 3: "trinucleotide", 4: "tetranucleotide"}
+
+        def _draw_pair(period, cls, gs):
+            motifs = motif_order[period]
+            kidx = {m: i for i, m in enumerate(motifs)}
+            n_cols = max(len(motifs), 1)
+            xs = np.arange(len(motifs))
+            xext = (
+                np.concatenate([[-0.5], np.arange(len(motifs)), [len(motifs) - 0.5]])
+                if motifs
+                else np.array([-0.5, 0.5])
+            )
+            sub = table[(table["period"] == period) & (table["ins_del"] == cls)]
+            qax = fig.add_subplot(gs[0])
+            hax = fig.add_subplot(gs[1], sharex=qax)
+            for g in groups:
+                gsub = sub[sub["read_group"] == g]
+                if gsub.empty or not motifs:
+                    continue
+                med = np.full(len(motifs), np.nan)
+                for _, row in gsub.iterrows():
+                    ci = kidx.get(row["motif"])
+                    if ci is not None:
+                        med[ci] = row["median_snvq_tp"]
+                qax.step(
+                    xext,
+                    np.concatenate([[med[0]], med, [med[-1]]]),
+                    where="mid",
+                    color=palette.get(g, "grey"),
+                    alpha=0.9,
+                    lw=1.3,
+                )
+            qax.axhline(60, color="k", ls=":", lw=0.8, alpha=0.5)
+            qax.set_ylabel(f"SNVQ ({cls})", fontsize=11)
+            qax.set_ylim(y_lo, y_hi)
+            qax.set_xlim(-0.5, n_cols - 0.5)
+            qax.grid(visible=True, axis="y", alpha=0.5, ls=":")
+            plt.setp(qax.get_xticklabels(), visible=False)
+            qax.tick_params(axis="x", length=0)
+            if cls == "ins":
+                qax.annotate(
+                    f"period {period} ({period_name.get(period, period)})",
+                    xy=(0.5, 1.0),
+                    xytext=(0, 8),
+                    xycoords="axes fraction",
+                    textcoords="offset points",
+                    ha="center",
+                    fontsize=14,
+                    fontweight="bold",
+                )
+            tp, fp = np.zeros(len(motifs)), np.zeros(len(motifs))
+            for _, row in sub.iterrows():
+                ci = kidx.get(row["motif"])
+                if ci is None:
+                    continue
+                tp[ci] += row["n_TP"]
+                fp[ci] += row["n_FP"]
+            tp = tp / tp.sum() if tp.sum() else tp
+            fp = fp / fp.sum() if fp.sum() else fp
+            hax.bar(xs, tp, color=hist_colors["TP"], width=1.0, alpha=0.5, label="TP")
+            hax.bar(xs, fp, color=hist_colors["FP"], width=1.0, alpha=0.5, label="FP")
+            hax.set_ylabel(f"Density ({cls})", fontsize=11)
+            hax.set_xlim(-0.5, n_cols - 0.5)
+            hax.set_ylim(0, max(tp.max() if len(motifs) else 0.0, fp.max() if len(motifs) else 0.0, 1e-6) * 1.05)
+            hax.grid(visible=True, axis="y", alpha=0.4, ls=":")
+            hax.set_xticks(xs)
+            hax.set_xticklabels(motifs, fontsize=8, rotation=90)
+            hax.set_xlabel("repeat motif (canonical RU; top motifs by count)", fontsize=10)
+
+        for k, period in enumerate(periods):
+            band_top = top0 - k * (band_h + band_gap)
+            ins_top, ins_bot = band_top, band_top - pair_h
+            del_top, del_bot = ins_bot - pair_gap, ins_bot - pair_gap - pair_h
+            gs_ins = gridspec.GridSpec(2, 1, height_ratios=[1, 2], hspace=0.0, top=ins_top, bottom=ins_bot)
+            gs_del = gridspec.GridSpec(2, 1, height_ratios=[1, 2], hspace=0.0, top=del_top, bottom=del_bot)
+            _draw_pair(period, "ins", gs_ins)
+            _draw_pair(period, "del", gs_del)
+
+        grp_handles = [mlines.Line2D([0], [0], color=palette.get(g, "grey"), lw=2, label=g) for g in groups]
+        hist_handles = [
+            Patch(facecolor=hist_colors["TP"], alpha=0.5, label="TP"),
+            Patch(facecolor=hist_colors["FP"], alpha=0.5, label="FP"),
+        ]
+        fig.legend(
+            handles=grp_handles,
+            title="median SNVQ by read type",
+            loc="lower center",
+            bbox_to_anchor=(0.35, 0.004),
+            ncol=len(groups) or 1,
+            frameon=False,
+            fontsize=11,
+            title_fontsize=11,
+        )
+        fig.legend(
+            handles=hist_handles,
+            title="density (normalized within period × ins/del)",
+            loc="lower center",
+            bbox_to_anchor=(0.72, 0.004),
+            ncol=2,
+            frameon=False,
+            fontsize=11,
+            title_fontsize=11,
+        )
+        fig.suptitle(
+            "Non-homopolymer STR-indel context (per repeat motif) — INS pair over DEL pair",
+            fontsize=16,
+        )
+        self._save_plt(output_filename=output_filename, fig=fig, tight_layout=False)
+        plt.close(fig)
 
     def create_report(self):
         """Generate plots for report and save data in hdf5 file."""
@@ -3005,8 +4423,19 @@ class SRSNVReport:
         # ROC AUC stats
         self.calc_roc_auc_table()
 
-        # ML_qual histograms
-        self.plot_logit_histograms(output_filename=logit_histogram)
+        # ML_qual histograms: SNV logit figure at logit_histogram; a separate hmer-indel logit figure
+        # when hmer indels are present (path reconstructed by create_srsnv_report_html).
+        logit_histogram_hmer_indel = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}logit_histogram_hmer_indel"
+        )
+        logit_histogram_non_hmer_indel = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}logit_histogram_non_hmer_indel"
+        )
+        self.plot_logit_histograms(
+            output_filename=logit_histogram,
+            output_filename_hmer_indel=logit_histogram_hmer_indel,
+            output_filename_non_hmer_indel=logit_histogram_non_hmer_indel,
+        )
         self.plot_interpolating_function_with_histograms(output_filename=calibration_fn_with_hist)
 
         # Training progress
@@ -3026,6 +4455,40 @@ class SRSNVReport:
         # Quality and histogram for numerical features
         for col in self.params["numerical_features"]:
             self.plot_numerical_feature_hist_and_qual(col, output_filename=output_qual_per_feature + col)
+
+        # hmer-indel section (only writes files when hmer indels are present). Paths follow the same
+        # naming convention create_srsnv_report_html reconstructs, so _get_plot_paths is untouched.
+        hmer_indel_by_class_plot = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}hmer_indel_by_class"
+        )
+        self.plot_hmer_indel_by_class(output_filename=hmer_indel_by_class_plot)
+        self.calc_hmer_indel_auc_table()
+        # SNVQ-based hmer-indel section: cross-product summary table + FQ-vs-recall. Each self-skips
+        # SNV-only runs.
+        self.calc_hmer_indel_run_info_table()
+        # Duplex-PE CS-family concordance summary (PE reads, concordant vs non-concordant). Self-skips
+        # unless the CS / pe-duplex columns are present.
+        self.calc_pe_concordance_summary_table()
+        hmer_indel_fq_recall_plot = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}hmer_indel_fq_recall"
+        )
+        self.plot_hmer_indel_fq_recall(output_filename=hmer_indel_fq_recall_plot)
+        hmer_indel_context_plot = os.path.join(self.params["workdir"], f"{self.params['data_name']}hmer_indel_context")
+        self.calc_and_plot_hmer_indel_context_plot(output_filename=hmer_indel_context_plot)
+
+        # non-hmer-indel section (only writes files when non-hmer indels are present; same naming
+        # convention create_srsnv_report_html reconstructs). General by-length figure + STR-specific
+        # (period/copies summary and per-motif context). Each self-skips SNV-only / hmer-only runs.
+        non_hmer_indel_by_class_plot = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}non_hmer_indel_by_class"
+        )
+        self.plot_non_hmer_indel_by_class(output_filename=non_hmer_indel_by_class_plot)
+        non_hmer_indel_str_plot = os.path.join(self.params["workdir"], f"{self.params['data_name']}non_hmer_indel_str")
+        self.plot_non_hmer_indel_str(output_filename=non_hmer_indel_str_plot)
+        non_hmer_indel_str_context_plot = os.path.join(
+            self.params["workdir"], f"{self.params['data_name']}non_hmer_indel_str_context"
+        )
+        self.calc_and_plot_non_hmer_str_context_plot(output_filename=non_hmer_indel_str_context_plot)
 
         # # Create LoD plot
         # # TODO: Update the following to new conform with new report logic
