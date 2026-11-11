@@ -169,23 +169,20 @@ DEPTH_CNV_FEATURES = [
     "source_pair",
     "sr_reads",
 ]
-# with cn.mops candidates (VcfType.CNV_DEPTH_CNMOPS); the default list is unchanged, so earlier models keep working
-DEPTH_CNV_FEATURES_CNMOPS = [*DEPTH_CNV_FEATURES, "source_cnmops"]
 
 
-def depth_cnv_feature_names(transformer, _input_features) -> np.ndarray:
+def depth_cnv_feature_names(_transformer, _input_features) -> np.ndarray:
     """Output names of depth_cnv_features (module level so plain pickle can store the transformer)."""
-    cnmops = (transformer.kw_args or {}).get("cnmops", False)
-    return np.array(DEPTH_CNV_FEATURES_CNMOPS if cnmops else DEPTH_CNV_FEATURES)
+    return np.array(DEPTH_CNV_FEATURES)
 
 
-def depth_cnv_features(df: pd.DataFrame, *, cnmops: bool = False) -> pd.DataFrame:
+def depth_cnv_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Filter features of depth CNV calls, from the get_vcf_df columns of DEPTH_CNV_INFO_FIELDS (lower case).
 
     Read / pair support is taken for the call's own type (same) and the opposite type (opp); copy-number change is
-    relative to the contig baseline (BASE_CN, 1 on haploid contigs). Missing values are 0. With cnmops, the
-    source_cnmops feature (cn.mops candidates) is added.
+    relative to the contig baseline (BASE_CN, 1 on haploid contigs). Missing values are 0. cn.mops candidates
+    (CNV_SOURCE=cn.mops) have no source feature of their own: they are scored on their depth and read evidence.
     """
 
     def num(col: str) -> pd.Series:
@@ -235,11 +232,10 @@ def depth_cnv_features(df: pd.DataFrame, *, cnmops: bool = False) -> pd.DataFram
             "source_sr": source.apply(lambda x: float(x == ("split_read",))),
             "source_pair": source.apply(lambda x: float(x == ("pair",))),
             "sr_reads": num("sr_reads"),
-            "source_cnmops": source.apply(lambda x: float(x == ("cn.mops",))),
         },
         index=df.index,
     )
-    return out[DEPTH_CNV_FEATURES_CNMOPS if cnmops else DEPTH_CNV_FEATURES]
+    return out[DEPTH_CNV_FEATURES]
 
 
 def get_needed_features(vtype: VcfType = VcfType.SINGLE_SAMPLE, custom_annotations: list | None = None) -> list:
@@ -395,15 +391,12 @@ def modify_features_based_on_vcf_type(  # noqa C901
         features = [x[0] for x in transform_list]
     elif vtype == VcfType.JOINT:
         pass
-    elif vtype.is_cnv_depth:
+    elif vtype == VcfType.CNV_DEPTH:
         columns = [f.lower() for f in DEPTH_CNV_INFO_FIELDS]
-        kw_args = {"cnmops": True} if vtype == VcfType.CNV_DEPTH_CNMOPS else None
         transform_list = [
             (
                 "depth_cnv",
-                preprocessing.FunctionTransformer(
-                    depth_cnv_features, feature_names_out=depth_cnv_feature_names, kw_args=kw_args
-                ),
+                preprocessing.FunctionTransformer(depth_cnv_features, feature_names_out=depth_cnv_feature_names),
                 columns,
             )
         ]

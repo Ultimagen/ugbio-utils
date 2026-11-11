@@ -162,8 +162,7 @@ filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.
   `cnmops_cnv_candidates --input-vcf <calls so far> --cnmops-vcf <cn.mops calls>` (same `--depth-mq0` /
   `--depth-mq20` / `--annotation`) adds every cn.mops call (whatever its FILTER) without a same-type call (>= 50%
   reciprocal) as `CNV_SOURCE=cn.mops`, with the candidates' depth features but no depth-change check; they then go
-  through the evidence, snapping, nested / duplicate filter and FilterVCF with a `cnv_depth_cnmops` model
-  (`source_cnmops`).
+  through the evidence, snapping, nested / duplicate filter and FilterVCF with the same `cnv_depth` model.
 - Filter training: `cnv_known_event_pieces` cuts a sample's known long CNV into 10–100 kb depth calls (the windows the
   caller would call), as extra positives for `training_prep_depth_cnv_pipeline --known_events` (README.filtering.md).
 - Sex chromosomes: `call_depth_cnvs` infers them from the median depth of the clean (unique, non-segdup) chrX and
