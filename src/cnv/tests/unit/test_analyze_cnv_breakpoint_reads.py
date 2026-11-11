@@ -1427,3 +1427,22 @@ def test_analyze_cnv_breakpoints_threads_match_serial(tmp_path):
     assert [r.split("\t")[2] for r in outputs[1][0]] == [f"c{k}" for k in range(len(rows))]
     assert outputs[3] == outputs[1]
     assert len(outputs[1][1]) > 0  # the duplication has supporting reads
+
+
+def test_breakpoint_windows_are_read_from_one_handle(temp_bam_file):
+    """Each window is fetched once, without multiple_iterators (which reopens the file and reloads the index)."""
+    calls = []
+
+    class RecordingAlignmentFile:
+        def __init__(self, alignment_file):
+            self.alignment_file = alignment_file
+
+        def fetch(self, chrom, start, end, **kwargs):
+            calls.append((start, end, kwargs.get("multiple_iterators", False)))
+            return self.alignment_file.fetch(chrom, start, end)
+
+    with pysam.AlignmentFile(temp_bam_file, "rb") as bam:
+        evidence = analyze_interval_breakpoints(RecordingAlignmentFile(bam), "chr1", 1000, 2000, 100)
+    assert calls == [(900, 1100, False), (1900, 2100, False)]
+    assert evidence.supporting_reads
+    assert evidence.supplementary_reads  # taken from the same two windows

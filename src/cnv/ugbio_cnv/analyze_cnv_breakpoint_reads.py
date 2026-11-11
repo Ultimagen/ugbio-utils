@@ -16,7 +16,6 @@ Supporting reads go to the evidence BAM under read group DUP / DEL, and pair-onl
 """
 
 import argparse
-import itertools
 import os
 import sys
 import tempfile
@@ -732,6 +731,57 @@ def _summarize_fragments(
     )
 
 
+def _fetch_breakpoint_windows(
+    alignment_file: pysam.AlignmentFile, chrom: str, regions: tuple[int, int, int, int]
+) -> list[tuple[bool, list[pysam.AlignedSegment]]]:
+    """
+    (from_start_region, alignments) of the start and end breakpoint windows.
+
+    Each window is read to the end before the next is fetched, so both come from the one open handle:
+    fetch(multiple_iterators=True) would reopen the file (and reload a CRAM's index) for every window.
+    """
+    start_region_start, start_region_end, end_region_start, end_region_end = regions
+    return [
+        (True, list(alignment_file.fetch(chrom, start_region_start, start_region_end))),
+        (False, list(alignment_file.fetch(chrom, end_region_start, end_region_end))),
+    ]
+
+
+def _supplementary_alignments_of_supporting_reads(
+    window_reads: list[pysam.AlignedSegment],
+    supporting_reads: list[tuple[pysam.AlignedSegment, str]],
+) -> dict[tuple[str, bool], list[pysam.AlignedSegment]]:
+    """
+    The supplementary alignments, in the breakpoint windows, of the reads supporting CNV evidence.
+
+    Only 10-100 reads typically support a call, out of thousands in its windows. A supplementary alignment in both
+    windows is listed twice, once per window.
+
+    Parameters
+    ----------
+    window_reads : list[pysam.AlignedSegment]
+        The alignments of the start window, then of the end window
+    supporting_reads : list[tuple[pysam.AlignedSegment, str]]
+        (read, read group) of the supporting reads
+
+    Returns
+    -------
+    dict[tuple[str, bool], list[pysam.AlignedSegment]]
+        (query_name, is_read1) -> supplementary alignments
+    """
+    # The key carries the mate so that a paired-end fragment's two mates do not share a bucket
+    supporting_keys = {_mate_aware_key(read) for read, _ in supporting_reads}
+    supplementary_reads: dict[tuple[str, bool], list[pysam.AlignedSegment]] = {}
+    if not supporting_keys:
+        return supplementary_reads
+    for read in window_reads:
+        if read.is_supplementary:
+            key = _mate_aware_key(read)
+            if key in supporting_keys:
+                supplementary_reads.setdefault(key, []).append(read)
+    return supplementary_reads
+
+
 def _collect_fragments_from_region(
     alignment_file: pysam.AlignmentFile,
     chrom: str,
@@ -748,17 +798,13 @@ def _collect_fragments_from_region(
     Both mates are evaluated (deduplication is per alignment);
     _summarize_fragments then reduces the votes to one per fragment.
     """
-    start_region_start, start_region_end, end_region_start, end_region_end = regions
     # Non-voting fragments are stored as None, to bound memory on pileups
     fragments: dict[str, _FragmentEvidence | None] = {}
     processed_alignments: set[tuple[str, int]] = set()
+    fetches: list[tuple[bool, list[pysam.AlignedSegment]]] = []
 
     try:
-        # (from_start_region, reads) for the start and end breakpoint regions
-        fetches = (
-            (True, alignment_file.fetch(chrom, start_region_start, start_region_end, multiple_iterators=True)),
-            (False, alignment_file.fetch(chrom, end_region_start, end_region_end, multiple_iterators=True)),
-        )
+        fetches = _fetch_breakpoint_windows(alignment_file, chrom, regions)
         for from_start_region, read in ((flag, read) for flag, reads in fetches for read in reads):
             if _should_skip_read(read):
                 continue
@@ -788,74 +834,12 @@ def _collect_fragments_from_region(
     except Exception as e:
         logger.warning(f"Error fetching reads for {chrom}:{start}-{end}: {e}")
 
-    return _summarize_fragments(fragments, (chrom, start, end))
-
-
-def _collect_supplementary_alignments_for_supporting_reads(
-    alignment_file: pysam.AlignmentFile,
-    chrom: str,
-    supporting_reads: list[tuple[pysam.AlignedSegment, str]],
-    start_region_start: int,
-    start_region_end: int,
-    end_region_start: int,
-    end_region_end: int,
-) -> dict[tuple[str, int], list[pysam.AlignedSegment]]:
-    """
-    Collect supplementary alignments ONLY for reads that are supporting CNV evidence.
-
-    This is much more efficient than collecting all supplementary reads in the interval,
-    since typically only 10-100 reads support CNV out of 1M+ total reads.
-
-    Parameters
-    ----------
-    alignment_file : pysam.AlignmentFile
-        Open BAM/CRAM file
-    chrom : str
-        Chromosome name
-    supporting_reads : list[tuple[pysam.AlignedSegment, str]]
-        List of (read, read_group) tuples for supporting reads
-    start_region_start : int
-        Start of search region
-    start_region_end: int
-        End of start breakpoint search region
-    end_region_start : int
-        Start of end breakpoint search region
-    end_region_end : int
-        End of search region
-
-    Returns
-    -------
-    dict[tuple[str, int], list[pysam.AlignedSegment]]
-        Dictionary mapping (query_name, mate flag bits) to list of supplementary alignments
-    """
-    supplementary_reads: dict[tuple[str, int], list[pysam.AlignedSegment]] = {}
-
-    # Create set of keys we need supplementary alignments for. The key carries the mate flag
-    # bits so that a paired-end fragment's two mates do not share a bucket.
-    supporting_keys = {_mate_aware_key(read) for read, _ in supporting_reads}
-
-    if not supporting_keys:
-        return supplementary_reads
-
-    try:
-        # Fetch supplementary alignments from the breakpoint regions
-        for read in itertools.chain(
-            alignment_file.fetch(chrom, start_region_start, start_region_end, multiple_iterators=True),
-            alignment_file.fetch(chrom, end_region_start, end_region_end, multiple_iterators=True),
-        ):
-            if not read.is_supplementary:
-                continue
-
-            key = _mate_aware_key(read)
-            if key in supporting_keys:
-                if key not in supplementary_reads:
-                    supplementary_reads[key] = []
-                supplementary_reads[key].append(read)
-
-    except Exception as e:
-        logger.warning(f"Error fetching supplementary reads: {e}")
-
-    return supplementary_reads
+    evidence = _summarize_fragments(fragments, (chrom, start, end))
+    # The supplementary alignments of the supporting reads, from the same windows (for the evidence BAM)
+    evidence.supplementary_reads = _supplementary_alignments_of_supporting_reads(
+        [read for _, reads in fetches for read in reads], evidence.supporting_reads
+    )
+    return evidence
 
 
 def analyze_interval_breakpoints(
@@ -892,28 +876,11 @@ def analyze_interval_breakpoints(
     BreakpointEvidence
         Counts of reads supporting duplication and deletion
     """
-    # Calculate breakpoint regions
+    # Per-fragment evidence and the supporting reads' supplementary alignments, from one read of each window
     regions = _calculate_breakpoint_regions(start, end, cushion)
-    start_region_start, start_region_end, end_region_start, end_region_end = regions
-
-    # PHASE 1: Collect per-fragment evidence from the two breakpoint regions
-    evidence = _collect_fragments_from_region(
+    return _collect_fragments_from_region(
         alignment_file, chrom, start, end, cushion, regions, min_pair_span, min_pair_mapping_quality
     )
-
-    # PHASE 2: Collect supplementary alignments ONLY for supporting reads
-    # This is dramatically more efficient than collecting all supplementary reads
-    evidence.supplementary_reads = _collect_supplementary_alignments_for_supporting_reads(
-        alignment_file,
-        chrom,
-        evidence.supporting_reads,
-        start_region_start,
-        start_region_end,
-        end_region_start,
-        end_region_end,
-    )
-
-    return evidence
 
 
 def _write_supporting_reads_to_bam(
