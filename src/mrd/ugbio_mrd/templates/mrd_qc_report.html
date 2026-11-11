@@ -676,6 +676,13 @@
         given the estimated tumour fraction (&lambda; = TF &times; mean coverage)
         are removed as likely germline or artifact variants.
       </div>
+      {% if multi_read_filter_comparison.skipped_note %}
+      <div style="margin-bottom:12px; padding:10px 14px; border-left:4px solid #E6A700; background:#FFF8E1; font-size:13px;">
+        <strong>{{ multi_read_filter_comparison.skipped_note }}.</strong>
+        At high tumour fraction, per-locus support varies far beyond the Poisson model and the filter
+        would remove true tumour signal. Signatures that do not meet the rule are filtered as usual.
+      </div>
+      {% endif %}
       <table style="width:100%; border-collapse:collapse; margin-bottom:16px; font-size:13px;">
         <thead>
           <tr style="background:var(--light-gray); text-align:left;">
