@@ -1163,6 +1163,7 @@ def render_analysis_report(  # noqa: PLR0913
     thresh_noise_lq_reads: float | None = None,
     multi_read_excluded_per_type: dict | None = None,  # noqa: ARG001 (kept for API compatibility)
     df_supporting_pre_multi_read: pd.DataFrame | None = None,
+    multi_read_skipped_note: str = "",
 ) -> str:
     """
     Render the MRD analysis report as a self-contained HTML string.
@@ -1322,6 +1323,7 @@ def render_analysis_report(  # noqa: PLR0913
         "inputs_info": inputs_info or {},
         "filter_funnel": filter_funnel or [],
         "read_funnel": read_funnel or [],
+        "multi_read_skipped_note": multi_read_skipped_note,
     }
 
     template = _JINJA_ENV.get_template("mrd_analysis_report.html")
@@ -1360,6 +1362,9 @@ def render_qc_report(  # noqa: PLR0912, PLR0913, PLR0915, C901
     multi_read_excluded_per_type: dict | None = None,  # noqa: ARG001 (kept for API compatibility)
     df_supporting_pre_multi_read: pd.DataFrame | None = None,
     df_features_no_snvq_filt: pd.DataFrame | None = None,
+    multi_read_skipped_note: str = "",
+    *,
+    multi_read_matched_skipped: bool = False,
 ) -> str:
     """
     Render the MRD QC report as a self-contained HTML string.
@@ -1636,7 +1641,13 @@ def render_qc_report(  # noqa: PLR0912, PLR0913, PLR0915, C901
     if detection_pre_multi_read is not None and thresh_multi_read_pvalue is not None:
         multi_read_filter_comparison = {
             "thresh_pvalue": thresh_multi_read_pvalue,
-            "with_filter": _det_row(detection, "With multi-read filter (primary result)"),
+            "skipped_note": multi_read_skipped_note,
+            "with_filter": _det_row(
+                detection,
+                "Primary result (filter not applied to matched)"
+                if multi_read_matched_skipped
+                else "With multi-read filter (primary result)",
+            ),
             "without_filter": _det_row(detection_pre_multi_read, "Without multi-read filter"),
             "pre_filter_signal_img": _render_signal_noise_internal(detection_pre_multi_read, df_tf_pre_multi_read),
         }
