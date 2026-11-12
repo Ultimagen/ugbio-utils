@@ -8,10 +8,14 @@ Per sample:
   -> copy-number estimate per bin (2 x ratio to the autosomal median)
   -> sex chromosome copy numbers from the clean chrX / chrY bins (or the given sex); chrX / chrY are not called
      if the depth is ambiguous
+  -> in a male, the pseudoautosomal regions of chrX (--par-bed) keep baseline 2 (the reference masks their chrY copy,
+     so all PAR reads map to chrX)
   -> units of `unit_bins` callable bins (masked bins are skipped, so units span them)
-  -> weighted PELT per chromosome; segdup / low-mappability units weighted by their own (larger) noise
-  -> segments called by direction (loss / gain) vs the contig baseline (2, or 1 for haploid contigs)
-  -> same-direction calls merged across noise and masked gaps (one call per event)
+  -> weighted PELT per chromosome, not across assembly gaps (> gap_break_bp) or PAR edges; segdup /
+     low-mappability units weighted by their own (larger) noise
+  -> segments called by direction (loss / gain) vs the baseline (2, or 1 on haploid contigs outside the PARs)
+  -> same-direction calls merged across noise and short masked gaps (one call per event), not across assembly gaps
+     or PAR edges
   -> call edges refined on the 100 bp bins
 """
 
@@ -56,6 +60,7 @@ class Params:
     min_len_refined: int = 500
     merge_block_normal_bp: int = 50_000  # a gap with this much confidently normal unique sequence is a real boundary
     blip_max_bp: int = 5000  # opposite calls inside a merge are absorbed if low-confidence or shorter; else kept nested
+    gap_break_bp: int = 100_000  # segments and merges do not cross a run of N bins this long (assembly gap)
     chunk_units: int = 10_000  # PELT is quadratic without changepoints; chunk boundaries are healed by the merge
     min_sex_bins: int = 1000  # clean chrX / chrY bins needed to infer the sex chromosome copy numbers
 
@@ -74,6 +79,18 @@ class SexChromosomes:
     haploid: set[str] = field(default_factory=set)  # contigs with baseline copy number 1
     skipped: set[str] = field(default_factory=set)  # contigs not called (no copy expected)
     karyotype: str = "."  # e.g. XY; how the setup was decided
+
+
+def read_par_bed(par_bed: str, chrom: str) -> list[tuple[str, int, int]]:
+    """The pseudoautosomal regions of one chromosome (BED: chrom, start, end)."""
+    out = []
+    with open(par_bed) as f:
+        for line in f:
+            if line.strip() and not line.startswith(("#", "track", "browser")):
+                c, s, e, *_ = line.rstrip("\n").split("\t")
+                if c == chrom:
+                    out.append((c, int(s), int(e)))
+    return out
 
 
 # ---------------------------------------------------------------- inputs
@@ -218,12 +235,35 @@ def normalize(bins: pd.DataFrame, haploid: set[str], p: Params) -> pd.DataFrame:
     return bins
 
 
+def assembly_gap_ends(starts: np.ndarray, n_frac: np.ndarray, min_bp: int) -> np.ndarray:
+    """End positions of the runs of N bins (n_frac >= 0.5) of at least min_bp, on one chromosome's sorted bins."""
+    is_n = np.r_[0, (n_frac >= 0.5).astype(np.int8), 0]  # noqa: PLR2004
+    edges = np.diff(is_n)
+    run_start, run_end = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+    long_run = (run_end - run_start) * BIN_SIZE >= min_bp
+    return starts[run_end[long_run] - 1] + BIN_SIZE
+
+
 def make_units(bins: pd.DataFrame, p: Params) -> pd.DataFrame:
-    """Groups of unit_bins consecutive callable bins per chromosome (masked bins are skipped)."""
+    """
+    Groups of unit_bins consecutive callable bins per chromosome (masked bins are skipped). Units belong to stretches
+    separated by assembly gaps (runs of N bins of at least gap_break_bp) and baseline changes (PAR edges); the unit
+    across a stretch boundary is split and dropped. Other masked sequence (extreme GC) does not separate stretches.
+    """
     cb = bins[bins["callable"] & bins["cn"].notna()].copy()
     cb["unit"] = cb.groupby("chrom", sort=False).cumcount() // p.unit_bins
+    gaps_before = pd.Series(0, index=cb.index)
+    for chrom, b in bins.groupby("chrom", sort=False):
+        gap_ends = assembly_gap_ends(b["start"].to_numpy(), b["n_frac"].to_numpy(), p.gap_break_bp)
+        on_chrom = cb["chrom"] == chrom
+        gaps_before[on_chrom] = np.searchsorted(gap_ends, cb.loc[on_chrom, "start"].to_numpy(), side="right")
+    by_chrom = cb.groupby("chrom", sort=False)
+    new_stretch = (gaps_before.groupby(cb["chrom"]).diff().fillna(0) != 0) | (
+        by_chrom["baseline"].diff().fillna(0) != 0
+    )
+    cb["stretch"] = new_stretch.groupby(cb["chrom"]).cumsum()
     units = (
-        cb.groupby(["chrom", "unit"], sort=False)
+        cb.groupby(["chrom", "stretch", "unit"], sort=False)
         .agg(
             start=("start", "first"),
             end=("end", "last"),
@@ -316,7 +356,12 @@ def unit_noise(units: pd.DataFrame) -> pd.Series:
 
 
 def segment(units: pd.DataFrame, p: Params) -> pd.DataFrame:
-    """Segment each chromosome and call each segment as DEL, DUP or uncalled ('')."""
+    """
+    Segment each chromosome and call each segment as DEL, DUP or uncalled ('').
+
+    Segments do not cross a stretch boundary (assembly gap or PAR edge, see make_units). The penalty is the
+    chromosome's, so the boundaries do not change the sensitivity.
+    """
     units = units.copy()
     units["difficult"] = (units["segdup"] >= p.difficult_frac) | (units["lowmap"] >= p.difficult_frac)
     sigma = unit_noise(units)
@@ -328,13 +373,16 @@ def segment(units: pd.DataFrame, p: Params) -> pd.DataFrame:
         if len(x) < 2 * p.min_units:
             continue
         beta = p.penalty_scale * np.log(len(x))
+        cuts = np.flatnonzero(np.diff(u["stretch"].to_numpy())) + 1
         ends = []
-        for c0 in range(0, len(x), p.chunk_units):
-            c1 = min(c0 + p.chunk_units, len(x))
-            if c1 - c0 < 2 * p.min_units:
-                ends[-1] = c1
-                continue
-            ends.extend(c0 + pelt_weighted_l2(x[c0:c1], w[c0:c1], beta, p.min_units))
+        for r0, r1 in zip(np.r_[0, cuts], np.r_[cuts, len(x)], strict=True):  # stretches between gaps / PAR edges
+            for c0 in range(r0, r1, p.chunk_units):
+                c1 = min(c0 + p.chunk_units, r1)
+                if c1 - c0 < 2 * p.min_units:
+                    if ends:
+                        ends[-1] = c1
+                    continue
+                ends.extend(c0 + pelt_weighted_l2(x[c0:c1], w[c0:c1], beta, p.min_units))
         s = 0
         for e in ends:
             seg = u.iloc[s:e]
@@ -344,6 +392,7 @@ def segment(units: pd.DataFrame, p: Params) -> pd.DataFrame:
             rows.append(
                 {
                     "chrom": chrom,
+                    "stretch": int(seg["stretch"].iloc[0]),
                     "start": int(seg["start"].iloc[0]),
                     "end": int(seg["end"].iloc[-1]),
                     "n_units": e - s,
@@ -357,8 +406,10 @@ def segment(units: pd.DataFrame, p: Params) -> pd.DataFrame:
                 }
             )
             s = e
-    columns = ["chrom", "start", "end", "n_units", "cn_mean", "baseline", "z", "difficult_frac", "lowmap", "segdup"]
-    segs = pd.DataFrame(rows, columns=[*columns, "uniq_frac"])  # the columns also when no chromosome is segmented
+    columns = ["chrom", "stretch", "start", "end", "n_units", "cn_mean", "baseline", "z", "difficult_frac", "lowmap"]
+    segs = pd.DataFrame(
+        rows, columns=[*columns, "segdup", "uniq_frac"]
+    )  # the columns also when no chromosome is segmented
     dcn = segs["cn_mean"] - segs["baseline"]
     called = (dcn.abs() >= p.min_abs_dcn) & (segs["z"].abs() >= p.min_z)
     segs["direction"] = np.where(called, np.where(dcn < 0, "DEL", "DUP"), "")
@@ -415,7 +466,7 @@ def merge_calls(segs: pd.DataFrame, bins: pd.DataFrame, p: Params) -> pd.DataFra
     return calls[(calls["end"] - calls["start"]) >= p.min_len].reset_index(drop=True)
 
 
-def _merge_pass(  # noqa: C901
+def _merge_pass(  # noqa: C901, PLR0912
     segs: pd.DataFrame,
     p: Params,
     cidx: CallableIndex,
@@ -441,6 +492,8 @@ def _merge_pass(  # noqa: C901
             target = None
             for j in range(len(merged) - 1, -1, -1):
                 prev = merged[j]
+                if prev["stretch"] != c["stretch"]:
+                    break  # no merge across an assembly gap or a PAR edge
                 if prev["direction"] != c["direction"]:
                     continue
                 gap = c["start"] - prev["end"]
@@ -572,6 +625,7 @@ def call_depth_cnvs(  # noqa: PLR0913
     contigs: list[str] | None = None,
     chrx_name: str = "chrX",
     chry_name: str = "chrY",
+    par_bed: str | None = None,
     params: Params | None = None,
 ) -> pd.DataFrame:
     """
@@ -596,6 +650,10 @@ def call_depth_cnvs(  # noqa: PLR0913
         Contigs to call (default: all annotated contigs).
     chrx_name, chry_name : str
         Sex chromosome names in the reference.
+    par_bed : str, optional
+        Pseudoautosomal regions (BED, e.g. the par_regions genome resource). In a male, the chrX PARs keep baseline 2
+        (their chrY copy is masked in the reference, so all their reads map to chrX). Without it the whole male chrX
+        is haploid.
     params : Params, optional
         Caller parameters.
 
@@ -613,13 +671,19 @@ def call_depth_cnvs(  # noqa: PLR0913
         setup = sex_chromosome_setup(sex, chrx_name, chry_name)
         if x_ratio is not None and (inferred.haploid, inferred.skipped) != (setup.haploid, setup.skipped):
             logger.warning(f"given sex {sex} ({setup.karyotype}), but the depth gives {inferred.karyotype}")
+    # male chrX PARs: two copies (X + Y); every supported reference masks the chrY copy, so all their reads map to chrX
+    par = read_par_bed(par_bed, chrx_name) if par_bed and chrx_name in setup.haploid else []
     logger.info(
         f"sex chromosomes: {setup.karyotype}; haploid {sorted(setup.haploid)}, not called {sorted(setup.skipped)}"
+        + (f", diploid PARs {par}" if par else "")
     )
     bins = bins[~bins["chrom"].isin(setup.skipped)].reset_index(drop=True)
     bins["baseline"] = np.where(bins["chrom"].isin(setup.haploid), 1.0, 2.0)
+    for c, s, e in par:
+        bins.loc[(bins["chrom"] == c) & (bins["start"] >= s) & (bins["start"] < e), "baseline"] = 2.0
     segs = segment(make_units(bins, p), p)
-    calls = pd.DataFrame()  # no segment called (a small region or a clean sample): a VCF without records
+    # no segment called (a small region or a clean sample): no calls, and a VCF without records
+    calls = pd.DataFrame(columns=[*segs.columns, "n_merged", "cn_sum", "conf_units", "low_conf"])
     if (segs["direction"] != "").any():
         calls = refine_edges(merge_calls(segs, bins, p), bins, p)
         calls = calls[(calls["end"] - calls["start"]) >= p.min_len_refined].reset_index(drop=True)
@@ -647,6 +711,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--contigs", nargs="+", default=None, help="Contigs to call (default: all annotated)")
     parser.add_argument("--chrx-name", default="chrX", help="chrX name in the reference")
     parser.add_argument("--chry-name", default="chrY", help="chrY name in the reference")
+    parser.add_argument(
+        "--par-bed",
+        default=None,
+        help="Pseudoautosomal regions BED (par_regions resource): male chrX PARs keep 2 copies",
+    )
     return parser.parse_args(argv)
 
 
@@ -663,6 +732,7 @@ def run(argv: list[str]):
         args.contigs,
         args.chrx_name,
         args.chry_name,
+        args.par_bed,
     )
 
 

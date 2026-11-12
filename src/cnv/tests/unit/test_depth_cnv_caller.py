@@ -198,6 +198,18 @@ class TestCalling:
         assert len(calls) == 1
         assert calls.iloc[0].direction == "DUP"
 
+    def test_long_assembly_gap_is_a_boundary(self):
+        rng = np.random.default_rng(6)
+        cn = noisy_cn(30000, rng)
+        cn[8000:13000] = noisy_cn(5000, rng, level=3.0)
+        bins = make_bins({"chr1": cn})
+        bins.loc[10000:11999, "n_frac"] = np.float32(1.0)  # 200 kb assembly gap inside the gain
+        p = dc.Params()
+        nb = dc.normalize(bins, set(), p)
+        calls = dc.merge_calls(dc.segment(dc.make_units(nb, p), p), nb, p)
+        assert list(calls.direction) == ["DUP", "DUP"]  # one call on each side, none across the gap
+        assert calls.iloc[0].end <= 1_000_000 and calls.iloc[1].start >= 1_200_000
+
     def test_normal_sequence_blocks_merge(self):
         rng = np.random.default_rng(4)
         cn = noisy_cn(30000, rng)
@@ -277,3 +289,40 @@ class TestOutput:
         assert [list(r.filter.keys()) for r in recs] == [["PASS"], ["PASS"]]  # FilterVCF decides PASS
         assert "LOW_CONF" not in recs[0].info
         assert recs[1].info["LOW_CONF"]
+
+
+class TestPseudoautosomal:
+    """Male chrX PARs: 2 copies (X + Y), all reads on chrX (the reference masks the chrY copy)."""
+
+    PAR = (0, 60_000)  # chrX:0-60 kb in these tests
+
+    def run(self, tmp_path, monkeypatch, cn, *, par=True):
+        bins = make_bins(cn)
+        monkeypatch.setattr(dc, "load_bins", lambda *a, **k: bins)
+        par_bed = tmp_path / "par.bed"
+        par_bed.write_text(f"chrX\t{self.PAR[0]}\t{self.PAR[1]}\nchrY\t0\t60000\n")
+        fai = tmp_path / "ref.fa.fai"
+        fai.write_text("chr1\t500000\t6\t60\t61\nchrX\t300000\t508480\t60\t61\n")
+        out = str(tmp_path / "calls.vcf.gz")
+        return dc.call_depth_cnvs("q0", "q20", "ann", "S", str(fai), out, par_bed=str(par_bed) if par else None)
+
+    def male(self, rng):
+        x = noisy_cn(3000, rng, level=1.0)
+        x[: self.PAR[1] // dc.BIN_SIZE] = noisy_cn(self.PAR[1] // dc.BIN_SIZE, rng, level=2.0)
+        return {"chr1": noisy_cn(5000, rng), "chrX": x}
+
+    def test_male_par_is_not_a_duplication(self, tmp_path, monkeypatch):
+        calls = self.run(tmp_path, monkeypatch, self.male(np.random.default_rng(11)))
+        assert not (calls.chrom == "chrX").any()
+
+    def test_without_par_bed_the_male_par_is_a_gain(self, tmp_path, monkeypatch):
+        calls = self.run(tmp_path, monkeypatch, self.male(np.random.default_rng(11)), par=False)
+        assert list(calls.loc[calls.chrom == "chrX", "direction"]) == ["DUP"]
+
+    def test_one_copy_deletion_inside_a_male_par(self, tmp_path, monkeypatch):
+        rng = np.random.default_rng(12)
+        cn = self.male(rng)
+        cn["chrX"][200:300] = noisy_cn(100, rng, level=1.0)  # 10 kb: 2 -> 1 copy inside the PAR
+        x = self.run(tmp_path, monkeypatch, cn).query("chrom == 'chrX'")
+        assert list(x.direction) == ["DEL"] and x.iloc[0].baseline == 2  # noqa: PLR2004
+        assert abs(x.iloc[0].start - 20_000) <= 1000 and abs(x.iloc[0].end - 30_000) <= 1000  # noqa: PLR2004

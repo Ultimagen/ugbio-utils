@@ -106,7 +106,8 @@ merge_cnv_sv \
 Calls germline CNVs (≥500 bp) of one sample from its own read depth, with no cohort, and gives one call per event.
 Depth in 100 bp windows (mosdepth, all reads and MAPQ≥20) is GC-corrected on the sample, segmented with a weighted
 change-point search (segdup / low-mappability windows weighted by their own noise), and same-direction calls are
-merged across noise and masked gaps. Split-read junction clusters add short events the depth misses. Breakpoints are
+merged across noise and short masked gaps. Segments and merges stop at assembly gaps (runs of N of at least 100 kb,
+e.g. centromeres) and at the edges of the pseudoautosomal regions. Split-read junction clusters add short events the depth misses. Breakpoints are
 then annotated with the existing evidence tool and snapped to split-read junctions.
 
 Order of the steps for one sample:
@@ -168,7 +169,9 @@ filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.
 - Sex chromosomes: `call_depth_cnvs` infers them from the median depth of the clean (unique, non-segdup) chrX and
   chrY bins relative to the autosomes, with the karyotype table of `estimate_ploidy`. One chrX copy makes chrX
   haploid, two diploid; chrY is haploid when present and not called otherwise. If the depth is ambiguous, chrX and
-  chrY are not called (the autosomes are). `--sex male|female` sets it instead. The setup is written to the VCF
+  chrY are not called (the autosomes are). `--sex male|female` sets it instead. In a male, `--par-bed` (the
+  `par_regions` genome resource) keeps the chrX pseudoautosomal regions at 2 copies: the reference masks their chrY
+  copy, so all their reads map to chrX (without it the whole male chrX is haploid and the PARs look like gains). The setup is written to the VCF
   header (`depth_cnv_haploid_contigs`, `depth_cnv_skipped_contigs`, `depth_cnv_karyotype`), and
   `split_read_cnv_candidates` reads it from there.
 - The output is filtered with `filter_variants_pipeline` and a `cnv_depth` model (`ugbio_filtering`); the INFO fields
