@@ -1,10 +1,11 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pysam
 import pytest
 from ugbio_cnv import split_read_candidates as src
-from ugbio_cnv.depth_cnv_caller import write_depth_calls
+from ugbio_cnv.depth_cnv_caller import SexChromosomes, write_depth_calls
 
 
 @pytest.fixture
@@ -168,3 +169,41 @@ class TestNestedFilter:
             (300_500, "DEL", ("pair",)),
             (305_000, "DEL", ("pair",)),
         ]
+
+
+class TestScoreWithDepth:
+    """Male chrX: 1 copy (depth 30) up to 40 kb, then a PAR (2 copies, depth 60) to the end, like PAR2."""
+
+    PAR = (40_000, 100_000)
+
+    def files(self, tmp_path):
+        rng = np.random.default_rng(3)
+        starts = np.arange(0, 100_000, 100)
+        depth = np.where(starts >= self.PAR[0], 60.0, 30.0) * rng.normal(1, 0.02, len(starts))
+        bed = tmp_path / "d.regions.bed"
+        bed.write_text("".join(f"chrX\t{s}\t{s + 100}\t{d:.2f}\n" for s, d in zip(starts, depth, strict=True)))
+        depth_file = pysam.tabix_index(str(bed), preset="bed", csi=True, force=True)
+        ann = tmp_path / "ann.parquet"
+        pd.DataFrame(
+            {"chrom": "chrX", "start": starts, "gc": 0.4, "n_frac": 0.0, "lowmap": 0.0, "segdup": 0.0}
+        ).to_parquet(ann)
+        return depth_file, str(ann)
+
+    def score(self, tmp_path, sex, *, require_change=True):
+        depth_file, ann = self.files(tmp_path)
+        cand = pd.DataFrame([{"chrom": "chrX", "start": 34_000, "end": 90_000, "svtype": "DUP", "n_reads": 5}])
+        return src.score_with_depth(
+            cand, depth_file, depth_file, ann, sex, src.CandidateParams(), require_change=require_change
+        )
+
+    def test_candidate_across_a_par_edge_is_not_a_gain(self, tmp_path):
+        male_par = SexChromosomes({"chrX"}, set(), "XY", [("chrX", *self.PAR)])
+        assert self.score(tmp_path, male_par).empty  # one copy per expected copy: no change, dropped
+        r = self.score(tmp_path, male_par, require_change=False).iloc[0]
+        assert r.cn_mean == pytest.approx(r.baseline, rel=0.05)
+        assert r.baseline == pytest.approx((6 * 1 + 50 * 2) / 56, rel=0.01)  # 6 kb haploid + 50 kb PAR
+
+    def test_without_the_par_the_edge_looks_like_a_gain(self, tmp_path):
+        r = self.score(tmp_path, SexChromosomes({"chrX"}, set(), "XY")).iloc[0]  # the false gain at PAR2
+        assert r.baseline == 1
+        assert r.cn_mean > 1.15  # noqa: PLR2004

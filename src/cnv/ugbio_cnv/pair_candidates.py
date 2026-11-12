@@ -134,7 +134,8 @@ def pair_cnv_candidates(  # noqa: PLR0913
     """
     Add discordant-pair candidates to the calls of input_vcf; returns the number of candidates added.
 
-    The sex chromosome setup (haploid / not called contigs) is the one call_depth_cnvs recorded in the VCF header.
+    The sex chromosome setup (haploid / not called contigs, male PARs) is the one call_depth_cnvs recorded in the VCF
+    header.
     """
     p = params or PairParams()
     sex = read_sex_chromosomes(input_vcf)
@@ -145,7 +146,7 @@ def pair_cnv_candidates(  # noqa: PLR0913
     pairs = stream_pairs(alignment, reference, contigs, p, threads)
     clusters = cluster_pairs(pairs, p, cp) if len(pairs) else pd.DataFrame()
     clusters = dedup_clusters(clusters, cp) if len(clusters) else clusters
-    scored = score_with_depth(clusters, depth_mq0, depth_mq20, annotation, sex.haploid, cp) if len(clusters) else None
+    scored = score_with_depth(clusters, depth_mq0, depth_mq20, annotation, sex, cp) if len(clusters) else None
     if scored is None or not len(scored):
         scored = pd.DataFrame(columns=["chrom", "start", "end", "svtype"])
     n = add_candidates_to_calls(

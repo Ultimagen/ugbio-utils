@@ -69,6 +69,7 @@ class Params:
 HAPLOID_HEADER_KEY = "depth_cnv_haploid_contigs"
 SKIPPED_HEADER_KEY = "depth_cnv_skipped_contigs"
 KARYOTYPE_HEADER_KEY = "depth_cnv_karyotype"
+DIPLOID_HEADER_KEY = "depth_cnv_diploid_regions"  # regions of haploid contigs with baseline 2 (male PARs)
 # depth ratios to the autosomes too close to a one- vs two-copy (chrX) or zero- vs one-copy (chrY) boundary to decide
 X_RATIO_AMBIGUOUS = (0.65, 0.85)
 Y_RATIO_AMBIGUOUS = (0.15, 0.35)
@@ -79,6 +80,15 @@ class SexChromosomes:
     haploid: set[str] = field(default_factory=set)  # contigs with baseline copy number 1
     skipped: set[str] = field(default_factory=set)  # contigs not called (no copy expected)
     karyotype: str = "."  # e.g. XY; how the setup was decided
+    diploid: list[tuple[str, int, int]] = field(default_factory=list)  # baseline 2 inside haploid contigs (male PARs)
+
+    def baseline(self, chrom: str, starts: np.ndarray) -> np.ndarray:
+        """Baseline copy number of the bins starting at `starts` on one contig."""
+        base = np.full(len(starts), 1.0 if chrom in self.haploid else 2.0)
+        for c, s, e in self.diploid:
+            if c == chrom:
+                base[(starts >= s) & (starts < e)] = 2.0
+        return base
 
 
 def read_par_bed(par_bed: str, chrom: str) -> list[tuple[str, int, int]]:
@@ -205,7 +215,15 @@ def read_sex_chromosomes(vcf: str) -> SexChromosomes:
         value = meta.get(key, ".")
         return set() if value == "." else set(value.split(","))
 
-    return SexChromosomes(contigs(HAPLOID_HEADER_KEY), contigs(SKIPPED_HEADER_KEY), meta.get(KARYOTYPE_HEADER_KEY, "."))
+    diploid = []
+    if meta.get(DIPLOID_HEADER_KEY, ".") != ".":
+        for region in meta[DIPLOID_HEADER_KEY].split(","):
+            chrom, span = region.rsplit(":", 1)
+            start, end = span.split("-")
+            diploid.append((chrom, int(start), int(end)))
+    return SexChromosomes(
+        contigs(HAPLOID_HEADER_KEY), contigs(SKIPPED_HEADER_KEY), meta.get(KARYOTYPE_HEADER_KEY, "."), diploid
+    )
 
 
 # ---------------------------------------------------------------- normalization
@@ -572,6 +590,7 @@ def depth_cnv_header(sample_name: str, fasta_index: str, sex: SexChromosomes | N
     header.add_meta(HAPLOID_HEADER_KEY, ",".join(sorted(sex.haploid)) or ".")
     header.add_meta(SKIPPED_HEADER_KEY, ",".join(sorted(sex.skipped)) or ".")
     header.add_meta(KARYOTYPE_HEADER_KEY, sex.karyotype)
+    header.add_meta(DIPLOID_HEADER_KEY, ",".join(f"{c}:{s}-{e}" for c, s, e in sex.diploid) or ".")
     return header
 
 
@@ -673,14 +692,15 @@ def call_depth_cnvs(  # noqa: PLR0913
             logger.warning(f"given sex {sex} ({setup.karyotype}), but the depth gives {inferred.karyotype}")
     # male chrX PARs: two copies (X + Y); every supported reference masks the chrY copy, so all their reads map to chrX
     par = read_par_bed(par_bed, chrx_name) if par_bed and chrx_name in setup.haploid else []
+    setup.diploid = par  # in the header, so the candidate steps score the PARs against 2 copies too
     logger.info(
         f"sex chromosomes: {setup.karyotype}; haploid {sorted(setup.haploid)}, not called {sorted(setup.skipped)}"
         + (f", diploid PARs {par}" if par else "")
     )
     bins = bins[~bins["chrom"].isin(setup.skipped)].reset_index(drop=True)
-    bins["baseline"] = np.where(bins["chrom"].isin(setup.haploid), 1.0, 2.0)
-    for c, s, e in par:
-        bins.loc[(bins["chrom"] == c) & (bins["start"] >= s) & (bins["start"] < e), "baseline"] = 2.0
+    bins["baseline"] = 2.0
+    for chrom, idx in bins.groupby("chrom", sort=False).groups.items():
+        bins.loc[idx, "baseline"] = setup.baseline(chrom, bins.loc[idx, "start"].to_numpy())
     segs = segment(make_units(bins, p), p)
     # no segment called (a small region or a clean sample): no calls, and a VCF without records
     calls = pd.DataFrame(columns=[*segs.columns, "n_merged", "cn_sum", "conf_units", "low_conf"])

@@ -260,9 +260,11 @@ class TestOutput:
             ]
         )
         out = str(tmp_path / "calls.vcf.gz")
-        dc.write_depth_calls(calls, out, "NA24385", fasta_index, dc.SexChromosomes({"chrX"}, {"chrY"}, "X0"))
+        setup = dc.SexChromosomes({"chrX"}, {"chrY"}, "X0", [("chrX", 10000, 2781479), ("chrX", 155701383, 156030895)])
+        dc.write_depth_calls(calls, out, "NA24385", fasta_index, setup)
         sex = dc.read_sex_chromosomes(out)  # how split_read_cnv_candidates gets the setup
         assert (sex.haploid, sex.skipped, sex.karyotype) == ({"chrX"}, {"chrY"}, "X0")
+        assert sex.diploid == setup.diploid  # the male PARs, for the candidate depth scoring
         with pysam.VariantFile(out) as v:
             assert list(v.header.samples) == ["NA24385"]
             for tag in (

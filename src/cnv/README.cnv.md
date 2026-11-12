@@ -172,8 +172,9 @@ filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.
   chrY are not called (the autosomes are). `--sex male|female` sets it instead. In a male, `--par-bed` (the
   `par_regions` genome resource) keeps the chrX pseudoautosomal regions at 2 copies: the reference masks their chrY
   copy, so all their reads map to chrX (without it the whole male chrX is haploid and the PARs look like gains). The setup is written to the VCF
-  header (`depth_cnv_haploid_contigs`, `depth_cnv_skipped_contigs`, `depth_cnv_karyotype`), and
-  `split_read_cnv_candidates` reads it from there.
+  header (`depth_cnv_haploid_contigs`, `depth_cnv_skipped_contigs`, `depth_cnv_karyotype`, `depth_cnv_diploid_regions`), and
+  the candidate steps read it from there: their depth check divides each bin by its baseline, so a candidate across
+  a PAR edge is not read as a gain or a loss.
 - The output is filtered with `filter_variants_pipeline` and a `cnv_depth` model (`ugbio_filtering`); the INFO fields
   the model reads are listed in `ugbio_filtering.transformers.DEPTH_CNV_INFO_FIELDS` (pass each as
   `--custom_annotations`, and use `--overwrite_qual_tag` so QUAL holds the score for `merge_cnv_sv`).

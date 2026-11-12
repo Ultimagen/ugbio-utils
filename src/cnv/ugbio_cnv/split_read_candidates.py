@@ -45,7 +45,7 @@ from ugbio_cnv.cnv_vcf_consts import (
     DEPTH_CNV_INFO_TAGS,
 )
 from ugbio_cnv.depth_annotation import BIN_SIZE
-from ugbio_cnv.depth_cnv_caller import genotype_for, read_sex_chromosomes
+from ugbio_cnv.depth_cnv_caller import SexChromosomes, genotype_for, read_sex_chromosomes
 from ugbio_core.logger import logger
 
 
@@ -170,14 +170,29 @@ def dedup_clusters(c: pd.DataFrame, p: CandidateParams) -> pd.DataFrame:
     return pd.DataFrame(keep, columns=c.columns).reset_index(drop=True)
 
 
-def _depth_values(tbx: pysam.TabixFile, chrom: str, start: int, end: int) -> np.ndarray:
+def _depth_bins(tbx: pysam.TabixFile, chrom: str, start: int, end: int) -> tuple[np.ndarray, np.ndarray]:
+    """Start and mean depth of the depth bins overlapping [start, end)."""
     start, end = max(start, 0), max(end, 0)
     if end <= start:
-        return np.array([])
+        return np.array([], dtype=np.int64), np.array([])
     try:
-        return np.array([float(x.split("\t")[3]) for x in tbx.fetch(chrom, start, end)])
+        rows = [x.split("\t") for x in tbx.fetch(chrom, start, end)]
     except ValueError:  # contig absent from the depth file
-        return np.array([])
+        return np.array([], dtype=np.int64), np.array([])
+    return np.array([int(r[1]) for r in rows], dtype=np.int64), np.array([float(r[3]) for r in rows])
+
+
+def _depth_values(tbx: pysam.TabixFile, chrom: str, start: int, end: int) -> np.ndarray:
+    return _depth_bins(tbx, chrom, start, end)[1]
+
+
+def _depth_per_copy(
+    tbx: pysam.TabixFile, sex: SexChromosomes, chrom: str, start: int, end: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Depth per expected copy of the bins in [start, end), and their baseline (2, 1, or 2 in a male PAR)."""
+    starts, depth = _depth_bins(tbx, chrom, start, end)
+    base = sex.baseline(chrom, starts)
+    return depth / base, base
 
 
 def score_with_depth(  # noqa: PLR0913
@@ -185,12 +200,17 @@ def score_with_depth(  # noqa: PLR0913
     depth_mq0: str,
     depth_mq20: str,
     annotation: str,
-    haploid: set[str],
+    sex: SexChromosomes,
     p: CandidateParams,
     *,
     require_change: bool = True,
 ) -> pd.DataFrame:
-    """Depth ratio, copy number and z per candidate; with require_change, those without the expected change drop."""
+    """
+    Depth ratio, copy number and z per candidate; with require_change, those without the expected change drop.
+
+    Each depth bin is divided by its baseline (sex chromosome setup, including the male PARs), so a candidate next to
+    or across a baseline change (a PAR edge) is not read as a gain or a loss.
+    """
     t0 = pysam.TabixFile(depth_mq0, index=depth_mq0 + ".csi")
     t20 = pysam.TabixFile(depth_mq20, index=depth_mq20 + ".csi")
     ann = pd.read_parquet(annotation)
@@ -198,16 +218,16 @@ def score_with_depth(  # noqa: PLR0913
     ann = ann.set_index(["chrom", "start"])
     out = []
     for r in cand.itertuples(index=False):
-        inside = _depth_values(t0, r.chrom, r.start, r.end)
+        inside, inside_base = _depth_per_copy(t0, sex, r.chrom, r.start, r.end)
         flanks = np.concatenate(
             [
-                _depth_values(t0, r.chrom, r.start - p.flank, r.start - p.flank_gap),
-                _depth_values(t0, r.chrom, r.end + p.flank_gap, r.end + p.flank),
+                _depth_per_copy(t0, sex, r.chrom, r.start - p.flank, r.start - p.flank_gap)[0],
+                _depth_per_copy(t0, sex, r.chrom, r.end + p.flank_gap, r.end + p.flank)[0],
             ]
         )
         if len(inside) == 0 or len(flanks) < p.min_flank_bins or np.median(flanks) <= 0:
             continue
-        base = 1.0 if r.chrom in haploid else 2.0
+        base = float(inside_base.mean())  # the contig's baseline, or a mix across a PAR edge
         ratio = inside.mean() / np.median(flanks)
         sd = np.std(flanks) / np.median(flanks)
         z = (ratio - 1) / (sd / np.sqrt(len(inside))) if sd > 0 else 0.0
@@ -215,6 +235,7 @@ def score_with_depth(  # noqa: PLR0913
         if require_change and no_change:
             continue
         uniq = _depth_values(t20, r.chrom, r.start, r.end)
+        raw_inside = inside * inside_base
         a = ann.reindex([(r.chrom, b) for b in range(r.start // BIN_SIZE * BIN_SIZE, r.end, BIN_SIZE)])
         out.append(
             {
@@ -223,7 +244,7 @@ def score_with_depth(  # noqa: PLR0913
                 "baseline": base,
                 "z": z,
                 "segdup": float(np.nanmean(a["segdup"])),
-                "uniq_frac": float(uniq.mean() / inside.mean()) if inside.mean() > 0 and len(uniq) else np.nan,
+                "uniq_frac": float(uniq.mean() / raw_inside.mean()) if raw_inside.mean() > 0 and len(uniq) else np.nan,
             }
         )
     return pd.DataFrame(out)
@@ -268,7 +289,7 @@ def add_candidates_to_calls(  # noqa: PLR0913
         rec.info["SVTYPE"], rec.info["SVLEN"] = r.svtype, r.end - r.start
         rec.info["CIPOS"], rec.info["CIEND"] = ci, ci
         rec.info["CNV_SOURCE"] = (source,)
-        rec.info["CN_MEAN"], rec.info["BASE_CN"] = round(float(r.cn_mean), 3), int(r.baseline)
+        rec.info["CN_MEAN"], rec.info["BASE_CN"] = round(float(r.cn_mean), 3), round(float(r.baseline))
         rec.info["Z"], rec.info["N_MERGED"] = round(float(r.z), 2), 1
         rec.info["SEGDUP"] = round(float(r.segdup), 3)
         if not np.isnan(r.uniq_frac):
@@ -301,18 +322,19 @@ def split_read_cnv_candidates(  # noqa: PLR0913
     """
     Add split-read candidates to the depth calls; returns the number of candidates added.
 
-    The sex chromosome setup (haploid / not called contigs) is the one call_depth_cnvs recorded in the depth VCF.
+    The sex chromosome setup (haploid / not called contigs, male PARs) is the one call_depth_cnvs recorded in the depth
+    VCF.
     """
     p = params or CandidateParams()
     sex = read_sex_chromosomes(depth_vcf)
-    haploid, skipped = sex.haploid, sex.skipped
+    skipped = sex.skipped
     if not contigs:  # the contigs the depth caller annotates, in the reference's naming (chr1.. or 1..)
         contigs = pd.read_parquet(annotation, columns=["chrom"])["chrom"].astype(str).unique().tolist()
     contigs = [c for c in contigs if c not in skipped]
     j = stream_junctions(alignment, reference, contigs, p, threads)
     c = cluster_junctions(j, p)
     c = dedup_clusters(c, p) if len(c) else c
-    s = score_with_depth(c, depth_mq0, depth_mq20, annotation, haploid, p) if len(c) else pd.DataFrame()
+    s = score_with_depth(c, depth_mq0, depth_mq20, annotation, sex, p) if len(c) else pd.DataFrame()
     n = (
         add_candidates_to_calls(depth_vcf, s, output_vcf, p)
         if len(s)
@@ -365,7 +387,7 @@ def cnmops_cnv_candidates(  # noqa: PLR0913
             columns=["chrom", "start", "end", "svtype", "n_reads"],
         )
     scored = (
-        score_with_depth(cand, depth_mq0, depth_mq20, annotation, sex.haploid, p, require_change=False)
+        score_with_depth(cand, depth_mq0, depth_mq20, annotation, sex, p, require_change=False)
         if len(cand)
         else pd.DataFrame(columns=["chrom", "start", "end", "svtype"])
     )
