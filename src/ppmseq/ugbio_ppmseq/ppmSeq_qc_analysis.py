@@ -28,7 +28,10 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--adapter-version",
         choices=supported_adapter_versions,
-        help="Library adapter version",
+        help=(
+            "Library adapter version. Accepted values: Solaris2_ppmSeq_plus, Solaris2_ppmSeq, "
+            "v1 (identical behavior to Solaris2_ppmSeq, kept for backwards compatibility), legacy_v5"
+        ),
     )
     parser.add_argument(
         "--subsampled-sam",

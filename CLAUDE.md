@@ -503,7 +503,7 @@ uvx ruff@0.8.4 format .          # apply CI-compatible formatting
 
 ### Docker Architecture
 
-**Base Image:** `ugbio_base:1.8.3`
+**Base Image:** `ugbio_base:1.8.7`
 - Python 3.11-slim-bookworm
 - Pre-installed: bcftools, samtools, bedtools, bedops
 

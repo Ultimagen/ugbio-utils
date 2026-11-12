@@ -1,22 +1,29 @@
 """
-Genome ploidy estimation from CRAM (mosdepth) or VCF (SNP depth + BAF).
+Genome ploidy estimation from CRAM or VCF (SNP depth + BAF).
 
-Two mutually exclusive modes:
+Three mutually exclusive modes:
   Mode 1 (VCF):  per-chr coverage from SNP DP + BAF analysis -> ploidy + karyotype
   Mode 2 (CRAM): mosdepth whole-genome summary -> ploidy + karyotype (no BAF)
+  Mode 3 (sex-only): reads a ~1-2% sample of the CRAM (evenly spaced bins of 1 Mb of calling regions on
+                 chrX, chrY and a few autosomes) -> karyotype only; autosomal aneuploidy is not assessed
 
 Usage:
     estimate_ploidy --vcf <file> --sample-id <id> [--output-dir <dir>]
     estimate_ploidy --mosdepth-summary <file> --sample-id <id> [--output-dir <dir>]
+    estimate_ploidy --cram <file> --sex-only --reference <fasta> --regions-bed <bed|interval_list> --sample-id <id>
+        [--exclude-regions-bed <bed>]
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import math
 import re
+import shlex
 import statistics
 import sys
+import tempfile
 from array import array
 from collections import defaultdict
 from itertools import filterfalse
@@ -25,7 +32,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pysam
+from ugbio_core.dna_sequence_utils import get_chr_sizes
+from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.vcfbed.bed_writer import parse_intervals_file
+from ugbio_core.vcfbed.interval_file import IntervalFile
 from ugbio_core.vcfbed.vcftools import is_pass_record
 
 DEFAULT_SEX_CHROMOSOMES = ("chrX", "chrY", "X", "Y")
@@ -38,6 +48,11 @@ _MIN_HET_DEPTH = 8  # min ref + alt reads for a het to enter the allelic statist
 _MIN_HETS_PER_BIN = 50  # min hets for a bin to be used
 _MIN_SITES_PER_CHROM = 20  # min sites for a chromosome's coverage estimate
 _MOSDEPTH_FLAG_DEVIATION = 0.35  # mosdepth mode: flag autosomes with |ploidy - 2| at or above this
+
+ALLOSOME_ONLY_SOURCE = "cram-sex-only"
+DEFAULT_AUTOSOMES = ("chr1", "chr7", "chr12")
+DEFAULT_BP_PER_CHROM = 10_000_000
+_TILE_BP = 1_000_000
 
 _MITO = re.compile(r"^(chrM|MT)$", re.IGNORECASE)
 _SKIP = re.compile(r"_random$|_decoy$|^chrUn|^HLA|^EBV|_alt$", re.IGNORECASE)
@@ -232,6 +247,145 @@ def estimate_ploidy_from_coverage(
 
     result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=sex_chromosomes)
     result["source"] = "mosdepth"
+    return result
+
+
+def _split_into_bins(chrom: str, intervals: pd.DataFrame) -> pd.DataFrame:
+    """Cut one chromosome's intervals into pieces, numbering consecutive bins of _TILE_BP callable bp each."""
+    intervals = intervals.sort_values("start")
+    lengths = (intervals["end"] - intervals["start"]).to_numpy()
+    cum_end = lengths.cumsum()
+    cum_start = cum_end - lengths
+    first_bin = cum_start // _TILE_BP
+    n_pieces = (cum_end - 1) // _TILE_BP - first_bin + 1
+    row = np.repeat(np.arange(len(intervals)), n_pieces)
+    bin_id = first_bin[row] + np.arange(len(row)) - np.repeat(n_pieces.cumsum() - n_pieces, n_pieces)
+    start = intervals["start"].to_numpy()[row] - cum_start[row]
+    return pd.DataFrame(
+        {
+            "chrom": chrom,
+            "start": start + np.maximum(cum_start[row], bin_id * _TILE_BP),
+            "end": start + np.minimum(cum_end[row], (bin_id + 1) * _TILE_BP),
+            "bin": bin_id,
+        }
+    )
+
+
+def _sample_genome(
+    regions: str | Path,
+    exclude_regions_bed: str | Path | None,
+    chromosomes: set[str],
+    bp_per_chrom: int,
+    work_dir: Path,
+) -> pd.DataFrame:
+    """Evenly spaced bins of 1 Mb callable bp of regions minus exclude_regions_bed, ~bp_per_chrom per chromosome.
+
+    A bin may span many short intervals, so fragments weigh by their length. Even spacing keeps each chromosome's
+    composition (PAR, XTR share) close to that of the full region set. Returns one row per piece, with its bin id.
+    """
+    columns = ["chrom", "start", "end"]
+    regions_path = str(regions)
+    if Path(regions).suffix == ".interval_list":
+        interval_file = IntervalFile(interval=regions_path, scratchdir=str(work_dir))
+        regions_path = interval_file.as_bed_file()
+    regions_df = pd.read_csv(
+        regions_path, sep="\t", header=None, usecols=[0, 1, 2], names=columns, dtype={"chrom": str}
+    )
+    regions_bed = work_dir / "regions.bed"
+    regions_df[regions_df["chrom"].map(_normalize_chromosome_name).isin(chromosomes)].to_csv(
+        regions_bed, sep="\t", header=False, index=False
+    )
+    if exclude_regions_bed:
+        kept_bed = work_dir / "regions.kept.bed"
+        print_and_execute(
+            f"bedtools subtract -a {shlex.quote(str(regions_bed))} -b {shlex.quote(str(exclude_regions_bed))}",
+            output_file=str(kept_bed),
+        )
+        regions_bed = kept_bed
+    if regions_bed.stat().st_size == 0:
+        raise ValueError(f"{regions} has no regions on {', '.join(sorted(chromosomes))}")
+
+    kept = pd.read_csv(regions_bed, sep="\t", header=None, names=columns, dtype={"chrom": str})
+    n_bins = math.ceil(bp_per_chrom / _TILE_BP)
+    sampled = []
+    for chrom, intervals in kept.groupby("chrom", sort=False):
+        pieces = _split_into_bins(chrom, intervals)
+        total_bins = pieces["bin"].iloc[-1] + 1
+        chosen = np.linspace(0, total_bins - 1, min(total_bins, n_bins)).round().astype(int)
+        sampled.append(pieces[pieces["bin"].isin(chosen)])
+    return pd.concat(sampled, ignore_index=True)
+
+
+def _median_bin_depths(cram_path: str | Path, reference: str | Path, pieces: pd.DataFrame, work_dir: Path) -> dict:
+    pieces_bed = work_dir / "sampled_pieces.bed"
+    pieces[["chrom", "start", "end"]].to_csv(pieces_bed, sep="\t", header=False, index=False)
+    bedcov = pysam.bedcov("--reference", str(reference), str(pieces_bed), str(cram_path))
+    names = ["chrom", "start", "end", "bases"]
+    depth = pd.read_csv(io.StringIO(bedcov), sep="\t", header=None, names=names, dtype={"chrom": str})
+    depth = depth.assign(bin=pieces["bin"].to_numpy(), bp=depth["end"] - depth["start"])
+    bins = depth.groupby(["chrom", "bin"], sort=False)[["bases", "bp"]].sum()
+    medians = (bins["bases"] / bins["bp"]).groupby(level="chrom", sort=False).median()
+    return {chrom: {"coverage": coverage} for chrom, coverage in medians.items()}
+
+
+def estimate_allosomes_from_cram(  # noqa: PLR0913
+    cram_path: str | Path,
+    reference: str | Path,
+    regions: str | Path,
+    exclude_regions_bed: str | Path | None = None,
+    sex_chromosomes: list[str] | tuple[str, ...] = DEFAULT_SEX_CHROMOSOMES,
+    autosomes: list[str] | tuple[str, ...] = DEFAULT_AUTOSOMES,
+    bp_per_chrom: int = DEFAULT_BP_PER_CHROM,
+) -> dict:
+    """Mode 3: karyotype from samtools bedcov depth over a thinned subset of the regions on X, Y and a few autosomes.
+
+    Parameters
+    ----------
+    cram_path : str | Path
+        CRAM or BAM to sample.
+    reference : str | Path
+        Reference FASTA the CRAM was written with; its .fai must exist.
+    regions : str | Path
+        Regions to sample (BED or Picard .interval_list), e.g. the variant calling regions.
+    exclude_regions_bed : str | Path | None, optional
+        BED of regions (e.g. chrY X-homologous) removed from the regions before sampling.
+    sex_chromosomes : list[str] | tuple[str, ...], optional
+        Names treated as sex chromosomes.
+    autosomes : list[str] | tuple[str, ...], optional
+        Autosomes whose median depth is the coverage baseline; each must have regions.
+    bp_per_chrom : int, optional
+        Approximate bp sampled per chromosome.
+
+    Returns
+    -------
+    dict
+        Ploidy result as from `_compute_ploidy_from_chr_data`, with source "cram-sex-only".
+
+    Raises
+    ------
+    ValueError
+        If the regions have nothing to sample on an autosome or name a contig missing from the reference .fai.
+    """
+    warnings = []
+    if not exclude_regions_bed:
+        warnings.append("No chrY exclude regions given; chrY coverage may be inflated by X-homologous reads")
+    chromosomes = _normalize_sex_chromosomes(sex_chromosomes) | _normalize_sex_chromosomes(autosomes)
+
+    with tempfile.TemporaryDirectory(prefix="estimate_ploidy_") as tmp:
+        tiles = _sample_genome(regions, exclude_regions_bed, chromosomes, bp_per_chrom, Path(tmp))
+        tiled = {_normalize_chromosome_name(chrom) for chrom in tiles["chrom"]}
+        missing_autosomes = [chrom for chrom in autosomes if _normalize_chromosome_name(chrom) not in tiled]
+        if missing_autosomes:
+            raise ValueError(f"{regions} has no regions on autosome(s) {', '.join(missing_autosomes)}")
+        absent = sorted(set(tiles["chrom"]) - set(get_chr_sizes(f"{reference}.fai")))
+        if absent:
+            raise ValueError(f"{', '.join(absent)} in {regions} but not in {reference}.fai")
+
+        chr_data = _median_bin_depths(cram_path, reference, tiles, Path(tmp))
+
+    result = _compute_ploidy_from_chr_data(chr_data, sex_chromosomes=sex_chromosomes)
+    result["warnings"] = warnings + result["warnings"]
+    result["source"] = ALLOSOME_ONLY_SOURCE
     return result
 
 
@@ -462,7 +616,9 @@ def write_report(
 
     lines.extend(["", "  (. = sex chromosome)", ""])
 
-    if vcf_mode:
+    if coverage_source == ALLOSOME_ONLY_SOURCE:
+        lines.append("  Autosomal aneuploidy not assessed in sex-only mode.")
+    elif vcf_mode:
         lines.extend(_aneuploidy_lines(cr["per_chrom"]))
     else:
         any_warn = False
@@ -486,15 +642,26 @@ def write_report(
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Estimate genome ploidy. Mode 1: --vcf (SNP DP + BAF). Mode 2: --mosdepth-summary (coverage only)."
+        description="Estimate genome ploidy. Mode 1: --vcf (SNP DP + BAF). Mode 2: --mosdepth-summary (coverage only). "
+        "Mode 3: --cram --sex-only (sex chromosome karyotype only, from a small sample of the CRAM)."
     )
     parser.add_argument("--vcf", default=None, help="Mode 1: VCF input for coverage from SNP DP + BAF analysis")
     parser.add_argument("--mosdepth-summary", default=None, help="Mode 2: mosdepth summary for coverage-only ploidy")
+    parser.add_argument("--cram", default=None, help="Mode 3: CRAM/BAM input; requires --sex-only")
+    parser.add_argument(
+        "--sex-only", action="store_true", help="Mode 3: call the sex chromosome karyotype only; requires --cram"
+    )
     parser.add_argument("--sample-id", required=True, help="Sample identifier for output files")
     parser.add_argument(
         "--exclude-regions-bed",
         default=None,
-        help="Mode 1: optional BED (0-based, half-open) of low-confidence regions to exclude from coverage",
+        help="Modes 1 and 3: optional BED (0-based, half-open) of low-confidence regions to exclude from coverage",
+    )
+    parser.add_argument("--reference", default=None, help="Mode 3: reference FASTA (with .fai) of the CRAM")
+    parser.add_argument(
+        "--regions-bed",
+        default=None,
+        help="Mode 3: regions to sample (BED or Picard .interval_list), e.g. the variant calling regions",
     )
     parser.add_argument(
         "--sex-chromosomes",
@@ -511,12 +678,29 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
 
+    if bool(args.cram) != args.sex_only:
+        parser.error("--cram and --sex-only must be given together.")
+    if args.cram and (args.vcf or args.mosdepth_summary):
+        parser.error("--cram --sex-only cannot be combined with --vcf or --mosdepth-summary.")
+    if args.cram and not (args.reference and args.regions_bed):
+        parser.error("--cram --sex-only requires --reference and --regions-bed.")
     if args.vcf and args.mosdepth_summary:
         parser.error("Provide either --vcf or --mosdepth-summary, not both.")
-    if not args.vcf and not args.mosdepth_summary:
+    if not args.vcf and not args.mosdepth_summary and not args.cram:
         parser.error("Provide either --vcf or --mosdepth-summary.")
 
-    if args.vcf:
+    if args.cram:
+        print(f"[estimate_ploidy] Mode 3 (sex-only): {args.cram}", file=sys.stderr)
+        coverage_result = estimate_allosomes_from_cram(
+            args.cram,
+            args.reference,
+            args.regions_bed,
+            args.exclude_regions_bed,
+            args.sex_chromosomes,
+        )
+        baf_result = None
+        source_path = args.cram
+    elif args.vcf:
         print(f"[estimate_ploidy] Mode 1 (VCF): {args.vcf}", file=sys.stderr)
         coverage_result, baf_result = estimate_ploidy_from_vcf(
             args.vcf,

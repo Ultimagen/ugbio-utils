@@ -41,6 +41,10 @@ RUN mkdir -p /opt/rlib && \
     Rscript -e "install.packages(c('argparse', 'magrittr', 'BiocManager'), lib='/opt/rlib', repos='https://cloud.r-project.org', Ncpus=4)" && \
     R_LIBS=/opt/rlib Rscript -e "BiocManager::install(c('GenomicRanges', 'rhdf5', 'rtracklayer', 'Rsamtools', 'Biobase', 'GenomeInfoDb'), lib='/opt/rlib', ask=FALSE, update=FALSE, Ncpus=4)" && \
     R_LIBS=/opt/rlib Rscript -e "stopifnot(all(sapply(c('argparse', 'magrittr', 'GenomicRanges', 'rhdf5', 'rtracklayer', 'Rsamtools', 'Biobase', 'GenomeInfoDb'), requireNamespace)))"
+# Picard (estimate_ploidy: IntervalFile converts interval_list to BED with it); Java is installed in the runtime stage
+ARG PICARD_VERSION=3.4.0
+RUN mkdir -p /opt/picard && \
+    python -c "import urllib.request; urllib.request.urlretrieve('https://github.com/broadinstitute/picard/releases/download/${PICARD_VERSION}/picard.jar', '/opt/picard/picard.jar')"
 RUN git clone --depth 1 --branch ug.master https://github.com/Ultimagen/cn.mops.git /tmp/cn.mops && \
     R_LIBS=/opt/rlib R CMD INSTALL --preclean --no-multiarch -l /opt/rlib /tmp/cn.mops && \
     rm -rf /tmp/cn.mops
@@ -54,15 +58,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends gnupg dirmngr c
     gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
     gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' > /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
     echo "deb https://cloud.r-project.org/bin/linux/debian bookworm-cran40/" > /etc/apt/sources.list.d/cran.list && \
-    apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends r-base-core=${R_VERSION} libxml2 && \
+    apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends r-base-core=${R_VERSION} libxml2 \
+    openjdk-17-jre-headless && \
     apt-get purge -y gnupg dirmngr && apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* /root/.gnupg
 
+RUN printf '#!/bin/sh\nexec java -jar /opt/picard/picard.jar "$@"\n' > /usr/local/bin/picard && chmod +x /usr/local/bin/picard
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
 # Copy pre-built virtual environment and R library from build stage (no compilation in runtime)
 COPY --from=build /opt/venv /opt/venv
 COPY --from=build /opt/rlib /opt/rlib
+COPY --from=build /opt/picard /opt/picard
 ENV PATH="/opt/venv/bin:$PATH"
 ENV R_LIBS_SITE=/opt/rlib
 
