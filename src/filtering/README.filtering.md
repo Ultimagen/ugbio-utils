@@ -182,8 +182,13 @@ threshold instead.
 `cnv_filtering_model_v2.0.0.pkl` was trained with these commands (threshold 28), on the paired-end pipeline's
 calls: depth, split-read and discordant-pair candidates after snapping and `filter_nested_cnv_candidates`, for HG002
 613168 (training chromosomes) and the YLC444 (chr21 DUP) / GSM704 (chrX DEL) events, with their pieces (15 YLC444 DUP
-pieces, seed 1002; 13 GSM704 DEL pieces, seed 1012; 10–100 kb). The same model filters single-end calls (no pair
-candidates, `source_pair` is 0).
+pieces, seed 1002; 13 GSM704 DEL pieces, seed 1012; 10–100 kb).
+
+`cnv_filtering_model_se_v2.0.0.pkl` (single-end, threshold 28) was trained with the same commands on the single-end
+pipeline's calls of HG002 434421 (training chromosomes), with the same YLC444 / GSM704 events and pieces. These come
+from paired-end CRAMs, so before training their discordant-pair candidates were dropped and their pair evidence
+(`CNV_*_PAIRS*`, `*_PAIRS_MEDIAN_SPAN`) set to 0, as in single-end calls. On the HG002 test chromosomes it raises
+single-end deletion recall (≥ 500 bp) from 0.547 to 0.588 at precision 0.969 (v2.0.0: 0.977).
 
 The same model filters the optional cn.mops candidates (`cnmops_cnv_candidates`, `CNV_SOURCE=cn.mops`): they have
 no source feature of their own and are scored on their depth and read evidence like depth calls.
