@@ -18,9 +18,12 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir "numpy<2" "pandas<2.0"
 
 # Install pypgx with numpy<2 constraint to prevent resolver upgrading numpy
+# The patch adds run-ngs-pipeline --threads (Beagle nthreads= and the Java CPU count); upstream pypgx has no cap
+COPY src/pypgx/pypgx-threads.patch /tmp/pypgx-threads.patch
 RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
     cd /opt/pypgx && \
     git checkout ${PYPGX_BRANCH} && \
+    git apply /tmp/pypgx-threads.patch && \
     pip install --no-cache-dir "numpy<2" . && \
     rm -rf /opt/pypgx
 
