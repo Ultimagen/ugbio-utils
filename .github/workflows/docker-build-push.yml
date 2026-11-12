@@ -127,10 +127,11 @@ jobs:
           df -h /tmp "${{ runner.temp }}"
           echo "TMPDIR=${{ runner.temp }}" >> "${GITHUB_ENV}"
 
-      - uses: actions/checkout@v4 # lazy check out for trivy scanning
+      - uses: actions/checkout@v7 # lazy check out for trivy scanning
         with:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
+          persist-credentials: false
 
       # Dockerfile misconfiguration scan follows cve-policy: warn only reports, block fails on CRITICAL.
       # Vulnerabilities are checked by the image scan below, which sees everything that ships.
@@ -143,13 +144,14 @@ jobs:
           exit-code: ${{ inputs.cve-policy == 'block' && '1' || '0' }}
           severity: ${{ inputs.cve-policy == 'block' && 'CRITICAL' || 'CRITICAL,HIGH' }}
 
-      - uses: actions/checkout@v4 # deep check out for docker build
+      - uses: actions/checkout@v7 # deep check out for docker build
         if: ${{ inputs.git-repo != 'Ultimagen/ugbio-utils' }}
         with:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
           lfs: true
           submodules: recursive
+          persist-credentials: false
           token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
       - uses: benjlevesque/short-sha@v2.2
@@ -235,6 +237,34 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.artifact-name }}
+
+      # BuildKit reads only one ignore file (<Dockerfile>.dockerignore if present, else <context>/.dockerignore)
+      # and the last matching pattern wins, so appending keeps the repo's rules but overrides their exceptions.
+      - name: Exclude sensitive files from the build context
+        env:
+          DOCKER_CONTEXT: ${{ inputs.docker-context }}
+          DOCKER_FILE: ${{ inputs.docker-file }}
+        run: |
+          set -e
+          ignore_file="${DOCKER_FILE}.dockerignore"
+          [ -f "${ignore_file}" ] || ignore_file="${DOCKER_CONTEXT%/}/.dockerignore"
+          cat >> "${ignore_file}" <<'IGNORE'
+
+          **/.git
+          **/.env
+          **/.env.*
+          **/.netrc
+          **/.npmrc
+          **/.pypirc
+          **/.aws
+          **/.ssh
+          **/.docker/config.json
+          **/*.tfstate*
+          **/id_rsa*
+          **/*.pem
+          **/*.key
+          IGNORE
+          echo "Appended sensitive-file patterns to ${ignore_file}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2

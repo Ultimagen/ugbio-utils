@@ -63,7 +63,7 @@ jobs:
       base-image: ${{ steps.extract-base-image.outputs.base_image }}
       base-build-image: ${{ steps.extract-base-image.outputs.base_build_image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.commit-sha }}
           lfs: true

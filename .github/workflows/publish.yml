@@ -47,7 +47,7 @@ jobs:
 
           echo "Branch verification passed."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build workspaces list
         uses: ./.github/actions/get-members
@@ -123,7 +123,7 @@ jobs:
     # Runs even if a member image was blocked by the CVE gate: the PyPI release already happened
     if: ${{ !cancelled() && needs.publish.result == 'success' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.ref_name }}
           token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
