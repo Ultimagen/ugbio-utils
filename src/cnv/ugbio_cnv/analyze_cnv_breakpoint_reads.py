@@ -16,13 +16,14 @@ Supporting reads go to the evidence BAM under read group DUP / DEL, and pair-onl
 """
 
 import argparse
-import itertools
+import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
+from multiprocessing import Pool
 from statistics import median
 
 import pysam
-from ugbio_cnv.jalign import create_bam_header
 from ugbio_core.dna_sequence_utils import CIGAR_OPS, get_reference_alignment_end, parse_cigar_string
 from ugbio_core.logger import logger
 
@@ -116,6 +117,39 @@ class _FragmentEvidence:
 
     split: _EvidenceVotes = field(default_factory=_EvidenceVotes)
     pair: _EvidenceVotes = field(default_factory=_EvidenceVotes)
+
+
+def create_bam_header(reads_header: pysam.AlignmentHeader) -> pysam.AlignmentHeader:
+    """Create a BAM header with the evidence read groups (REF1, REF2, DUP, DEL) added.
+
+    Parameters
+    ----------
+    reads_header : pysam.AlignmentHeader
+        Input alignment header to copy and extend
+
+    Returns
+    -------
+    pysam.AlignmentHeader
+        BAM header with REF1, REF2, DUP, and DEL read groups added
+    """
+    header_dict = reads_header.to_dict()
+    # Add read groups if not present
+    if "RG" not in header_dict:
+        header_dict["RG"] = []
+
+    # Ensure all required read groups are present
+    existing_rg_ids = {rg["ID"] for rg in header_dict.get("RG", [])}
+    for rgid in ["REF1", "REF2", "DUP", "DEL"]:
+        if rgid not in existing_rg_ids:
+            header_dict["RG"].append(
+                {
+                    "ID": rgid,
+                    "SM": "SAMPLE",
+                    "PL": "ULTIMA",
+                }
+            )
+
+    return pysam.AlignmentHeader.from_dict(header_dict)
 
 
 def has_right_soft_clip(cigar_tuples: list[tuple[int, int]] | None) -> bool:
@@ -697,6 +731,57 @@ def _summarize_fragments(
     )
 
 
+def _fetch_breakpoint_windows(
+    alignment_file: pysam.AlignmentFile, chrom: str, regions: tuple[int, int, int, int]
+) -> list[tuple[bool, list[pysam.AlignedSegment]]]:
+    """
+    (from_start_region, alignments) of the start and end breakpoint windows.
+
+    Each window is read to the end before the next is fetched, so both come from the one open handle:
+    fetch(multiple_iterators=True) would reopen the file (and reload a CRAM's index) for every window.
+    """
+    start_region_start, start_region_end, end_region_start, end_region_end = regions
+    return [
+        (True, list(alignment_file.fetch(chrom, start_region_start, start_region_end))),
+        (False, list(alignment_file.fetch(chrom, end_region_start, end_region_end))),
+    ]
+
+
+def _supplementary_alignments_of_supporting_reads(
+    window_reads: list[pysam.AlignedSegment],
+    supporting_reads: list[tuple[pysam.AlignedSegment, str]],
+) -> dict[tuple[str, bool], list[pysam.AlignedSegment]]:
+    """
+    The supplementary alignments, in the breakpoint windows, of the reads supporting CNV evidence.
+
+    Only 10-100 reads typically support a call, out of thousands in its windows. A supplementary alignment in both
+    windows is listed twice, once per window.
+
+    Parameters
+    ----------
+    window_reads : list[pysam.AlignedSegment]
+        The alignments of the start window, then of the end window
+    supporting_reads : list[tuple[pysam.AlignedSegment, str]]
+        (read, read group) of the supporting reads
+
+    Returns
+    -------
+    dict[tuple[str, bool], list[pysam.AlignedSegment]]
+        (query_name, is_read1) -> supplementary alignments
+    """
+    # The key carries the mate so that a paired-end fragment's two mates do not share a bucket
+    supporting_keys = {_mate_aware_key(read) for read, _ in supporting_reads}
+    supplementary_reads: dict[tuple[str, bool], list[pysam.AlignedSegment]] = {}
+    if not supporting_keys:
+        return supplementary_reads
+    for read in window_reads:
+        if read.is_supplementary:
+            key = _mate_aware_key(read)
+            if key in supporting_keys:
+                supplementary_reads.setdefault(key, []).append(read)
+    return supplementary_reads
+
+
 def _collect_fragments_from_region(
     alignment_file: pysam.AlignmentFile,
     chrom: str,
@@ -713,17 +798,13 @@ def _collect_fragments_from_region(
     Both mates are evaluated (deduplication is per alignment);
     _summarize_fragments then reduces the votes to one per fragment.
     """
-    start_region_start, start_region_end, end_region_start, end_region_end = regions
     # Non-voting fragments are stored as None, to bound memory on pileups
     fragments: dict[str, _FragmentEvidence | None] = {}
     processed_alignments: set[tuple[str, int]] = set()
+    fetches: list[tuple[bool, list[pysam.AlignedSegment]]] = []
 
     try:
-        # (from_start_region, reads) for the start and end breakpoint regions
-        fetches = (
-            (True, alignment_file.fetch(chrom, start_region_start, start_region_end, multiple_iterators=True)),
-            (False, alignment_file.fetch(chrom, end_region_start, end_region_end, multiple_iterators=True)),
-        )
+        fetches = _fetch_breakpoint_windows(alignment_file, chrom, regions)
         for from_start_region, read in ((flag, read) for flag, reads in fetches for read in reads):
             if _should_skip_read(read):
                 continue
@@ -753,74 +834,12 @@ def _collect_fragments_from_region(
     except Exception as e:
         logger.warning(f"Error fetching reads for {chrom}:{start}-{end}: {e}")
 
-    return _summarize_fragments(fragments, (chrom, start, end))
-
-
-def _collect_supplementary_alignments_for_supporting_reads(
-    alignment_file: pysam.AlignmentFile,
-    chrom: str,
-    supporting_reads: list[tuple[pysam.AlignedSegment, str]],
-    start_region_start: int,
-    start_region_end: int,
-    end_region_start: int,
-    end_region_end: int,
-) -> dict[tuple[str, int], list[pysam.AlignedSegment]]:
-    """
-    Collect supplementary alignments ONLY for reads that are supporting CNV evidence.
-
-    This is much more efficient than collecting all supplementary reads in the interval,
-    since typically only 10-100 reads support CNV out of 1M+ total reads.
-
-    Parameters
-    ----------
-    alignment_file : pysam.AlignmentFile
-        Open BAM/CRAM file
-    chrom : str
-        Chromosome name
-    supporting_reads : list[tuple[pysam.AlignedSegment, str]]
-        List of (read, read_group) tuples for supporting reads
-    start_region_start : int
-        Start of search region
-    start_region_end: int
-        End of start breakpoint search region
-    end_region_start : int
-        Start of end breakpoint search region
-    end_region_end : int
-        End of search region
-
-    Returns
-    -------
-    dict[tuple[str, int], list[pysam.AlignedSegment]]
-        Dictionary mapping (query_name, mate flag bits) to list of supplementary alignments
-    """
-    supplementary_reads: dict[tuple[str, int], list[pysam.AlignedSegment]] = {}
-
-    # Create set of keys we need supplementary alignments for. The key carries the mate flag
-    # bits so that a paired-end fragment's two mates do not share a bucket.
-    supporting_keys = {_mate_aware_key(read) for read, _ in supporting_reads}
-
-    if not supporting_keys:
-        return supplementary_reads
-
-    try:
-        # Fetch supplementary alignments from the breakpoint regions
-        for read in itertools.chain(
-            alignment_file.fetch(chrom, start_region_start, start_region_end, multiple_iterators=True),
-            alignment_file.fetch(chrom, end_region_start, end_region_end, multiple_iterators=True),
-        ):
-            if not read.is_supplementary:
-                continue
-
-            key = _mate_aware_key(read)
-            if key in supporting_keys:
-                if key not in supplementary_reads:
-                    supplementary_reads[key] = []
-                supplementary_reads[key].append(read)
-
-    except Exception as e:
-        logger.warning(f"Error fetching supplementary reads: {e}")
-
-    return supplementary_reads
+    evidence = _summarize_fragments(fragments, (chrom, start, end))
+    # The supplementary alignments of the supporting reads, from the same windows (for the evidence BAM)
+    evidence.supplementary_reads = _supplementary_alignments_of_supporting_reads(
+        [read for _, reads in fetches for read in reads], evidence.supporting_reads
+    )
+    return evidence
 
 
 def analyze_interval_breakpoints(
@@ -857,28 +876,11 @@ def analyze_interval_breakpoints(
     BreakpointEvidence
         Counts of reads supporting duplication and deletion
     """
-    # Calculate breakpoint regions
+    # Per-fragment evidence and the supporting reads' supplementary alignments, from one read of each window
     regions = _calculate_breakpoint_regions(start, end, cushion)
-    start_region_start, start_region_end, end_region_start, end_region_end = regions
-
-    # PHASE 1: Collect per-fragment evidence from the two breakpoint regions
-    evidence = _collect_fragments_from_region(
+    return _collect_fragments_from_region(
         alignment_file, chrom, start, end, cushion, regions, min_pair_span, min_pair_mapping_quality
     )
-
-    # PHASE 2: Collect supplementary alignments ONLY for supporting reads
-    # This is dramatically more efficient than collecting all supplementary reads
-    evidence.supplementary_reads = _collect_supplementary_alignments_for_supporting_reads(
-        alignment_file,
-        chrom,
-        evidence.supporting_reads,
-        start_region_start,
-        start_region_end,
-        end_region_start,
-        end_region_end,
-    )
-
-    return evidence
 
 
 def _write_supporting_reads_to_bam(
@@ -983,9 +985,13 @@ def analyze_cnv_breakpoints(
     *,
     min_pair_span: int = MIN_PAIR_SPAN,
     min_pair_mapping_quality: int = MIN_PAIR_MAPPING_QUALITY,
+    threads: int = 1,
 ) -> None:
     """
     Analyze all CNV intervals in a VCF file for breakpoint evidence.
+
+    With threads > 1 the records are processed in parallel, in chunks of consecutive records of one contig (about four
+    chunks per process, the same per-interval analysis); the output VCF keeps the input record order.
 
     Parameters
     ----------
@@ -1006,7 +1012,22 @@ def analyze_cnv_breakpoints(
         Shortest span of a discordant read pair that counts as evidence (default: MIN_PAIR_SPAN)
     min_pair_mapping_quality : int, optional
         Lowest mapping quality of an alignment whose pair counts as evidence (default: MIN_PAIR_MAPPING_QUALITY)
+    threads : int, optional
+        Processes analyzing the records in parallel (default: 1)
     """
+    if threads > 1:
+        _analyze_cnv_breakpoints_in_chunks(
+            bam_file,
+            vcf_file,
+            reference_fasta,
+            cushion,
+            output_file,
+            output_bam,
+            min_pair_span=min_pair_span,
+            min_pair_mapping_quality=min_pair_mapping_quality,
+            threads=threads,
+        )
+        return
     logger.info(f"Discordant pairs: minimum span {min_pair_span}, minimum mapping quality {min_pair_mapping_quality}")
     alignment_file = pysam.AlignmentFile(bam_file, "r", reference_filename=reference_fasta)
 
@@ -1052,6 +1073,120 @@ def analyze_cnv_breakpoints(
         logger.info(f"Annotated VCF written to {output_file}")
     if output_bam:
         logger.info(f"Supporting reads BAM written to {output_bam}")
+
+
+def _analyze_chunk(args: tuple) -> int:
+    """Pool worker: analyze_cnv_breakpoints on one chunk of records; returns the number of records."""
+    bam_file, vcf_file, reference_fasta, cushion, output_file, output_bam, min_pair_span, min_pair_mapping_quality = (
+        args
+    )
+    analyze_cnv_breakpoints(
+        bam_file,
+        vcf_file,
+        reference_fasta,
+        cushion,
+        output_file,
+        output_bam,
+        min_pair_span=min_pair_span,
+        min_pair_mapping_quality=min_pair_mapping_quality,
+    )
+    with pysam.VariantFile(output_file) as v:
+        return sum(1 for _ in v)
+
+
+def _split_vcf_into_chunks(vcf_file: str, tmp: str, n_chunks: int) -> tuple[list[str], list[str]]:
+    """
+    Write the records to <tmp>/<k>.in.vcf in chunks of consecutive records of one contig (about n_chunks in total).
+
+    Returns the chunk of each input record, in input order, and the chunk prefixes (no records: two empty lists).
+    """
+    with pysam.VariantFile(vcf_file) as vcf_in:
+        header = vcf_in.header
+        records = list(vcf_in)
+    if not records:
+        return [], []
+    size = max(1, -(-len(records) // n_chunks))  # records per chunk
+    record_chunks: list[str] = []
+    prefixes: list[str] = []
+    writer, current, n_in_chunk = None, None, 0
+    for record in records:
+        if record.chrom != current or n_in_chunk == size:
+            if writer:
+                writer.close()
+            prefixes.append(os.path.join(tmp, str(len(prefixes))))
+            writer = pysam.VariantFile(f"{prefixes[-1]}.in.vcf", "w", header=header)
+            current, n_in_chunk = record.chrom, 0
+        writer.write(record)
+        record_chunks.append(prefixes[-1])
+        n_in_chunk += 1
+    writer.close()
+    return record_chunks, prefixes
+
+
+def _merge_chunk_outputs(prefixes: list[str], output_file: str | None, output_bam: str | None) -> None:
+    """Merge the per-chunk outputs: VCF records in the input order, BAM reads chunk after chunk."""
+    with pysam.VariantFile(f"{prefixes[0]}.out.vcf") as first:
+        header = first.header
+    with pysam.VariantFile(output_file or "-", "w", header=header) as vcf_out:
+        for prefix in prefixes:  # chunks hold consecutive input records, in input order
+            with pysam.VariantFile(f"{prefix}.out.vcf") as part:
+                for record in part:
+                    vcf_out.write(record)
+    if output_bam:
+        with pysam.AlignmentFile(f"{prefixes[0]}.bam") as first:
+            header = first.header
+        with pysam.AlignmentFile(output_bam, "wb", header=header) as bam_out:
+            for prefix in prefixes:
+                with pysam.AlignmentFile(f"{prefix}.bam") as bam_in:
+                    for read in bam_in:
+                        bam_out.write(read)
+
+
+def _analyze_cnv_breakpoints_in_chunks(  # noqa: PLR0913
+    bam_file: str,
+    vcf_file: str,
+    reference_fasta: str,
+    cushion: int,
+    output_file: str | None,
+    output_bam: str | None,
+    *,
+    min_pair_span: int,
+    min_pair_mapping_quality: int,
+    threads: int,
+) -> None:
+    """Analyze chunks of the input VCF in parallel and merge the outputs (see analyze_cnv_breakpoints)."""
+    out_dir = os.path.dirname(os.path.abspath(output_file)) if output_file else None
+    with tempfile.TemporaryDirectory(dir=out_dir) as tmp:
+        record_chunks, prefixes = _split_vcf_into_chunks(vcf_file, tmp, n_chunks=4 * threads)
+        if not prefixes:  # no records: the serial path writes the header (and an empty BAM)
+            analyze_cnv_breakpoints(
+                bam_file,
+                vcf_file,
+                reference_fasta,
+                cushion,
+                output_file,
+                output_bam,
+                min_pair_span=min_pair_span,
+                min_pair_mapping_quality=min_pair_mapping_quality,
+            )
+            return
+        jobs = [
+            (
+                bam_file,
+                f"{p}.in.vcf",
+                reference_fasta,
+                cushion,
+                f"{p}.out.vcf",
+                f"{p}.bam" if output_bam else None,
+                min_pair_span,
+                min_pair_mapping_quality,
+            )
+            for p in prefixes
+        ]
+        with Pool(min(threads, len(jobs))) as pool:
+            pool.map(_analyze_chunk, jobs, chunksize=1)
+        _merge_chunk_outputs(prefixes, output_file, output_bam)
+    logger.info(f"Processed {len(record_chunks)} variants in {len(prefixes)} chunks with {threads} processes")
 
 
 def get_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
@@ -1114,6 +1249,12 @@ def get_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argume
         f"duplication or deletion evidence (default: {MIN_PAIR_SPAN})",
     )
     parser.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help="Processes analyzing the records in parallel (default: 1)",
+    )
+    parser.add_argument(
         "--min-pair-mapping-quality",
         type=int,
         default=MIN_PAIR_MAPPING_QUALITY,
@@ -1138,6 +1279,7 @@ def main(argv: list[str] | None = None) -> int:
             output_bam=args.output_bam,
             min_pair_span=args.min_pair_span,
             min_pair_mapping_quality=args.min_pair_mapping_quality,
+            threads=args.threads,
         )
         return 0
     except Exception as e:

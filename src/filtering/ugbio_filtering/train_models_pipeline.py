@@ -64,7 +64,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     ap_var.add_argument(
         "--vcf_type",
-        help='VCF type - "single_sample"(GATK), "deep_variant" or "cnv"',
+        help='VCF type - "single_sample"(GATK), "deep_variant" or "cnv_depth" (depth CNV caller)',
         type=VcfType,
         choices=list(VcfType),
         default=VcfType.SINGLE_SAMPLE,
@@ -76,6 +76,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=str,
         default=None,
         action="append",
+    )
+
+    ap_var.add_argument(
+        "--decision_threshold",
+        help="cnv_depth only: FilterVCF decision threshold to store with the model "
+        "(default: the out-of-bag probability with the best F1, as a phred-like score)",
+        type=int,
+        default=None,
     )
 
     ap_var.add_argument(
@@ -109,6 +117,19 @@ def run(argv: list[str]):
 
         model, transformer = train_model(train_df, args)
         logger.info("Model training: done")
+        extra = {}
+        if args.decision_threshold is not None and args.vcf_type != VcfType.CNV_DEPTH:
+            logger.warning(f"--decision_threshold is used only with cnv_depth models, ignored for {args.vcf_type}")
+        if args.vcf_type == VcfType.CNV_DEPTH:
+            if args.decision_threshold is not None:
+                extra["decision_threshold"] = args.decision_threshold
+                logger.info(f"FilterVCF decision threshold (given): {extra['decision_threshold']}")
+            else:
+                trained = train_df[train_df["label"].isin([0, 1])]
+                extra["decision_threshold"] = variant_filtering_utils.cnv_depth_decision_threshold(
+                    model, trained["label"].to_numpy()
+                )
+                logger.info(f"FilterVCF decision threshold (max out-of-bag F1): {extra['decision_threshold']}")
 
         test_df = read_data(args.test_dfs, features_to_extract)
         logger.info("Read test data: done")
@@ -116,7 +137,7 @@ def run(argv: list[str]):
         train_results = evaluate_model(train_df, model, transformer, "training", args.vcf_type)
         test_results = evaluate_model(test_df, model, transformer, "test", args.vcf_type)
 
-        save_results(args.output_file_prefix, model, transformer, train_results, test_results)
+        save_results(args.output_file_prefix, model, transformer, train_results, test_results, extra)
         logger.info("Model training run: success")
 
     except Exception as err:
@@ -147,7 +168,7 @@ def evaluate_model(df: pd.DataFrame, model, transformer, data_type: str, vtype: 
     return results
 
 
-def save_results(output_file_prefix: str, model, transformer, train_results, test_results):
+def save_results(output_file_prefix: str, model, transformer, train_results, test_results, extra: dict | None = None):
     results_dict = {
         "transformer": transformer,
         "xgb": model,
@@ -155,6 +176,7 @@ def save_results(output_file_prefix: str, model, transformer, train_results, tes
         "xgb_recall_precision_curve": test_results[1],
         "xgb_train_recall_precision": train_results[0],
         "xgb_train_recall_precision_curve": train_results[1],
+        **(extra or {}),
     }
     with open(output_file_prefix + ".pkl", "wb") as file:
         pickle.dump(results_dict, file)

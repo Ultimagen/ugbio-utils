@@ -77,20 +77,6 @@ def allele_encode(x):
     return bases.get(x, 0)
 
 
-def svtype_encode(x):
-    """Translate SVTYPE into integer."""
-    encoding = {"DEL": 1, "DUP": 2, "NEUTRAL": 0}
-    return encoding[x]
-
-
-def cnv_source_encode(x):
-    """Translate CNV_SOURCE into integer."""
-    encoding = {"cn.mops": 1, "cnvpytor": 2}
-    if len(x) != 1:
-        raise ValueError(f"Unexpected cnv_source value: {x}")
-    return encoding[x[0]]
-
-
 def gt_encode(x):
     """Checks whether the variant is heterozygous(0) or homozygous(1)"""
     if x == (1, 1):
@@ -123,15 +109,133 @@ def region_annotation_encode(x):
     return encoding[tuple(sorted(x))]
 
 
-def coerce_to_numeric_df(df):
-    """Coerce all columns of a dataframe to numeric dtype (NaN on failure).
+# Depth CNV caller (ugbio_cnv.depth_cnv_caller): INFO fields the filter reads, and the features built from them
+DEPTH_CNV_INFO_FIELDS = [
+    "SVTYPE",
+    "SVLEN",
+    "CN_MEAN",
+    "BASE_CN",
+    "Z",
+    "N_MERGED",
+    "SEGDUP",
+    "UNIQ_FRAC",
+    "LOW_CONF",
+    "CNV_SOURCE",
+    "SR_READS",
+    "SNAP",
+    "SNAP_N",
+    "DEPTH_POS",
+    "DEPTH_END",
+    "CNV_DEL_READS",
+    "CNV_DUP_READS",
+    "CNV_TOTAL_READS",
+    "CNV_DEL_FRAC",
+    "CNV_DUP_FRAC",
+    "CNV_DEL_PAIRS",
+    "CNV_DUP_PAIRS",
+    "CNV_DEL_PAIRS_FRAC",
+    "CNV_DUP_PAIRS_FRAC",
+    "DEL_READS_MEDIAN_INSERT_SIZE",
+    "DUP_READS_MEDIAN_INSERT_SIZE",
+    "DEL_PAIRS_MEDIAN_SPAN",
+    "DUP_PAIRS_MEDIAN_SPAN",
+]
+DEPTH_CNV_FEATURES = [
+    "is_del",
+    "log_len",
+    "cn_mean",
+    "dcn",
+    "rel_cn",
+    "abs_z",
+    "n_merged",
+    "segdup",
+    "uniq_frac",
+    "sr_same",
+    "sr_opp",
+    "pe_same",
+    "pe_opp",
+    "sr_frac",
+    "pe_frac",
+    "total_reads",
+    "lowconf",
+    "sr_insert",
+    "pe_span",
+    "log_support",
+    "snap_sr",
+    "snap_pe",
+    "snap_n",
+    "snap_shrink",
+    "source_sr",
+    "source_pair",
+    "sr_reads",
+]
 
-    When an INFO field is absent from every variant in a chunk (e.g. cnvpytor-only fields on a
-    contig that has only cn.mops calls), get_vcf_df yields an all-NaN column with ``object``
-    dtype. A numeric ``SimpleImputer`` passes such object columns through untouched, leaving NaNs.
-    Coercing to numeric first turns them into a proper float all-NaN column the imputer can fill.
+
+def depth_cnv_feature_names(_transformer, _input_features) -> np.ndarray:
+    """Output names of depth_cnv_features (module level so plain pickle can store the transformer)."""
+    return np.array(DEPTH_CNV_FEATURES)
+
+
+def depth_cnv_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    return df.apply(pd.to_numeric, errors="coerce")
+    Filter features of depth CNV calls, from the get_vcf_df columns of DEPTH_CNV_INFO_FIELDS (lower case).
+
+    Read / pair support is taken for the call's own type (same) and the opposite type (opp); copy-number change is
+    relative to the contig baseline (BASE_CN, 1 on haploid contigs). Missing values are 0. cn.mops candidates
+    (CNV_SOURCE=cn.mops) have no source feature of their own: they are scored on their depth and read evidence.
+    """
+
+    def num(col: str) -> pd.Series:
+        if col not in df:
+            return pd.Series(0.0, index=df.index)
+        return pd.to_numeric(df[col].apply(tuple_break), errors="coerce").fillna(0.0).astype(float)
+
+    def by_type(template: str, *, same: bool) -> pd.Series:
+        dele, dup = num(template.format("del")), num(template.format("dup"))
+        return pd.Series(np.where(is_del == same, dele, dup), index=df.index)
+
+    is_del = (df["svtype"] == "DEL").to_numpy()
+    svlen = num("svlen").abs()
+    base = num("base_cn").replace(0, 2.0)
+    cn_mean = num("cn_mean")
+    sr_same, pe_same = by_type("cnv_{}_reads", same=True), by_type("cnv_{}_pairs", same=True)
+    depth_len = num("depth_end") - num("depth_pos")
+    snap = df["snap"] if "snap" in df else pd.Series("", index=df.index)
+    source = df["cnv_source"] if "cnv_source" in df else pd.Series([()] * len(df), index=df.index)
+    source = source.apply(lambda x: tuple(x) if isinstance(x, tuple | list) else ())  # None / NaN: no source
+    out = pd.DataFrame(
+        {
+            "is_del": is_del.astype(float),
+            "log_len": np.log10(svlen.clip(lower=1)),
+            "cn_mean": cn_mean,
+            "dcn": (cn_mean - base).abs(),
+            "rel_cn": cn_mean / base,
+            "abs_z": num("z").abs(),
+            "n_merged": num("n_merged"),
+            "segdup": num("segdup"),
+            "uniq_frac": num("uniq_frac"),
+            "sr_same": sr_same,
+            "sr_opp": by_type("cnv_{}_reads", same=False),
+            "pe_same": pe_same,
+            "pe_opp": by_type("cnv_{}_pairs", same=False),
+            "sr_frac": by_type("cnv_{}_frac", same=True),
+            "pe_frac": by_type("cnv_{}_pairs_frac", same=True),
+            "total_reads": num("cnv_total_reads"),
+            "lowconf": df["low_conf"].apply(lambda x: float(pd.notna(x) and bool(x))) if "low_conf" in df else 0.0,
+            "sr_insert": by_type("{}_reads_median_insert_size", same=True),
+            "pe_span": by_type("{}_pairs_median_span", same=True),
+            "log_support": np.log1p(sr_same + pe_same),
+            "snap_sr": (snap == "SR").astype(float),
+            "snap_pe": (snap == "PE").astype(float),
+            "snap_n": num("snap_n"),
+            "snap_shrink": np.where(depth_len > 0, 1 - svlen / depth_len.clip(lower=1), 0.0),
+            "source_sr": source.apply(lambda x: float(x == ("split_read",))),
+            "source_pair": source.apply(lambda x: float(x == ("pair",))),
+            "sr_reads": num("sr_reads"),
+        },
+        index=df.index,
+    )
+    return out[DEPTH_CNV_FEATURES]
 
 
 def get_needed_features(vtype: VcfType = VcfType.SINGLE_SAMPLE, custom_annotations: list | None = None) -> list:
@@ -200,28 +304,12 @@ def modify_features_based_on_vcf_type(  # noqa C901
     def ins_del_encode_df(df):
         return pd.DataFrame(np.array(df[0].apply(ins_del_encode)).reshape(-1, 1), index=df.index)
 
-    def svtype_encode_df(df):
-        return pd.DataFrame(np.array(df.apply(svtype_encode)).reshape(-1, 1), index=df.index)
-
     def region_annotation_encode_df(df):
         return pd.DataFrame(
             np.array(df["region_annotations"].apply(region_annotation_encode)).reshape(-1, 1), index=df.index
         )
 
-    def copy_number_encode_df(df):
-        return pd.DataFrame(df.max(axis=1), index=df.index)
-
-    def cnv_source_encode_df(df):
-        return pd.DataFrame(np.array(df["cnv_source"].apply(cnv_source_encode)).reshape(-1, 1), index=df.index)
-
-    def cipos_encode_df(df):
-        return pd.DataFrame(df.apply(lambda x: x[1] - x[0] - 1), index=df.index)
-
     default_filler = impute.SimpleImputer(strategy="constant", fill_value=0)
-    numeric_filler = make_pipeline(
-        preprocessing.FunctionTransformer(coerce_to_numeric_df),
-        default_filler,
-    )
     tuple_filter = preprocessing.FunctionTransformer(tuple_encode_df)
     ins_del_encode_filter = preprocessing.FunctionTransformer(ins_del_encode_df)
     tuple_encode_df_transformer = preprocessing.FunctionTransformer(tuple_encode_df)
@@ -232,11 +320,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
     allele_filter_single = preprocessing.FunctionTransformer(allele_encode_single)
     allele_filter = preprocessing.FunctionTransformer(allele_encode_df)
     gt_filter = preprocessing.FunctionTransformer(gt_encode_df)
-    svtype_encode_filter = preprocessing.FunctionTransformer(svtype_encode_df)
     region_annotation_encode_filter = preprocessing.FunctionTransformer(region_annotation_encode_df)
-    copy_number_encode_filter = preprocessing.FunctionTransformer(copy_number_encode_df)
-    cnv_source_encode_filter = preprocessing.FunctionTransformer(cnv_source_encode_df)
-    cilen_transformer = preprocessing.FunctionTransformer(cipos_encode_df)
     transform_list = [
         ("ad", tuple_encode_doublet_df_transformer, "ad"),
         ("gt", gt_filter, "gt"),
@@ -307,38 +391,16 @@ def modify_features_based_on_vcf_type(  # noqa C901
         features = [x[0] for x in transform_list]
     elif vtype == VcfType.JOINT:
         pass
-    elif vtype == VcfType.CNV:
+    elif vtype == VcfType.CNV_DEPTH:
+        columns = [f.lower() for f in DEPTH_CNV_INFO_FIELDS]
         transform_list = [
-            ("svtype", svtype_encode_filter, "svtype"),
-            ("pytorq0", numeric_filler, ["pytorq0"]),
-            ("pytorp2", numeric_filler, ["pytorp2"]),
-            ("pytorrd", numeric_filler, ["pytorrd"]),
-            ("pytorp1", numeric_filler, ["pytorp1"]),
-            ("pytorp3", numeric_filler, ["pytorp3"]),
-            ("gap_percentage", "passthrough", ["gap_percentage"]),
-            ("cnv_dup_reads", "passthrough", ["cnv_dup_reads"]),
-            ("cnv_del_reads", "passthrough", ["cnv_del_reads"]),
-            ("cnv_dup_frac", "passthrough", ["cnv_dup_frac"]),
-            ("cnv_del_frac", "passthrough", ["cnv_del_frac"]),
-            ("del_reads_median_insert_size", numeric_filler, ["del_reads_median_insert_size"]),
-            ("dup_reads_median_insert_size", numeric_filler, ["dup_reads_median_insert_size"]),
-            ("jalign_dup_support", numeric_filler, ["jalign_dup_support"]),
-            ("jalign_del_support", numeric_filler, ["jalign_del_support"]),
-            ("jalign_dup_support_strong", numeric_filler, ["jalign_dup_support_strong"]),
-            ("jalign_del_support_strong", numeric_filler, ["jalign_del_support_strong"]),
-            ("svlen", tuple_filter, "svlen"),
-            ("copynumber", copy_number_encode_filter, ["cn", "copynumber"]),
-            ("cnv_source", cnv_source_encode_filter, ["cnv_source"]),
-            ("cipos", cilen_transformer, "cipos"),
-            ("cnv_dup_pairs", numeric_filler, ["cnv_dup_pairs"]),
-            ("cnv_del_pairs", numeric_filler, ["cnv_del_pairs"]),
-            ("cnv_dup_pairs_frac", numeric_filler, ["cnv_dup_pairs_frac"]),
-            ("cnv_del_pairs_frac", numeric_filler, ["cnv_del_pairs_frac"]),
-            ("dup_pairs_median_span", numeric_filler, ["dup_pairs_median_span"]),
-            ("del_pairs_median_span", numeric_filler, ["del_pairs_median_span"]),
+            (
+                "depth_cnv",
+                preprocessing.FunctionTransformer(depth_cnv_features, feature_names_out=depth_cnv_feature_names),
+                columns,
+            )
         ]
-        features = [[x[2]] if isinstance(x[2], str) else x[2] for x in transform_list]
-        features = sum(features, [])
+        features = list(columns)
 
     else:
         raise ValueError("Unrecognized VCF type")

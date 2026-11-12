@@ -26,7 +26,7 @@ This file provides guidance for Claude Code and developers working with the ugbi
 ```
 src/
 ├── core/         (74 files) ugbio_core         - Foundation (ALL depend on this)
-├── cnv/          (41 files) ugbio_cnv          - CNV calling (JALIGN, CNVpytor, FREEC)
+├── cnv/          (57 files) ugbio_cnv          - CNV calling (depth caller, FREEC)
 ├── comparison/   (11 files) ugbio_comparison   - Variant comparison (Truvari)
 ├── featuremap/   (13 py) ugbio_featuremap     - FeatureMap VCF→Parquet, Parquet filters, somatic SNVfind
 ├── filtering/    (50 files) ugbio_filtering    - ML filtering, SEC, training
@@ -131,7 +131,8 @@ uv run pytest src/filtering/tests/unit/test_train_models_pipeline.py -v
 docker run --rm -v .:/workdir <image> run_tests /workdir/src/core
 ```
 
-**Note:** Tests under `src/cnv/cnmops/` are not expected to pass and should be excluded from test runs.
+**Note:** Tests under `src/cnv/cnmops/` need R and the cn.mops packages: exclude them locally and run them in the cnv image
+(`docker run --rm -v .:/workdir <ugbio_cnv image> run_tests /workdir/src/cnv/cnmops`).
 
 ### Linting & Formatting
 
@@ -276,7 +277,7 @@ gh run view <run-id>
 **Key Pipelines:**
 - `train_models_pipeline.py` (MAIN - currently under BIOIN-2620 development)
 - `training_prep_pipeline.py` - Prepare training data from VCFs
-- `training_prep_cnv_pipeline.py` - CNV-specific training (with new AUCPR metric)
+- `training_prep_depth_cnv_pipeline.py` - Label depth CNV calls (truvari) for the `cnv_depth` filter model
 - `filter_variants_pipeline.py` - Apply trained models
 
 **Key Modules:**
@@ -290,7 +291,7 @@ gh run view <run-id>
 - `sec/assess_sec_concordance.py` - Validate SEC
 
 **Entry Points:** 8
-- `train_models_pipeline`, `training_prep_pipeline`, `training_prep_cnv_pipeline`, `filter_variants_pipeline`, `error_correction_training`, `merge_conditional_allele_distributions`, `assess_sec_concordance`, `correct_systematic_errors`
+- `train_models_pipeline`, `training_prep_pipeline`, `training_prep_depth_cnv_pipeline`, `filter_variants_pipeline`, `error_correction_training`, `merge_conditional_allele_distributions`, `assess_sec_concordance`, `correct_systematic_errors`
 
 ### ugbio_featuremap - FeatureMap VCF, Parquet tooling, somatic SNVfind
 
@@ -319,19 +320,18 @@ gh run view <run-id>
 
 ### ugbio_cnv - Copy Number Variation
 
-**Purpose:** CNV detection and analysis (JALIGN, CNVpytor, FREEC, BicSeq2).
+**Purpose:** CNV detection and analysis (cohort-free depth caller, FREEC, BicSeq2).
 
 **Key Modules:**
-- `jalign.py` - JALIGN alignment algorithm
-- `run_jalign.py` - JALIGN execution
-- `analyze_cnv_breakpoint_reads.py` - Read analysis for CNV breakpoints (RECENTLY REFINED - requires consistent insert size)
-- `run_cnvpytor.py` - CNVpytor integration
-- `process_cnvs.py` - Process CNV calls from cn.mops/FREEC
-- `combine_cnmops_cnvpytor_cnv_calls.py` - Multi-tool fusion
+- `analyze_cnv_breakpoint_reads.py` - Split-read and discordant-pair evidence at CNV breakpoints
+- `merge_cnv_sv.py` - Merge CNV calls with SV (GRIDSS) calls; `combine_cnv_vcf_utils.py` holds the VCF combining it uses
+- `process_cnvs.py`, `add_cipos.py` - Process CNV calls from cn.mops / FREEC to VCF; add CIPOS (cn.mops workflows)
 - `bicseq2_post_processing.py`, `annotate_FREEC_segments.py` - Post-processing
+- `depth_cnv_caller.py`, `split_read_candidates.py`, `pair_candidates.py`, `breakpoint_snapping.py`, `depth_annotation.py` - Cohort-free depth CNV caller (100 bp mosdepth depth, weighted PELT, one call per event, split-read candidates, breakpoint snapping); filtered by FilterVCF with a `cnv_depth` model (`ugbio_filtering.transformers.depth_cnv_features`)
 
-**Entry Points:** 10
-- `run_jalign`, `analyze_cnv_breakpoint_reads`, `process_cnvs`, `run_cnvpytor`, `combine_cnmops_cnvpytor_cnv_calls`, `combine_cnv_vcfs`, `filter_dup_cnmmops_cnv_calls`, `annotate_vcf_with_regions`, `plot_cnv_results`, `annotate_FREEC_segments`
+**Entry Points:** 19
+- `analyze_cnv_breakpoint_reads`, `merge_cnv_sv`, `process_cnvs`, `add_cipos_to_vcf`, `plot_cnv_results`, `bicseq2_post_processing`, `annotate_FREEC_segments`, `plot_FREEC_neutral_AF`, `reformat_parascopy_bed`, `lpa_caller`, `estimate_ploidy`
+- Depth CNV caller: `build_depth_annotation`, `call_depth_cnvs`, `split_read_cnv_candidates`, `pair_cnv_candidates` (optional, paired-end), `snap_cnv_breakpoints`, `filter_nested_cnv_candidates`; optional cn.mops candidates: `cnmops_cnv_candidates` (R scripts in `src/cnv/cnmops/`); filter training: `cnv_known_event_pieces`
 
 ### Other Modules
 
@@ -428,7 +428,7 @@ pip install ugbio_core[reports] # Report generation
 99 test files organized by module:
 - **core:** 26 test files (unit + system)
 - **filtering:** 15 test files
-- **cnv:** 17 test files
+- **cnv:** 24 test files
 - **omics:** 10 test files
 - **featuremap:** 6 pytest modules (5 unit + 1 system) plus `conftest.py`
 - **srsnv:** 8 test files
@@ -438,7 +438,7 @@ pip install ugbio_core[reports] # Report generation
 ### Test Resources (Git LFS)
 
 Large test files tracked via Git LFS:
-- JALIGN CRAM files
+- CNV evidence BAM/CRAM files
 - XGBoost model JSON files
 - Pileup files
 - VCF/BAM test data
@@ -581,7 +581,7 @@ print_and_execute("bcftools view file.vcf")
 | `src/core/ugbio_core/logger.py` | Centralized logging |
 | `src/filtering/ugbio_filtering/train_models_pipeline.py` | Main ML training pipeline |
 | `src/filtering/ugbio_filtering/transformers.py` | Feature transformers |
-| `src/cnv/ugbio_cnv/jalign.py` | JALIGN alignment |
+| `src/cnv/ugbio_cnv/depth_cnv_caller.py` | Cohort-free depth CNV caller |
 | `src/cnv/ugbio_cnv/process_cnvs.py` | CNV processing and VCF generation |
 | `src/cnv/ugbio_cnv/cnv_bed_format_utils.py` | CNV VCF writing utilities |
 | `src/cnv/ugbio_cnv/combine_cnv_vcf_utils.py` | CNV VCF merging and aggregation |
@@ -674,6 +674,6 @@ from ugbio_filtering import train_models_pipeline
 ### Entry Points
 ```bash
 train_models_pipeline --train_dfs train.h5 --test_dfs test.h5 --output_file_prefix model
-filter_variants_pipeline --input_vcf calls.vcf --model_file model.pkl --output_vcf filtered.vcf
-run_jalign --input_bam reads.bam --ref_genome ref.fa --output_dir results
+filter_variants_pipeline --input_file calls.vcf.gz --model_file model.pkl --output_file filtered.vcf.gz
+call_depth_cnvs --depth-mq0 s.q0.regions.bed.gz --depth-mq20 s.q20.regions.bed.gz --annotation ann.parquet --sample-name S --fasta-index ref.fa.fai --output-vcf depth.vcf.gz
 ```
