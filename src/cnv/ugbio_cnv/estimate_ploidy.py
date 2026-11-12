@@ -640,6 +640,41 @@ def write_report(
     return report_path
 
 
+def _haploid_sex_chromosomes(karyotype: str) -> set[str]:
+    # X0 keeps chrX diploid: a mosaic or mis-called female would otherwise lose a real het (e.g. an FMR1 carrier).
+    n_x, n_y = karyotype.count("X"), karyotype.count("Y")
+    haploid = {"y"} if n_y == 1 else set()
+    if n_x == 1 and n_y >= 1:
+        haploid.add("x")
+    return haploid
+
+
+def write_haploid_regions_bed(
+    sample_id: str, karyotype: str, reference: str | Path, par_bed: str | Path, output_dir: str | Path
+) -> Path:
+    """Single-copy sex chromosomes minus the PARs, as a 0-based BED; empty when no chromosome is single-copy."""
+    haploid = _haploid_sex_chromosomes(karyotype)
+    rows = (line.split("\t") for line in Path(par_bed).read_text().splitlines())
+    pars = sorted((r[0], int(r[1]), int(r[2])) for r in rows if r[0] and not r[0].startswith(("#", "track", "browser")))
+    lines = []
+    for chrom, length in get_chr_sizes(f"{reference}.fai").items():
+        if _normalize_chromosome_name(chrom) not in haploid:
+            continue
+        chrom_pars = [(par_start, par_end) for name, par_start, par_end in pars if name == chrom]
+        if not chrom_pars:
+            raise ValueError(f"No PAR interval for single-copy {chrom} in {par_bed}")
+        start = 0
+        for par_start, par_end in chrom_pars:
+            if par_start > start:
+                lines.append(f"{chrom}\t{start}\t{par_start}\n")
+            start = max(start, par_end)
+        if start < length:
+            lines.append(f"{chrom}\t{start}\t{length}\n")
+    bed_path = Path(output_dir) / f"{sample_id}.haploid_regions.bed"
+    bed_path.write_text("".join(lines))
+    return bed_path
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Estimate genome ploidy. Mode 1: --vcf (SNP DP + BAF). Mode 2: --mosdepth-summary (coverage only). "
@@ -669,6 +704,12 @@ def main(argv: list[str] | None = None) -> None:
         default=list(DEFAULT_SEX_CHROMOSOMES),
         help="Sex chromosome names to exclude from autosomal baseline; defaults to chrX chrY X Y",
     )
+    parser.add_argument(
+        "--par-bed",
+        default=None,
+        help="Mode 3: BED of the pseudoautosomal regions; writes <sample-id>.haploid_regions.bed of the "
+        "single-copy sex chromosomes outside them",
+    )
     parser.add_argument("--min-effect", type=float, default=0.15, help="Mode 1: min |ploidy-2| to nominate a chrom")
     parser.add_argument(
         "--coverage-only-effect", type=float, default=0.8, help="Mode 1: |ploidy-2| flagged on coverage alone"
@@ -684,6 +725,8 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("--cram --sex-only cannot be combined with --vcf or --mosdepth-summary.")
     if args.cram and not (args.reference and args.regions_bed):
         parser.error("--cram --sex-only requires --reference and --regions-bed.")
+    if args.par_bed and not args.cram:
+        parser.error("--par-bed requires --cram --sex-only.")
     if args.vcf and args.mosdepth_summary:
         parser.error("Provide either --vcf or --mosdepth-summary, not both.")
     if not args.vcf and not args.mosdepth_summary and not args.cram:
@@ -724,6 +767,11 @@ def main(argv: list[str] | None = None) -> None:
     report_path = write_report(args.sample_id, coverage_result, baf_result, source_path, args.output_dir)
     print(report_path.read_text())
     print(f"[estimate_ploidy] Report: {report_path}", file=sys.stderr)
+    if args.par_bed:
+        bed_path = write_haploid_regions_bed(
+            args.sample_id, coverage_result["karyotype"], args.reference, args.par_bed, args.output_dir
+        )
+        print(f"[estimate_ploidy] Haploid regions: {bed_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

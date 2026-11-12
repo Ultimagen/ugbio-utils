@@ -21,6 +21,7 @@ from ugbio_cnv.estimate_ploidy import (
     estimate_ploidy_from_vcf,
     main,
     parse_mosdepth_summary,
+    write_haploid_regions_bed,
 )
 from ugbio_core.vcfbed.bed_writer import parse_intervals_file
 
@@ -888,6 +889,20 @@ class TestSexOnlyCli:
         )
         main(self._args(cram, fasta, interval_list, tmp_path))
         assert "Karyotype:          XX" in (tmp_path / "SAMPLE.ploidy_report.txt").read_text()
+        assert not (tmp_path / "SAMPLE.haploid_regions.bed").exists()
+
+    def test_par_bed_writes_haploid_regions(self, tmp_path):
+        cram, fasta = _karyotype_cram(tmp_path, 1, 1)
+        par_bed = tmp_path / "par.bed"
+        par_bed.write_text("chrX\t0\t1000\nchrY\t0\t1000\n")
+        main([*self._args(cram, fasta, _regions_bed(tmp_path), tmp_path), "--par-bed", str(par_bed)])
+        assert (tmp_path / "SAMPLE.haploid_regions.bed").read_text() == (
+            f"chrX\t1000\t{SEX_TEST_CONTIG_LENGTH}\nchrY\t1000\t{SEX_TEST_CONTIG_LENGTH}\n"
+        )
+
+    def test_par_bed_requires_sex_only(self, tmp_path):
+        with pytest.raises(SystemExit):
+            main(["--mosdepth-summary", "summary.txt", "--sample-id", "S", "--par-bed", "par.bed"])
 
     @pytest.mark.parametrize(
         "drop,extra",
@@ -909,3 +924,44 @@ class TestSexOnlyCli:
             del args[i : i + 2]
         with pytest.raises(SystemExit):
             main(args + extra)
+
+
+class TestWriteHaploidRegionsBed:
+    @staticmethod
+    def _write(tmp_path, karyotype, contig_lengths=(("chr1", 2000), ("chrX", 1000), ("chrY", 500)), pars=None):
+        fasta = tmp_path / "ref.fa"
+        Path(f"{fasta}.fai").write_text("".join(f"{name}\t{length}\t0\t60\t61\n" for name, length in contig_lengths))
+        par_bed = tmp_path / "par.bed"
+        par_bed.write_text(pars if pars is not None else "chrX\t10\t100\nchrX\t900\t950\nchrY\t10\t100\n")
+        return write_haploid_regions_bed("SAMPLE", karyotype, fasta, par_bed, tmp_path).read_text()
+
+    @pytest.mark.parametrize(
+        "karyotype,expected",
+        [
+            ("XY", "chrX\t0\t10\nchrX\t100\t900\nchrX\t950\t1000\nchrY\t0\t10\nchrY\t100\t500\n"),
+            ("XYY", "chrX\t0\t10\nchrX\t100\t900\nchrX\t950\t1000\n"),
+            ("XXY", "chrY\t0\t10\nchrY\t100\t500\n"),
+            ("XXXY", "chrY\t0\t10\nchrY\t100\t500\n"),
+            ("X0", ""),
+            ("XX", ""),
+            ("XXX", ""),
+            ("UNDETERMINED", ""),
+        ],
+    )
+    def test_haploid_regions_per_karyotype(self, tmp_path, karyotype, expected):
+        assert self._write(tmp_path, karyotype) == expected
+
+    def test_bare_contig_names(self, tmp_path):
+        bed = self._write(tmp_path, "XXY", contig_lengths=(("Y", 500),), pars="Y\t10\t100\n")
+        assert bed == "Y\t0\t10\nY\t100\t500\n"
+
+    def test_haploid_contig_missing_from_reference_contributes_nothing(self, tmp_path):
+        assert self._write(tmp_path, "XXY", contig_lengths=(("chrX", 1000),)) == ""
+
+    def test_par_bed_header_lines_are_skipped(self, tmp_path):
+        pars = "#chrom\tstart\tend\ntrack name=par\nbrowser position chrY\nchrY\t10\t100\n"
+        assert self._write(tmp_path, "XXY", pars=pars) == "chrY\t0\t10\nchrY\t100\t500\n"
+
+    def test_haploid_contig_without_par_fails(self, tmp_path):
+        with pytest.raises(ValueError, match="chrY"):
+            self._write(tmp_path, "XY", pars="chrX\t10\t100\n")
