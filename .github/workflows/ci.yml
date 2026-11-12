@@ -32,7 +32,7 @@ jobs:
     outputs:
       matrix: ${{steps.list_members.outputs.members}}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/get-members
         id: list_members
 #        with:
@@ -41,7 +41,7 @@ jobs:
   run-pre-commit:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         lfs: true
 
@@ -59,7 +59,7 @@ jobs:
   Trivy-docker-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run Trivy to scan Dockerfile
         uses: aquasecurity/trivy-action@0.35.0
@@ -73,7 +73,7 @@ jobs:
   Trivy-fs-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           lfs: true
 
@@ -102,7 +102,7 @@ jobs:
       matrix:
         module: ${{fromJson(needs.get-members.outputs.matrix)}}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         lfs: true
 
@@ -124,13 +124,13 @@ jobs:
       max-parallel: 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           lfs: true
           path: ${{ env.UGBIO_UTILS_REPO_PATH }}
 
       - name: Checkout install-bio repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Ultimagen/install-bio
           ref: ${{ env.INSTALL_BIO_REF }}
