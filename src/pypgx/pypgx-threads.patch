@@ -1,0 +1,93 @@
+diff --git a/pypgx/api/pipeline.py b/pypgx/api/pipeline.py
+index db6d785..0103edb 100644
+--- a/pypgx/api/pipeline.py
++++ b/pypgx/api/pipeline.py
+@@ -135,7 +135,7 @@ def run_ngs_pipeline(
+     control_statistics=None, platform='WGS', assembly='GRCh37', panel=None,
+     force=False, samples=None, exclude=False, samples_without_sv=None,
+     do_not_plot_copy_number=False, do_not_plot_allele_fraction=False,
+-    cnv_caller=None
++    cnv_caller=None, threads=None
+ ):
+     """
+     Run genotyping pipeline for NGS data.
+@@ -186,6 +186,9 @@ def run_ngs_pipeline(
+         Archive file or object with the semantic type Model[CNV]. By default,
+         a pre-trained CNV caller in the ``pypgx-bundle`` directory will be
+         used.
++    threads : int, optional
++        Number of CPUs for Beagle phasing. By default, Beagle uses every CPU
++        the machine reports.
+     """
+     if not core.is_target_gene(gene):
+         raise sdk.utils.NotTargetGeneError(gene)
+@@ -244,7 +247,7 @@ def run_ngs_pipeline(
+                 f'{output}/consolidated-variants.zip')
+         else:
+             phased_variants = utils.estimate_phase_beagle(
+-                imported_variants, panel=panel)
++                imported_variants, panel=panel, threads=threads)
+             phased_variants.to_file(f'{output}/phased-variants.zip')
+             consolidated_variants = utils.create_consolidated_vcf(
+                 imported_variants, phased_variants)
+diff --git a/pypgx/api/utils.py b/pypgx/api/utils.py
+index a4501b7..e952a8a 100644
+--- a/pypgx/api/utils.py
++++ b/pypgx/api/utils.py
+@@ -780,7 +780,7 @@ def create_regions_bed(
+     return bf
+
+ def estimate_phase_beagle(
+-    imported_variants, panel=None, impute=False
++    imported_variants, panel=None, impute=False, threads=None
+ ):
+     """
+     Estimate haplotype phase of observed variants with the Beagle program.
+@@ -798,6 +798,9 @@ def estimate_phase_beagle(
+         directory will be used.
+     impute : bool, default: False
+         If True, perform imputation of missing genotypes.
++    threads : int, optional
++        Number of CPUs for Beagle (``nthreads=``) and the Java VM. By
++        default, Beagle and Java use every CPU the machine reports.
+
+     Returns
+     -------
+@@ -850,6 +853,9 @@ def estimate_phase_beagle(
+                 f'impute={str(impute).lower()}',
+                 f'em={em}'
+             ]
++            if threads is not None:
++                command[1:1] = [f'-XX:ActiveProcessorCount={threads}']
++                command.append(f'nthreads={threads}')
+             subprocess.run(
+                 command,
+                 check=True,
+diff --git a/pypgx/cli/run_ngs_pipeline.py b/pypgx/cli/run_ngs_pipeline.py
+index 86b7581..0e44702 100644
+--- a/pypgx/cli/run_ngs_pipeline.py
++++ b/pypgx/cli/run_ngs_pipeline.py
+@@ -154,6 +154,15 @@ can provide a list of samples."""
+ default, a pre-trained CNV caller in the pypgx-bundle
+ directory will be used."""
+     )
++    parser.add_argument(
++        '--threads',
++        metavar='INT',
++        type=int,
++        help=
++"""Number of CPUs for Beagle phasing (Beagle nthreads=
++and the Java VM). By default, Beagle uses every CPU
++the machine reports."""
++    )
+
+ def main(args):
+     pipeline.run_ngs_pipeline(
+@@ -164,5 +173,6 @@ def main(args):
+         exclude=args.exclude, samples_without_sv=args.samples_without_sv,
+         do_not_plot_copy_number=args.do_not_plot_copy_number,
+         do_not_plot_allele_fraction=args.do_not_plot_allele_fraction,
+-        platform=args.platform, cnv_caller=args.cnv_caller
++        platform=args.platform, cnv_caller=args.cnv_caller,
++        threads=args.threads
+     )
