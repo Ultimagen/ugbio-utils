@@ -22,7 +22,7 @@ env:
   UGBIO_BASE_BUILD_IMAGE_NAME: ugbio_base_build:1.8.7
   UGBIO_UTILS_REPO_PATH: ./ugbio-utils
   INSTALL_BIO_PATH: ./install-bio
-  INSTALL_BIO_REF: main
+  INSTALL_BIO_REF: fix/singularity-ubuntu-26.04
   INSTALL_BIO_SCRIPT: install-bio.sh
   TRIVY_VERSION: v0.73.0
 
