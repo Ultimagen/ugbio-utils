@@ -69,18 +69,6 @@ class TestGivenSex:
         with pytest.raises(ValueError, match="sex must be"):
             dc.sex_chromosome_setup("M")
 
-    def test_no_call_gives_a_vcf_without_records(self, tmp_path, monkeypatch):
-        rng = np.random.default_rng(3)
-        bins = make_bins({"chr1": noisy_cn(5000, rng)})  # flat: nothing to call
-        monkeypatch.setattr(dc, "load_bins", lambda *a, **k: bins)
-        out = str(tmp_path / "calls.vcf.gz")
-        fai = tmp_path / "ref.fa.fai"
-        fai.write_text("chr1\t500000\t6\t60\t61\n")
-        calls = dc.call_depth_cnvs("q0", "q20", "ann", "S", str(fai), out, sex="female")
-        assert calls.empty
-        with pysam.VariantFile(out) as v:
-            assert list(v.header.samples) == ["S"] and not list(v)
-
     def test_given_sex_overrides_the_depth(self, tmp_path, monkeypatch):
         rng = np.random.default_rng(9)
         bins = make_bins({"chr1": noisy_cn(5000, rng), "chrX": noisy_cn(3000, rng, level=1.0)})  # male depth
@@ -228,6 +216,18 @@ class TestCalling:
 
 
 class TestOutput:
+    def test_no_call_gives_a_vcf_without_records(self, tmp_path, monkeypatch):
+        rng = np.random.default_rng(3)
+        bins = make_bins({"chr1": noisy_cn(5000, rng)})  # flat: nothing to call
+        monkeypatch.setattr(dc, "load_bins", lambda *a, **k: bins)
+        out = str(tmp_path / "calls.vcf.gz")
+        fai = tmp_path / "ref.fa.fai"
+        fai.write_text("chr1\t500000\t6\t60\t61\n")
+        calls = dc.call_depth_cnvs("q0", "q20", "ann", "S", str(fai), out, sex="female")
+        assert calls.empty
+        with pysam.VariantFile(out) as v:
+            assert list(v.header.samples) == ["S"] and not list(v)
+
     def test_vcf_contract(self, tmp_path, fasta_index):
         calls = pd.DataFrame(
             [
@@ -312,6 +312,14 @@ class TestPseudoautosomal:
         x = noisy_cn(3000, rng, level=1.0)
         x[: self.PAR[1] // dc.BIN_SIZE] = noisy_cn(self.PAR[1] // dc.BIN_SIZE, rng, level=2.0)
         return {"chr1": noisy_cn(5000, rng), "chrX": x}
+
+    def test_par_bed_parsing(self, tmp_path):
+        bed = tmp_path / "par.bed"
+        bed.write_text(
+            "# PARs\ntrack name=par\nchrX\t10000\t2781479\tPAR1\nchrY\t10000\t2781479\nchrX\t155701383\t156030895\n"
+        )
+        assert dc.read_par_bed(str(bed), "chrX") == [("chrX", 10000, 2781479), ("chrX", 155701383, 156030895)]
+        assert dc.read_par_bed(str(bed), "X") == []  # b37 names: no match for a chr-named BED
 
     def test_male_par_is_not_a_duplication(self, tmp_path, monkeypatch):
         calls = self.run(tmp_path, monkeypatch, self.male(np.random.default_rng(11)))

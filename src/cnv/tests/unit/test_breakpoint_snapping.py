@@ -1,3 +1,4 @@
+import pysam
 import pytest
 from ugbio_cnv import breakpoint_snapping as bs
 
@@ -67,3 +68,69 @@ class TestBestCluster:
 
     def test_small_indels_ignored(self):
         assert bs.best_junction_cluster([(1000, 1050), (1000, 1050)], 1000, bs.SnapParams()) is None
+
+
+def _write_pairs_bam(path, pairs, chrom_len=20000):
+    """BAM of FR pairs: each (start, mate_start) is a forward 100 bp read and its reverse mate."""
+    header = {"HD": {"VN": "1.6", "SO": "coordinate"}, "SQ": [{"SN": "chr1", "LN": chrom_len}]}
+    reads = []
+    for i, (s, m) in enumerate(pairs):
+        for pos, mate, rev in ((s, m, False), (m, s, True)):
+            r = pysam.AlignedSegment()
+            r.query_name, r.reference_id, r.reference_start = f"pair{i}", 0, pos
+            r.query_sequence, r.query_qualities = "A" * 100, pysam.qualitystring_to_array("I" * 100)
+            r.cigartuples, r.mapping_quality = [(0, 100)], 60
+            r.flag = 1 | 2 | (16 if rev else 32) | (128 if rev else 64)
+            r.next_reference_id, r.next_reference_start = 0, mate
+            r.template_length = (mate + 100 - pos) if not rev else -(pos + 100 - mate)
+            reads.append(r)
+    with pysam.AlignmentFile(path, "wb", header=header) as out:
+        for r in sorted(reads, key=lambda x: x.reference_start):
+            out.write(r)
+    pysam.index(path)
+    return path
+
+
+def _write_calls_vcf(path, calls):
+    header = pysam.VariantHeader()
+    header.add_line("##contig=<ID=chr1,length=20000>")
+    header.info.add("SVTYPE", 1, "String", "type")
+    header.info.add("SVLEN", 1, "Integer", "length")
+    header.info.add("END", 1, "Integer", "end")
+    header.info.add("CIPOS", 2, "Integer", "confidence interval around POS")  # as in the depth calls
+    with pysam.VariantFile(path, "wz", header=header) as out:
+        for i, (s, e, t) in enumerate(calls):
+            rec = header.new_record(contig="chr1", start=s, stop=e, id=f"call{i}", alleles=("N", f"<{t}>"))
+            rec.info["SVTYPE"], rec.info["SVLEN"] = t, e - s
+            out.write(rec)
+    pysam.tabix_index(path, preset="vcf", force=True)
+    return path
+
+
+class TestPairBounds:
+    """Deletion edges from FR pairs spanning the call (no split reads)."""
+
+    def test_bounds_are_the_innermost_read_ends(self, tmp_path):
+        bam = _write_pairs_bam(str(tmp_path / "p.bam"), [(800, 2100), (850, 2050), (900, 2000)])
+        with pysam.AlignmentFile(bam) as aln:
+            left, right, n = bs.pair_bounds(aln, "chr1", 950, 2200, bs.SnapParams())
+        assert n == 3  # noqa: PLR2004
+        assert 950 <= left <= 1000 and 2000 <= right <= 2100  # 90th / 10th percentile of the read ends
+
+    def test_one_pair_is_not_enough(self, tmp_path):
+        bam = _write_pairs_bam(str(tmp_path / "p.bam"), [(900, 2000)])
+        with pysam.AlignmentFile(bam) as aln:
+            assert bs.pair_bounds(aln, "chr1", 950, 2200, bs.SnapParams()) is None
+
+    def test_deletion_without_split_reads_is_shrunk_by_the_pairs(self, tmp_path):
+        bam = _write_pairs_bam(str(tmp_path / "p.bam"), [(800, 2100), (850, 2050), (900, 2000)])
+        vcf = _write_calls_vcf(str(tmp_path / "calls.vcf.gz"), [(500, 2500, "DEL"), (500, 2500, "DUP")])
+        out = str(tmp_path / "snap.vcf.gz")
+        bs.snap_cnv_breakpoints(vcf, bam, None, out, threads=1)
+        with pysam.VariantFile(out) as v:
+            recs = {r.info["SVTYPE"]: r for r in v}
+        d = recs["DEL"]
+        assert d.info["SNAP"] == "PE" and d.info["SNAP_N"] == 3  # noqa: PLR2004
+        assert (d.info["DEPTH_POS"], d.info["DEPTH_END"]) == (501, 2500)  # the depth edges are kept
+        assert 950 <= d.start <= 1000 and 2000 <= d.stop <= 2100
+        assert recs["DUP"].info["SNAP"] == "none" and (recs["DUP"].start, recs["DUP"].stop) == (500, 2500)

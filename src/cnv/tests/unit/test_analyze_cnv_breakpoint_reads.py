@@ -307,11 +307,11 @@ def test_analyze_interval_breakpoints_scans_both_breakpoint_windows():
         Path(bam_path + ".bai").unlink(missing_ok=True)
 
 
-def test_collect_fragments_from_region_uses_independent_fetch_iterators(monkeypatch):
-    """Regression test for fetch iterator invalidation between breakpoint windows."""
+def test_collect_fragments_from_region_reads_each_window_before_the_next_fetch(monkeypatch):
+    """Both breakpoint windows count, although a new fetch on the same handle invalidates the previous iterator."""
 
     class FakeAlignmentFile:
-        """Fake alignment file that invalidates prior iterators unless multiple_iterators=True."""
+        """Fake alignment file whose fetch invalidates prior iterators unless multiple_iterators=True."""
 
         def __init__(self, start_reads, end_reads):
             self.start_reads = start_reads
