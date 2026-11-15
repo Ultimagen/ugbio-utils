@@ -37,7 +37,7 @@ runs:
   steps:
     - name: Remove results of earlier scans
       shell: bash
-      run: rm -f trivy-results.json
+      run: rm -f trivy-results.json sbom.json grype-results.json
 
     - name: Run Trivy to scan built image
       id: trivy-image
@@ -55,6 +55,29 @@ runs:
         output: 'trivy-results.json'
         exit-code: '0'
 
+    # Trivy only inventories package-manager and language-package installs; Syft also detects versions
+    # from executables (e.g. CPython in /usr/local) and labels executables that belong to no package
+    - name: Generate SBOM with Syft
+      id: syft
+      if: always()
+      continue-on-error: true
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+      run: |
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "${PWD}:/out" \
+          anchore/syft:v1.57.1@sha256:03215d0e98b661d0ecbc8575dbc14d65be1743b5de5df6410aecb7e80f95b060 \
+          "docker:${IMAGE_REF}" -q -o syft-json=/out/sbom.json
+
+    - name: Scan SBOM with Grype
+      if: always() && steps.syft.outcome == 'success'
+      continue-on-error: true
+      shell: bash
+      run: |
+        docker run --rm -v "${PWD}:/out" \
+          anchore/grype:v0.121.3@sha256:13113eeceab017260370cf540e1d25442c59665fd07d1b09b66d63bb0c282887 \
+          sbom:/out/sbom.json -q -o json --file /out/grype-results.json
+
     - name: Prepare artifact name
       if: always()
       id: artifact-name
@@ -70,7 +93,10 @@ runs:
       uses: actions/upload-artifact@v4
       with:
         name: ${{ steps.artifact-name.outputs.name }}
-        path: trivy-results.json
+        path: |
+          trivy-results.json
+          sbom.json
+          grype-results.json
         retention-days: ${{ inputs.artifact-retention-days }}
 
     - name: Generate Trivy summary and apply CVE gate
@@ -84,4 +110,17 @@ runs:
           --image-tag "${{ inputs.image-tag }}" \
           --policy "${{ inputs.policy }}" \
           --scan-outcome "${{ steps.trivy-image.outcome }}" \
+          --github-step-summary "$GITHUB_STEP_SUMMARY"
+
+    - name: Report binaries not covered by Trivy
+      if: always()
+      continue-on-error: true
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+      run: |
+        python3 ${{ github.action_path }}/binary_findings.py \
+          --grype-results grype-results.json \
+          --sbom sbom.json \
+          --image "${IMAGE_REF}" \
           --github-step-summary "$GITHUB_STEP_SUMMARY"
