@@ -133,3 +133,33 @@ def test_no_secrets_block_policy_still_blocks_on_cve(tmp_path):
     assert proc.returncode == 1
     assert outputs["blocked"] == "true"
     assert outputs["blocking-count"] == "1"
+
+
+def _run_raw(tmp_path: Path, args: list[str]) -> tuple[subprocess.CompletedProcess, dict]:
+    outputs = tmp_path / "outputs"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--image-name", "img", "--image-tag", "tag", *args],
+        env={"GITHUB_OUTPUT": str(outputs)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc, dict(line.split("=", 1) for line in outputs.read_text().splitlines())
+
+
+@pytest.mark.parametrize("policy", ["warn", "block"])
+def test_missing_results_block_under_any_policy(tmp_path, policy):
+    proc, outputs = _run_raw(tmp_path, ["--results-file", str(tmp_path / "none.json"), "--policy", policy])
+    assert proc.returncode == 1
+    assert outputs["blocked"] == "true"
+    assert "could not be checked for secrets" in proc.stdout
+
+
+@pytest.mark.parametrize("policy", ["warn", "block"])
+def test_failed_scan_blocks_under_any_policy(tmp_path, policy):
+    results_file = _write(tmp_path, [HIGH_VULN_RESULT])
+    proc, outputs = _run_raw(
+        tmp_path, ["--results-file", str(results_file), "--policy", policy, "--scan-outcome", "failure"]
+    )
+    assert proc.returncode == 1
+    assert outputs["blocked"] == "true"

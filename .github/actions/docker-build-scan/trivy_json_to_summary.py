@@ -11,7 +11,9 @@ Gate policy:
   - policy=warn:  vulnerabilities are reported as warning annotations, exit code 0 unless
     a secret is found.
   - policy=block: blocking findings are reported as error annotations and the script
-    exits with code 1. A missing results file also blocks (the image could not be verified).
+    exits with code 1.
+  - A failed scan or a missing results file blocks under any policy: the image was not
+    checked for secrets.
 """
 
 import argparse
@@ -248,17 +250,11 @@ def main():
     args = parser.parse_args()
 
     results_path = Path(args.results_file)
-    if args.scan_outcome != "success" and args.policy == "block":
-        print(f"::error::Trivy scan did not succeed (outcome: {args.scan_outcome}); the image could not be verified")
-        write_outputs({"counts": {}, "findings": []}, blocked=True)
+    if args.scan_outcome != "success" or not results_path.exists():
+        reason = f"outcome: {args.scan_outcome}" if args.scan_outcome != "success" else f"{results_path} not found"
+        print(f"::error::Trivy scan did not complete ({reason}); the image could not be checked for secrets")
+        write_outputs({"counts": {}, "findings": [], "secrets": []}, blocked=True)
         raise SystemExit(1)
-    if not results_path.exists():
-        level = "error" if args.policy == "block" else "warning"
-        print(f"::{level}::Trivy results file not found: {results_path}")
-        write_outputs({"counts": {}, "findings": []}, blocked=args.policy == "block")
-        if args.policy == "block":
-            raise SystemExit(1)
-        return
 
     data = parse_trivy_json(results_path)
     summary = generate_summary(args.image_name, args.image_tag, data, args.policy)
