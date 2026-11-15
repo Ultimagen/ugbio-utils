@@ -20,6 +20,7 @@ jobs:
       docker-file: ugbio_base/Dockerfile
       docker-image: ugbio_base
       docker-tag: ${{ inputs.image-tag }}
+      cve-policy: block
 
   build-builder:
     uses: ./.github/workflows/docker-build-push.yml
@@ -31,3 +32,4 @@ jobs:
       docker-image: ugbio_base_build
       docker-tag: ${{ inputs.image-tag }}
       docker-target: builder
+      cve-policy: block
