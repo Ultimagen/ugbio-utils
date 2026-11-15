@@ -170,6 +170,22 @@ runs:
         docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "${PWD}:/out" \
           "${SYFT_IMAGE}" "docker:${SCAN_REF}" -q -o syft-json=/out/sbom.json
 
+    - name: Date for the Grype database cache key
+      id: grype-db-date
+      if: always() && steps.syft.outcome == 'success'
+      shell: bash
+      run: echo "date=$(date -u +%F)" >> "${GITHUB_OUTPUT}"
+
+    # A new database is published daily; restoring yesterday's lets Grype download only when it changed
+    - name: Restore the Grype vulnerability database
+      if: always() && steps.syft.outcome == 'success'
+      continue-on-error: true
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/grype-db
+        key: grype-db-${{ runner.os }}-${{ steps.grype-db-date.outputs.date }}
+        restore-keys: grype-db-${{ runner.os }}-
+
     - name: Scan SBOM with Grype
       if: always() && steps.syft.outcome == 'success'
       continue-on-error: true
@@ -177,7 +193,10 @@ runs:
       env:
         GRYPE_IMAGE: ${{ inputs.grype-image }}
       run: |
-        docker run --rm -v "${PWD}:/out" \
+        mkdir -p "${RUNNER_TEMP}/grype-db"
+        # Runs as the runner user so the cached database and results stay readable by the cache action
+        docker run --rm --user "$(id -u):$(id -g)" --tmpfs /tmp:mode=1777 \
+          -e GRYPE_DB_CACHE_DIR=/grype-db -v "${RUNNER_TEMP}/grype-db:/grype-db" -v "${PWD}:/out" \
           "${GRYPE_IMAGE}" sbom:/out/sbom.json -q -o json --file /out/grype-results.json
 
     - name: Generate Trivy summary and apply CVE gate
