@@ -718,9 +718,13 @@ def stats_from_mi_tags(bam_path: str, open_kwargs: dict) -> None:
 def _takes_family_tags(read, key: tuple | None, pad: int) -> bool:
     """
     Whether a record gets its pair's MI/DS/CS. Primary records always do. A secondary or supplementary
-    record does only if it lies on its pair's contig, the pair's fragment spans at most `pad`, and the
-    fragment lies within `pad` of the record's start. That is the condition under which a sharded run is
-    guaranteed to have seen the pair, so both execution modes tag non-primary records the same way.
+    record does only if it lies on its pair's contig and both ends of the pair's key lie within `pad` of the
+    record's start (and at most `pad` apart). The key ends are the fragment's 5' ends (_fragment_ends), not an
+    alignment bounding box: a dovetailed or outward-facing mate can start before key[1]. When the mates start
+    at most `pad` apart, every read of the pair's family still starts within 2*pad of the record, inside the
+    window of the shard that emits it, so both execution modes tag the record the same way. Mates further
+    apart than `pad` are a singleton in sharded mode (see "Sharded execution"); their non-primary records
+    follow their primaries in each mode.
     """
     if not (read.is_secondary or read.is_supplementary):
         return True
