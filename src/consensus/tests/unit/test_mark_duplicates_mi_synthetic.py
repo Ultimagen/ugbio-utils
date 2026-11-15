@@ -1526,3 +1526,35 @@ def test_sharded_strips_run_ids_mate_suffixes_and_stale_mi_like_whole_file(tmp_p
         ("606174-b/2", "a", 2, "a"),
         ("606174-solo", None, 1, "solo"),
     }
+
+
+@needs_samtools
+def test_supplementaries_of_dovetailed_and_outward_families_agree_across_shards(tmp_path):
+    """
+    The 5' key is not an alignment bounding box: the reverse mate can start before key[1]. With the mates
+    within pad, a shard emitting a nearby supplementary still holds the whole family, so it is tagged as in
+    whole-file mode. "o" pairs face outward (key (1700, 1460)) and reach 2*pad before the supplementary;
+    "d" pairs dovetail by 90 bp.
+    """
+    recs = []
+    for n in ("o1", "o2"):
+        recs += [
+            segment(n, "chr1", 1700, flag=1 | 64, tags={"u5": UMI_A}),
+            segment(n, "chr1", 1410, flag=1 | 128 | 16, tags={"u3": UMI_B}),
+        ]
+    for n in ("d1", "d2"):
+        recs += [
+            segment(n, "chr1", 3990, flag=1 | 64, tags={"u5": UMI_A}),
+            segment(n, "chr1", 3900, flag=1 | 128 | 16, length=150, tags={"u3": UMI_B}),
+        ]
+    recs += [
+        segment("o1", "chr1", 2000, flag=1 | 64 | 2048, tags={"u5": UMI_A}),
+        segment("d1", "chr1", 4250, flag=1 | 64 | 2048, tags={"u5": UMI_A}),
+    ]
+    inp = build_bam(tmp_path / "in.bam", recs)
+    whole, sharded = tmp_path / "whole.bam", tmp_path / "sharded.bam"
+    cli(inp, "--use-umi", "--pad", "300", out=whole)
+    cli(inp, "--use-umi", "--pad", "300", "--shard-size", "1000", "--jobs", "2", out=sharded)
+    assert snapshot(sharded) == snapshot(whole)
+    supp = {s[0]: s[5:8] for s in snapshot(sharded) if s[1] & 2048}
+    assert supp == {"o1": ("o1", 2, "o1"), "d1": ("d1", 2, "d1")}
