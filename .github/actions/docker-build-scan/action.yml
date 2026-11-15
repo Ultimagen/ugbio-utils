@@ -1,0 +1,262 @@
+name: "Docker build and scan"
+description: "Build a Docker image into the runner's Docker (not pushed) and scan it: Dockerfile misconfigurations, vulnerabilities and secrets (Trivy), the build token, and binaries Trivy does not inventory (Syft/Grype). Findings go to the job summary and an artifact. Fails when a secret is found, or when policy is 'block' and a blocking finding is found."
+
+inputs:
+  docker-file:
+    description: "Dockerfile path (from repository root)"
+    required: false
+    default: "Dockerfile"
+  docker-context:
+    description: "Docker build context"
+    required: false
+    default: "."
+  docker-target:
+    description: "Docker target stage"
+    required: false
+    default: ""
+  tags:
+    description: "Image tags to build (comma or newline separated)"
+    required: true
+  scan-ref:
+    description: "One of the built tags, used by the scans"
+    required: true
+  build-args:
+    description: "Docker build args (newline separated)"
+    required: false
+    default: ""
+  labels:
+    description: "Image labels (newline separated)"
+    required: false
+    default: ""
+  github-token:
+    description: "Token passed to the build as the 'github_token' secret; the built image must not contain it"
+    required: false
+    default: ""
+  image-name:
+    description: "Image name (for the summary and artifact name)"
+    required: true
+  image-tag:
+    description: "Image tag (for the summary and artifact name)"
+    required: true
+  policy:
+    description: "'warn' (default): only report findings. 'block': fail on a CRITICAL Dockerfile misconfiguration, a CRITICAL vulnerability that has a fix, or a CRITICAL vulnerability in a library (jar, pip, npm, ...)"
+    required: false
+    default: "warn"
+  ignore-unfixed:
+    description: "Ignore unfixed vulnerabilities (default: false)"
+    required: false
+    default: "false"
+  upload-artifact:
+    description: "Upload the scan results (Trivy, SBOM, Grype JSON) as a workflow artifact (default: true)"
+    required: false
+    default: "true"
+  artifact-retention-days:
+    description: "Number of days to retain scan artifacts (default: 30)"
+    required: false
+    default: "30"
+  syft-image:
+    description: "Syft image used to generate the SBOM"
+    required: false
+    default: "anchore/syft:v1.57.1@sha256:03215d0e98b661d0ecbc8575dbc14d65be1743b5de5df6410aecb7e80f95b060"
+  grype-image:
+    description: "Grype image used to scan the SBOM"
+    required: false
+    default: "anchore/grype:v0.121.3@sha256:13113eeceab017260370cf540e1d25442c59665fd07d1b09b66d63bb0c282887"
+
+outputs:
+  blocked:
+    description: "'true' if a secret was found, or policy=block and blocking vulnerabilities were found"
+    value: ${{ steps.gate.outputs.blocked }}
+  blocking-count:
+    description: "Number of blocking findings"
+    value: ${{ steps.gate.outputs.blocking-count }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Remove results of earlier scans
+      shell: bash
+      run: rm -f trivy-results.json sbom.json grype-results.json
+
+    # warn only reports; block fails on CRITICAL. Vulnerabilities are checked by the image scan below.
+    - name: Run Trivy to scan the Dockerfile
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        scan-type: 'config'
+        scan-ref: ${{ inputs.docker-file }}
+        format: 'table'
+        exit-code: ${{ inputs.policy == 'block' && '1' || '0' }}
+        severity: ${{ inputs.policy == 'block' && 'CRITICAL' || 'CRITICAL,HIGH' }}
+
+    # BuildKit reads only one ignore file (<Dockerfile>.dockerignore if present, else <context>/.dockerignore)
+    # and the last matching pattern wins, so appending keeps the repo's rules but overrides their exceptions.
+    - name: Exclude sensitive files from the build context
+      shell: bash
+      env:
+        DOCKER_CONTEXT: ${{ inputs.docker-context }}
+        DOCKER_FILE: ${{ inputs.docker-file }}
+      run: |
+        ignore_file="${DOCKER_FILE}.dockerignore"
+        [ -f "${ignore_file}" ] || ignore_file="${DOCKER_CONTEXT%/}/.dockerignore"
+        cat >> "${ignore_file}" <<'IGNORE'
+
+        **/.git
+        **/.env
+        **/.env.*
+        **/.netrc
+        **/.npmrc
+        **/.pypirc
+        **/.aws
+        **/.ssh
+        **/.docker/config.json
+        **/*.tfstate*
+        **/id_rsa*
+        **/*.pem
+        **/*.key
+        IGNORE
+        echo "Appended sensitive-file patterns to ${ignore_file}"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build
+      id: build
+      uses: docker/build-push-action@v6
+      with:
+        context: ${{ inputs.docker-context }}
+        file: ${{ inputs.docker-file }}
+        target: ${{ inputs.docker-target }}
+        provenance: false
+        load: true
+        push: false
+        tags: ${{ inputs.tags }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        secrets: |
+          github_token=${{ inputs.github-token }}
+        build-args: ${{ inputs.build-args }}
+        labels: ${{ inputs.labels }}
+
+    - name: Run Trivy to scan built image
+      id: trivy-image
+      if: steps.build.outcome == 'success'
+      continue-on-error: true
+      # Pinned by commit SHA; the Trivy version (v0.70.0) is the default of this action version
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        scan-type: 'image'
+        image-ref: ${{ inputs.scan-ref }}
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
+        scanners: 'vuln,secret'
+        ignore-unfixed: ${{ inputs.ignore-unfixed }}
+        format: 'json'
+        output: 'trivy-results.json'
+        exit-code: '0'
+
+    # Trivy only inventories package-manager and language-package installs; Syft also detects versions
+    # from executables (e.g. CPython in /usr/local) and labels executables that belong to no package
+    - name: Generate SBOM with Syft
+      id: syft
+      if: always() && steps.build.outcome == 'success'
+      continue-on-error: true
+      shell: bash
+      env:
+        SCAN_REF: ${{ inputs.scan-ref }}
+        SYFT_IMAGE: ${{ inputs.syft-image }}
+      run: |
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "${PWD}:/out" \
+          "${SYFT_IMAGE}" "docker:${SCAN_REF}" -q -o syft-json=/out/sbom.json
+
+    - name: Scan SBOM with Grype
+      if: always() && steps.syft.outcome == 'success'
+      continue-on-error: true
+      shell: bash
+      env:
+        GRYPE_IMAGE: ${{ inputs.grype-image }}
+      run: |
+        docker run --rm -v "${PWD}:/out" \
+          "${GRYPE_IMAGE}" sbom:/out/sbom.json -q -o json --file /out/grype-results.json
+
+    - name: Prepare artifact name
+      if: always() && steps.build.outcome == 'success' && inputs.upload-artifact == 'true'
+      id: artifact-name
+      shell: bash
+      run: |
+        # Sanitize artifact name by replacing invalid characters (/, :, etc.) with hyphens
+        SANITIZED_NAME=$(echo "${{ inputs.image-name }}-${{ inputs.image-tag }}" | sed 's/[\/:]/-/g')
+        echo "name=trivy-image-findings-${SANITIZED_NAME}" >> $GITHUB_OUTPUT
+
+    - name: Upload image scan artifact
+      if: always() && steps.build.outcome == 'success' && inputs.upload-artifact == 'true'
+      continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.artifact-name.outputs.name }}
+        path: |
+          trivy-results.json
+          sbom.json
+          grype-results.json
+        retention-days: ${{ inputs.artifact-retention-days }}
+
+    - name: Generate Trivy summary and apply CVE gate
+      id: gate
+      if: always() && steps.build.outcome == 'success'
+      shell: bash
+      run: |
+        python3 ${{ github.action_path }}/trivy_json_to_summary.py \
+          --results-file trivy-results.json \
+          --image-name "${{ inputs.image-name }}" \
+          --image-tag "${{ inputs.image-tag }}" \
+          --policy "${{ inputs.policy }}" \
+          --scan-outcome "${{ steps.trivy-image.outcome }}" \
+          --github-step-summary "$GITHUB_STEP_SUMMARY"
+
+    # Trivy matches raw tokens but not the base64 form actions/checkout writes to .git/config
+    - name: Check the image for the build token
+      if: always() && steps.build.outcome == 'success'
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.github-token }}
+        SCAN_REF: ${{ inputs.scan-ref }}
+      run: |
+        [ -n "${TOKEN}" ] || exit 0
+        encoded=$(printf 'x-access-token:%s' "${TOKEN}" | base64 -w0)
+        dir=$(mktemp -d -p "${RUNNER_TEMP}")
+        docker save -o "${dir}/image.tar" "${SCAN_REF}"
+        tar -xf "${dir}/image.tar" -C "${dir}"
+        found=0
+        for layer in $(find "${dir}" -type f ! -name image.tar); do
+          if zcat -f "${layer}" | grep -aF -e "${TOKEN}" -e "${encoded}" > /dev/null; then
+            echo "::error::Build token found in image layer ${layer#"${dir}"/}"
+            found_layers+="- \`${layer#"${dir}"/}\`"$'\n'
+            found=1
+          fi
+        done
+        rm -rf "${dir}"
+        {
+          echo ""
+          echo "### Build token check"
+          if [ "${found}" = 1 ]; then
+            echo "> [!CAUTION]"
+            echo "> **The build token was found in the image; push blocked.** Layers:"
+            echo ""
+            printf '%s' "${found_layers}"
+          else
+            echo "✅ Build token not found in the image."
+          fi
+        } >> "${GITHUB_STEP_SUMMARY}"
+        exit "${found}"
+
+    - name: Report binaries not covered by Trivy
+      if: always() && steps.build.outcome == 'success'
+      continue-on-error: true
+      shell: bash
+      env:
+        SCAN_REF: ${{ inputs.scan-ref }}
+      run: |
+        python3 ${{ github.action_path }}/binary_findings.py \
+          --grype-results grype-results.json \
+          --sbom sbom.json \
+          --image "${SCAN_REF}" \
+          --github-step-summary "$GITHUB_STEP_SUMMARY"

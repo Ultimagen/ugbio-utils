@@ -127,22 +127,11 @@ jobs:
           df -h /tmp "${{ runner.temp }}"
           echo "TMPDIR=${{ runner.temp }}" >> "${GITHUB_ENV}"
 
-      - uses: actions/checkout@v7 # lazy check out for trivy scanning
+      - uses: actions/checkout@v7 # shallow check out; the only one when building ugbio-utils itself
         with:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
           persist-credentials: false
-
-      # Dockerfile misconfiguration scan follows cve-policy: warn only reports, block fails on CRITICAL.
-      # Vulnerabilities are checked by the image scan below, which sees everything that ships.
-      - name: Run Trivy to scan Dockerfiles
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: 'config'
-          scan-ref: './'
-          format: 'table'
-          exit-code: ${{ inputs.cve-policy == 'block' && '1' || '0' }}
-          severity: ${{ inputs.cve-policy == 'block' && 'CRITICAL' || 'CRITICAL,HIGH' }}
 
       - uses: actions/checkout@v7 # deep check out for docker build
         if: ${{ inputs.git-repo != 'Ultimagen/ugbio-utils' }}
@@ -238,53 +227,16 @@ jobs:
         with:
           name: ${{ inputs.artifact-name }}
 
-      # BuildKit reads only one ignore file (<Dockerfile>.dockerignore if present, else <context>/.dockerignore)
-      # and the last matching pattern wins, so appending keeps the repo's rules but overrides their exceptions.
-      - name: Exclude sensitive files from the build context
-        env:
-          DOCKER_CONTEXT: ${{ inputs.docker-context }}
-          DOCKER_FILE: ${{ inputs.docker-file }}
-        run: |
-          set -e
-          ignore_file="${DOCKER_FILE}.dockerignore"
-          [ -f "${ignore_file}" ] || ignore_file="${DOCKER_CONTEXT%/}/.dockerignore"
-          cat >> "${ignore_file}" <<'IGNORE'
-
-          **/.git
-          **/.env
-          **/.env.*
-          **/.netrc
-          **/.npmrc
-          **/.pypirc
-          **/.aws
-          **/.ssh
-          **/.docker/config.json
-          **/*.tfstate*
-          **/id_rsa*
-          **/*.pem
-          **/*.key
-          IGNORE
-          echo "Appended sensitive-file patterns to ${ignore_file}"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
       # Build into the runner's Docker (not pushed yet), so the image can be scanned before it is published
-      - name: Build
-        id: build
-        uses: docker/build-push-action@v4
+      - name: Build and scan
+        id: build-scan
+        uses: Ultimagen/ugbio-utils/.github/actions/docker-build-scan@main
         with:
-          context: ${{ inputs.docker-context }}
-          file: ${{ inputs.docker-file }}
-          target: ${{ inputs.docker-target }}
-          provenance: false
-          load: true
-          push: false
+          docker-file: ${{ inputs.docker-file }}
+          docker-context: ${{ inputs.docker-context }}
+          docker-target: ${{ inputs.docker-target }}
           tags: ${{ env.DOCKER_DESTINATIONS }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          secrets: |
-            github_token=${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          scan-ref: ${{ env.SCAN_REF }}
           build-args: |
             VERSION_DOCKER=${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
             IMAGE_TAG=${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
@@ -294,51 +246,12 @@ jobs:
             org.opencontainers.image.revision=${{ steps.provenance.outputs.source_sha }}
             com.ultimagenomics.ugbio-utils.ref=${{ job.workflow_ref }}
             com.ultimagenomics.ugbio-utils.sha=${{ job.workflow_sha }}
-
-      - name: Trivy image scan
-        id: trivy-gate
-        uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@main
-        with:
-          image-ref: ${{ env.SCAN_REF }}
+          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
           image-name: "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}"
           image-tag: "${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}"
           ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
           policy: ${{ inputs.cve-policy }}
           artifact-retention-days: "30"
-
-      # Trivy matches raw tokens but not the base64 form actions/checkout writes to .git/config
-      - name: Check the image for the checkout token
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        env:
-          PAT: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-        run: |
-          [ -n "${PAT}" ] || exit 0
-          encoded=$(printf 'x-access-token:%s' "${PAT}" | base64 -w0)
-          dir=$(mktemp -d -p "${RUNNER_TEMP}")
-          docker save -o "${dir}/image.tar" "${SCAN_REF}"
-          tar -xf "${dir}/image.tar" -C "${dir}"
-          found=0
-          for layer in $(find "${dir}" -type f ! -name image.tar); do
-            if zcat -f "${layer}" | grep -aF -e "${PAT}" -e "${encoded}" > /dev/null; then
-              echo "::error::Checkout token found in image layer ${layer#"${dir}"/}"
-              found_layers+="- \`${layer#"${dir}"/}\`"$'\n'
-              found=1
-            fi
-          done
-          rm -rf "${dir}"
-          {
-            echo ""
-            echo "### Checkout token check"
-            if [ "${found}" = 1 ]; then
-              echo "> [!CAUTION]"
-              echo "> **The checkout token was found in the image; push blocked.** Layers:"
-              echo ""
-              printf '%s' "${found_layers}"
-            else
-              echo "✅ Checkout token not found in the image."
-            fi
-          } >> "${GITHUB_STEP_SUMMARY}"
-          exit "${found}"
 
       - name: Push image tags
         id: push
