@@ -271,6 +271,7 @@ jobs:
 
       # Build into the runner's Docker (not pushed yet), so the image can be scanned before it is published
       - name: Build
+        id: build
         uses: docker/build-push-action@v4
         with:
           context: ${{ inputs.docker-context }}
@@ -304,6 +305,40 @@ jobs:
           ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
           policy: ${{ inputs.cve-policy }}
           artifact-retention-days: "30"
+
+      # Trivy matches raw tokens but not the base64 form actions/checkout writes to .git/config
+      - name: Check the image for the checkout token
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          PAT: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+        run: |
+          [ -n "${PAT}" ] || exit 0
+          encoded=$(printf 'x-access-token:%s' "${PAT}" | base64 -w0)
+          dir=$(mktemp -d -p "${RUNNER_TEMP}")
+          docker save -o "${dir}/image.tar" "${SCAN_REF}"
+          tar -xf "${dir}/image.tar" -C "${dir}"
+          found=0
+          for layer in $(find "${dir}" -type f ! -name image.tar); do
+            if zcat -f "${layer}" | grep -aF -e "${PAT}" -e "${encoded}" > /dev/null; then
+              echo "::error::Checkout token found in image layer ${layer#"${dir}"/}"
+              found_layers+="- \`${layer#"${dir}"/}\`"$'\n'
+              found=1
+            fi
+          done
+          rm -rf "${dir}"
+          {
+            echo ""
+            echo "### Checkout token check"
+            if [ "${found}" = 1 ]; then
+              echo "> [!CAUTION]"
+              echo "> **The checkout token was found in the image; push blocked.** Layers:"
+              echo ""
+              printf '%s' "${found_layers}"
+            else
+              echo "✅ Checkout token not found in the image."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit "${found}"
 
       - name: Push image tags
         id: push
