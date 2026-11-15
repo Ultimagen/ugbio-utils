@@ -573,8 +573,9 @@ def test_cs_reads_orientation_from_the_flag_for_dovetailed_pairs(tmp_path):
     """
     f1r2 = pair("fwd", "chr1", 1000, 1010, UMI_A, UMI_B, kind="F1R2")
     f2r1 = pair("rev", "chr1", 1000, 1010, UMI_B, UMI_A, kind="F2R1")
-    # dovetail: R1 (forward) starts to the right of R2 (reverse)
+    # dovetail: the forward mate starts at 1010, to the right of the reverse one, on both strands
     f1r2[0].reference_start, f1r2[1].reference_start = 1010, 1000
+    f2r1[0].reference_start, f2r1[1].reference_start = 1000, 1010
     got = marked(run(tmp_path, flatten(f1r2, f2r1), "--use-umi", "--pair-orientation-tag", "po"))
     assert got["fwd"]["CS"] == got["rev"]["CS"] == "fwd"
     assert (got["fwd"]["po"], got["rev"]["po"]) == ("F1R2", "F2R1")
@@ -1432,3 +1433,54 @@ def test_supplementary_records_get_the_same_tags_whole_file_and_sharded(tmp_path
     assert snapshot(sharded) == snapshot(whole)
     supp = {(s[0], s[2]): s[5:8] for s in snapshot(whole) if s[1] & 2048}
     assert supp == {("a", "chr1"): ("a", 2, "a"), ("b", "chr2"): (None, 1, None)}
+
+
+# --- BIOIN-3197: keys from the 5' ends ----------------------------------------------------------------
+
+
+def fr_pair(name, fwd_start, fwd_len, rev_start, rev_len, u5, u3, *, r1_reverse):
+    """An FR pair with explicit mate lengths; R1 is the reverse mate iff `r1_reverse` (F2R1)."""
+    fwd_flag, rev_flag = (1 | 128, 1 | 64 | 16) if r1_reverse else (1 | 64, 1 | 128 | 16)
+    fwd_tags, rev_tags = ({"u3": u3}, {"u5": u5}) if r1_reverse else ({"u5": u5}, {"u3": u3})
+    return [
+        segment(name, "chr1", fwd_start, flag=fwd_flag, length=fwd_len, tags=fwd_tags),
+        segment(name, "chr1", rev_start, flag=rev_flag, length=rev_len, tags=rev_tags),
+    ]
+
+
+def test_read_through_f2r1_copies_with_different_forward_trims_stay_one_linked_family(tmp_path):
+    """
+    Fully read-through 200 bp insert: both mates start at 1000. The forward mates' 3' trims differ, so their
+    alignment ends (1198, 1199, 1197) are not the fragment end; the reverse mate's end (1200) is.
+    """
+    recs = flatten(
+        fr_pair("r_a", 1000, 198, 1000, 200, UMI_B, UMI_A, r1_reverse=True),
+        fr_pair("r_b", 1000, 199, 1000, 200, UMI_B, UMI_A, r1_reverse=True),
+        fr_pair("f", 1000, 197, 1000, 200, UMI_A, UMI_B, r1_reverse=False),
+    )
+    got = marked(run(tmp_path, recs, "--use-umi", "--pair-orientation-tag", "po"))
+    assert (got["r_a"]["MI"], got["r_b"]["MI"], got["r_a"]["DS"]) == ("r_a", "r_a", 2)
+    assert {n: (got[n]["CS"], got[n]["po"]) for n in got} == {
+        "r_a": ("f", "F2R1"),
+        "r_b": ("f", "F2R1"),
+        "f": ("f", "F1R2"),
+    }
+
+
+@needs_samtools
+def test_a_dovetailed_family_spanning_more_than_pad_agrees_across_shards(tmp_path):
+    """
+    Key (3200, 3700). Pair `a` dovetails: its reverse mate starts at 2750, 450 bp before the key. Pair `c`'s
+    reverse mate starts at 3650. The family's reads span 900 bp > pad, across the shard edge at 3000.
+    """
+    recs = flatten(
+        fr_pair("a", 3200, 50, 2750, 950, UMI_A, UMI_B, r1_reverse=False),
+        fr_pair("c", 3200, 50, 3650, 50, UMI_A, UMI_B, r1_reverse=False),
+    )
+    inp = build_bam(tmp_path / "in.bam", recs)
+    whole, sharded = tmp_path / "whole.bam", tmp_path / "sharded.bam"
+    cli(inp, "--use-umi", out=whole)
+    cli(inp, "--use-umi", "--shard-size", "3000", "--pad", "500", "--jobs", "2", out=sharded)
+    assert snapshot(sharded) == snapshot(whole)
+    got = marked(sharded)
+    assert (got["a"]["MI"], got["c"]["MI"], got["a"]["DS"]) == ("a", "a", 2)

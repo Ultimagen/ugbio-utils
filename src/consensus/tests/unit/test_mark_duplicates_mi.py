@@ -298,6 +298,24 @@ def test_r1_is_reverse_reads_the_flag_not_the_positions(r1, r2, expected_is_reve
     assert mdmi._r1_is_reverse(r1, r2) is expected_is_reverse
 
 
+@pytest.mark.parametrize(
+    ("r1", "r2", "expected_ends"),
+    [
+        # read-through F2R1: both mates start at 100, R1 is reverse. The forward mate's 3' end (248)
+        # is not the fragment end; the reverse mate's end is (BIOIN-3197).
+        (_rec(100, 250, is_read1=True, is_reverse=True), _rec(100, 248, is_read1=False, is_reverse=False), (100, 250)),
+        (_rec(100, 248, is_read1=True, is_reverse=False), _rec(100, 250, is_read1=False, is_reverse=True), (100, 250)),
+        # dovetail: the reverse mate starts first, but the fragment starts at the forward mate's 5' end
+        (_rec(105, 250, is_read1=True, is_reverse=False), _rec(100, 252, is_read1=False, is_reverse=True), (105, 252)),
+        # FF/RR have no forward/reverse mate: leftmost start, rightmost mate's end
+        (_rec(300, 400, is_read1=True, is_reverse=False), _rec(100, 200, is_read1=False, is_reverse=False), (100, 400)),
+    ],
+    ids=["read-through-f2r1", "read-through-f1r2", "dovetail", "ff"],
+)
+def test_pair_key_takes_the_fragment_ends_from_the_5_prime_ends(r1, r2, expected_ends):
+    assert mdmi._pair_key(r1, r2, use_umi=False) == ("chr1", *expected_ends)
+
+
 # --- --pair-orientation-tag -----------------------------------------------------------
 #
 # Orientation is the one thing a single record cannot tell you here: the mates carry no
