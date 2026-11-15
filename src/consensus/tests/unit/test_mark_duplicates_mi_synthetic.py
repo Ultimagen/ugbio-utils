@@ -112,9 +112,10 @@ def marked(path):
     return out
 
 
-def snapshot(path):
-    """Every record in file order: (name, flag, start, end, MI, DS, CS, po)."""
-    with pysam.AlignmentFile(str(path), "rb") as bam:
+def snapshot(path, reference=None):
+    """Every record in file order: (name, flag, start, end, MI, DS, CS, po). CRAM needs `reference`."""
+    kwargs = {"reference_filename": str(reference)} if reference else {}
+    with pysam.AlignmentFile(str(path), "rc" if str(path).endswith(".cram") else "rb", **kwargs) as bam:
         return [
             (
                 r.query_name,
@@ -1484,3 +1485,44 @@ def test_a_dovetailed_family_spanning_more_than_pad_agrees_across_shards(tmp_pat
     assert snapshot(sharded) == snapshot(whole)
     got = marked(sharded)
     assert (got["a"]["MI"], got["c"]["MI"], got["a"]["DS"]) == ("a", "a", 2)
+
+
+# --- CRAM and the remaining sharded-writer paths ------------------------------------------------------
+
+
+@needs_samtools
+@pytest.mark.parametrize("sharded", [False, True], ids=["whole", "sharded"])
+def test_cram_in_and_out_with_a_reference_matches_the_bam_run(tmp_path, dataset_bam, sharded):
+    """Production reads CRAM with --reference; CRAM output goes through the samtools cat | view pipe when sharded."""
+    ref = tmp_path / "ref.fa"
+    ref.write_text("".join(f">{c}\n{'A' * CONTIG_LEN}\n" for c in ("chr1", "chr2")))
+    pysam.faidx(str(ref))
+    inp = tmp_path / "in.cram"
+    pysam.view("-C", "-T", str(ref), "-o", str(inp), str(dataset_bam), catch_stdout=False)
+    pysam.index(str(inp))
+    mode = ("--jobs", "2", "--shard-size", "3000") if sharded else ()
+    cli(dataset_bam, "--use-umi", *mode, out=tmp_path / "out.bam")
+    cli(inp, "--use-umi", "--reference", ref, *mode, out=tmp_path / "out.cram")
+    assert snapshot(tmp_path / "out.cram", reference=ref) == snapshot(tmp_path / "out.bam")
+
+
+@needs_samtools
+def test_sharded_strips_run_ids_mate_suffixes_and_stale_mi_like_whole_file(tmp_path):
+    recs = []
+    for stem in ("606174-b", "606174-a"):
+        r1, r2 = pair(stem, "chr1", 1000, 1200, UMI_A, UMI_B)
+        r1.query_name, r2.query_name = f"{stem}/1", f"{stem}/2"
+        recs += [r1, r2]
+    recs += pair("606174-solo", "chr1", 5000, 5200, UMI_A, UMI_B, tags={"MI": "stale", "CS": "stale"})
+    inp = build_bam(tmp_path / "in.bam", recs)
+    whole, sharded = tmp_path / "whole.bam", tmp_path / "sharded.bam"
+    cli(inp, "--use-umi", "--strip-run-id", out=whole)
+    cli(inp, "--use-umi", "--strip-run-id", "--jobs", "2", "--shard-size", "3000", out=sharded)
+    assert snapshot(sharded) == snapshot(whole)
+    assert {(s[0], *s[5:8]) for s in snapshot(sharded)} == {
+        ("606174-a/1", "a", 2, "a"),
+        ("606174-a/2", "a", 2, "a"),
+        ("606174-b/1", "a", 2, "a"),
+        ("606174-b/2", "a", 2, "a"),
+        ("606174-solo", None, 1, "solo"),
+    }
