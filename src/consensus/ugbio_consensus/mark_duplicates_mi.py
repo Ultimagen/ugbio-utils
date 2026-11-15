@@ -2,8 +2,8 @@
 """
 Duplicate detection for paired-end reads.
 
-Deduplication key: (chromosome, left_read_start, right_read_end)
-Optionally include UMI tags u3 and u5 in the key.
+Deduplication key: (chromosome, forward_mate_start, reverse_mate_end) -- the fragment's two 5' ends.
+FF/RR pairs use (left_read_start, right_read_end). Optionally include UMI tags u3 and u5 in the key.
 
 MI tag is set to the lexicographically first query name within each duplicate cluster.
 Singletons (unique pairs, unmapped, or unpaired reads) get MI = their own query name.
@@ -39,12 +39,6 @@ Usage:
 """
 
 # ruff: noqa: C901, PLR0912, PLR0915, FBT001, FBT002, FBT003
-#
-# Not refactored for these rules on purpose: the default --use-umi output (MI, DS, CS) is verified
-# byte-for-byte against the validated BIOIN-3068 runs (606174-L15806-Z0229, 12.7M records). Re-run
-# /data/Runs/BIOIN-3068/cmp_stream.py and cs_links.py after any refactor. Output has changed since
-# only outside that default path: FF/RR CS with --orientation-in-key, --position-tolerance, sharded
-# --pad, and secondary/supplementary records far from their pair (see _takes_family_tags).
 
 import argparse
 import bisect
@@ -206,7 +200,8 @@ def parse_args():
         type=int,
         default=MAX_MATE_DISTANCE,
         metavar="BP",
-        help=f"How far past a shard to look for mates (default {MAX_MATE_DISTANCE}). "
+        help=f"Maximum distance between mate starts in sharded mode (default {MAX_MATE_DISTANCE}); "
+        "each shard reads 2*BP past its edges. "
         "Pairs whose two mates are further apart than this are treated as "
         "singletons and counted in the 'without a mate in their window' total.",
     )
@@ -249,9 +244,26 @@ def _read_rec(read, use_umi: bool, umis: dict[str, str] | None = None) -> tuple:
     return (read.reference_name, read.reference_start, read.reference_end, read.is_read1, read.is_reverse, u5, u3)
 
 
-def _pair_key(r1: tuple, r2: tuple, use_umi: bool, orientation_in_key: bool = False) -> tuple:
+def _fragment_ends(r1: tuple, r2: tuple) -> tuple[int, int]:
+    """
+    The fragment's (left, right) boundary, taken from the mates' 5' ends.
+
+    For an FR pair that is the forward mate's start and the reverse mate's end. Those are fixed by the
+    molecule; the other two ends are 3' ends that move with read length and adapter trimming. Picking the
+    mates by start position instead breaks on read-through inserts, where both mates start at the same
+    base, and on dovetails, where the reverse mate starts first: the key then takes a 3' end and copies
+    of one strand split over keys 1-2 bp apart (BIOIN-3197). FF/RR pairs have no forward/reverse mate,
+    so they keep the positional rule.
+    """
+    if r1[_IS_REVERSE] != r2[_IS_REVERSE]:
+        fwd, rev = (r2, r1) if r1[_IS_REVERSE] else (r1, r2)
+        return fwd[_START], rev[_END]
     left, right = (r1, r2) if r1[_START] <= r2[_START] else (r2, r1)
-    key: tuple = (left[_CHROM], left[_START], right[_END])
+    return left[_START], right[_END]
+
+
+def _pair_key(r1: tuple, r2: tuple, use_umi: bool, orientation_in_key: bool = False) -> tuple:
+    key: tuple = (r1[_CHROM], *_fragment_ends(r1, r2))
     if use_umi:
         # u5 is always on R1 and u3 on R2 by library design, regardless of strand
         key += (r1[_U5], r2[_U3])
@@ -776,14 +788,17 @@ def write_with_mi(  # noqa: PLR0913
 # Sharded execution
 # ---------------------------------------------------------------------------
 #
-# The dedup key is (chrom, left_start, right_end), so every member of a duplicate
-# cluster shares the same left_start, and both mates of a pair are always on the same
-# chromosome (a trans-chromosomal pair is a singleton by definition). A window
-# [shard_start - pad, shard_end + pad) therefore sees every member of every cluster
-# whose left_start falls anywhere in [shard_start - pad, shard_end), as long as the two
-# mates are no further apart than `pad`. Two adjacent shards that both cover a given
-# left_start see the same member set and so pick the same representative name, which is
-# why no cross-shard bookkeeping is needed.
+# The dedup key is (chrom, left, right), where for an FR pair `left` is the forward mate's
+# start (see _fragment_ends), so every member of a duplicate cluster has a read starting
+# exactly at `left`. Both mates of a pair are always on the same chromosome (a
+# trans-chromosomal pair is a singleton by definition) and, in sharded mode, start at most
+# `pad` apart. So every read of a cluster starts in [left - pad, left + pad]: the reverse
+# mate of a dovetailed pair can start before the forward one. A shard emits a cluster
+# read only from [shard_start, shard_end), so `left` lies in [shard_start - pad,
+# shard_end + pad) and a window [shard_start - 2*pad, shard_end + 2*pad) sees every member
+# of every cluster the shard tags. Two shards that tag reads of one cluster see the same
+# member set and so pick the same representative name, which is why no cross-shard
+# bookkeeping is needed.
 #
 # The one behavioural difference from whole-file mode: a pair whose mates are further
 # apart than `pad` is not paired up, so it becomes a singleton (DS=1, no MI) instead of
@@ -911,14 +926,16 @@ def process_shard(job: tuple) -> dict:
 
     with pysam.AlignmentFile(bam_path, "r", **open_kwargs) as bam:
         length = bam.get_reference_length(chrom)
-        # The window has to reach `pad` before the first read this shard emits, which with --regions can
+        # Twice the pad: a cluster's reads span up to 2*pad around its key (see "Sharded execution").
+        reach = 2 * pad
+        # The window has to reach `reach` before the first read this shard emits, which with --regions can
         # start upstream of the shard. Fetch is start-sorted, so the first read at or after prev_end is it.
         first_emitted = start
         for read in bam.fetch(chrom, start, end):
             if read.reference_start >= prev_end:
                 first_emitted = min(start, read.reference_start)
                 break
-        for read in bam.fetch(chrom, max(0, first_emitted - pad), min(end + pad, length)):
+        for read in bam.fetch(chrom, max(0, first_emitted - reach), min(end + reach, length)):
             if read.is_secondary or read.is_supplementary:
                 nonprimary_names.add(read.query_name.removesuffix("/1").removesuffix("/2"))
                 continue
