@@ -65,8 +65,8 @@ inputs:
 
 outputs:
   blocked:
-    description: "'true' if a secret was found, or policy=block and blocking vulnerabilities were found"
-    value: ${{ steps.gate.outputs.blocked }}
+    description: "'true' if a secret or the build token was found, or policy=block and blocking vulnerabilities were found"
+    value: ${{ (steps.gate.outputs.blocked == 'true' || steps.token-check.outcome == 'failure') && 'true' || 'false' }}
   blocking-count:
     description: "Number of blocking findings"
     value: ${{ steps.gate.outputs.blocking-count }}
@@ -101,8 +101,7 @@ runs:
         cat >> "${ignore_file}" <<'IGNORE'
 
         **/.git
-        **/.env
-        **/.env.*
+        **/.env*
         **/.netrc
         **/.npmrc
         **/.pypirc
