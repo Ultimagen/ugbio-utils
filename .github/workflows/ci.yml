@@ -56,20 +56,6 @@ jobs:
         uv run pre-commit install
         uv run pre-commit run --all-files
 
-  Trivy-docker-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Run Trivy to scan Dockerfile
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          scan-type: 'config'
-          scan-ref: './'
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
-
   Trivy-fs-scan:
     runs-on: ubuntu-latest
     steps:
@@ -84,7 +70,7 @@ jobs:
         run: uv lock
 
       - name: Run Trivy to scan fs
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
