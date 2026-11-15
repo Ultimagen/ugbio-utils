@@ -1,5 +1,5 @@
 name: "Trivy Image Scan"
-description: "Scan a built Docker image with Trivy, write the findings to the job summary and upload the full results. The step fails only when policy is 'block' and a blocking vulnerability is found."
+description: "Scan a built Docker image with Trivy, write the findings to the job summary and upload the full results. The step fails when a secret is found, or when policy is 'block' and a blocking vulnerability is found."
 
 inputs:
   image-ref:
@@ -26,7 +26,7 @@ inputs:
 
 outputs:
   blocked:
-    description: "'true' if policy=block and blocking findings were found"
+    description: "'true' if a secret was found, or policy=block and blocking vulnerabilities were found"
     value: ${{ steps.gate.outputs.blocked }}
   blocking-count:
     description: "Number of blocking findings"
