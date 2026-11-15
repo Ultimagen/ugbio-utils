@@ -113,6 +113,7 @@ runs:
         **/id_rsa*
         **/*.pem
         **/*.key
+        **/gha-creds-*.json
         IGNORE
         echo "Appended sensitive-file patterns to ${ignore_file}"
 
@@ -143,6 +144,8 @@ runs:
       continue-on-error: true
       # Pinned by commit SHA; the Trivy version (v0.70.0) is the default of this action version
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      env:
+        TRIVY_SECRET_CONFIG: ${{ github.action_path }}/trivy-secret.yaml
       with:
         scan-type: 'image'
         image-ref: ${{ inputs.scan-ref }}
@@ -178,27 +181,6 @@ runs:
         docker run --rm -v "${PWD}:/out" \
           "${GRYPE_IMAGE}" sbom:/out/sbom.json -q -o json --file /out/grype-results.json
 
-    - name: Prepare artifact name
-      if: always() && steps.build.outcome == 'success' && inputs.upload-artifact == 'true'
-      id: artifact-name
-      shell: bash
-      run: |
-        # Sanitize artifact name by replacing invalid characters (/, :, etc.) with hyphens
-        SANITIZED_NAME=$(echo "${{ inputs.image-name }}-${{ inputs.image-tag }}" | sed 's/[\/:]/-/g')
-        echo "name=trivy-image-findings-${SANITIZED_NAME}" >> $GITHUB_OUTPUT
-
-    - name: Upload image scan artifact
-      if: always() && steps.build.outcome == 'success' && inputs.upload-artifact == 'true'
-      continue-on-error: true
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ steps.artifact-name.outputs.name }}
-        path: |
-          trivy-results.json
-          sbom.json
-          grype-results.json
-        retention-days: ${{ inputs.artifact-retention-days }}
-
     - name: Generate Trivy summary and apply CVE gate
       id: gate
       if: always() && steps.build.outcome == 'success'
@@ -214,6 +196,7 @@ runs:
 
     # Trivy matches raw tokens but not the base64 form actions/checkout writes to .git/config
     - name: Check the image for the build token
+      id: token-check
       if: always() && steps.build.outcome == 'success'
       shell: bash
       env:
@@ -223,10 +206,9 @@ runs:
         [ -n "${TOKEN}" ] || exit 0
         encoded=$(printf 'x-access-token:%s' "${TOKEN}" | base64 -w0)
         dir=$(mktemp -d -p "${RUNNER_TEMP}")
-        docker save -o "${dir}/image.tar" "${SCAN_REF}"
-        tar -xf "${dir}/image.tar" -C "${dir}"
+        docker save "${SCAN_REF}" | tar -xf - -C "${dir}"
         found=0
-        for layer in $(find "${dir}" -type f ! -name image.tar); do
+        for layer in $(find "${dir}" -type f); do
           if zcat -f "${layer}" | grep -aF -e "${TOKEN}" -e "${encoded}" > /dev/null; then
             echo "::error::Build token found in image layer ${layer#"${dir}"/}"
             found_layers+="- \`${layer#"${dir}"/}\`"$'\n'
@@ -247,6 +229,30 @@ runs:
           fi
         } >> "${GITHUB_STEP_SUMMARY}"
         exit "${found}"
+
+    # The results embed the raw image config (ENV, build history): not uploaded when a secret was found
+    - name: Prepare artifact name
+      if: >-
+        always() && inputs.upload-artifact == 'true' && steps.trivy-image.outcome == 'success'
+        && steps.gate.outputs.secret-count == '0' && steps.token-check.outcome == 'success'
+      id: artifact-name
+      shell: bash
+      run: |
+        # Sanitize artifact name by replacing invalid characters (/, :, etc.) with hyphens
+        SANITIZED_NAME=$(echo "${{ inputs.image-name }}-${{ inputs.image-tag }}" | sed 's/[\/:]/-/g')
+        echo "name=trivy-image-findings-${SANITIZED_NAME}" >> $GITHUB_OUTPUT
+
+    - name: Upload image scan artifact
+      if: always() && steps.artifact-name.outcome == 'success'
+      continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.artifact-name.outputs.name }}
+        path: |
+          trivy-results.json
+          sbom.json
+          grype-results.json
+        retention-days: ${{ inputs.artifact-retention-days }}
 
     - name: Report binaries not covered by Trivy
       if: always() && steps.build.outcome == 'success'
