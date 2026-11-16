@@ -42,6 +42,7 @@ F95,RawWgsMetrics/FOLD_95_BASE_PENALTY,csv
 F80@30x,RawWgsMetrics/FOLD_80_BASE_PENALTY_AT_30X,csv
 F90@30x,RawWgsMetrics/FOLD_90_BASE_PENALTY_AT_30X,csv
 F95@30x,RawWgsMetrics/FOLD_95_BASE_PENALTY_AT_30X,csv
+PCT_contamination,Contamination/PCT_CONTAMINATION,csv
 total_reads,QualityYieldMetricsFlow/TOTAL_READS,json
 total_reads,AlignmentSummaryMetrics/TOTAL_READS,json
 total_bases,QualityYieldMetricsFlow/TOTAL_BASES,json
