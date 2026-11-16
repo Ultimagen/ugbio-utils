@@ -30,7 +30,7 @@ def unit_table(bins: pd.DataFrame, p: dc.Params) -> pd.DataFrame:
     return units
 
 
-def piece_features(  # noqa: PLR0913
+def piece_features(
     bins: pd.DataFrame, units: pd.DataFrame, chrom: str, start: int, end: int, svtype: str, p: dc.Params
 ) -> dict | None:
     """Depth-call features of the window [start, end), as call_depth_cnvs computes them for a segment."""

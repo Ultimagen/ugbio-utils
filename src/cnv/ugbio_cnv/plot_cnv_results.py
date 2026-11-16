@@ -39,18 +39,15 @@ def smooth_wl(df_reads_count, wl=100000, bin_size=1000) -> pd.DataFrame:
 
 def extract_copy_number(info_string: str) -> float | None:
     """
-    Copy number of a call from its INFO string: the smaller of CopyNumber and CN (e.g. ControlFREEC calls),
-    or CN_MEAN (depth CNV caller) when neither is present. None if the call has no copy number.
+    Copy number of a call from its INFO string: CopyNumber (cn.mops calls), or CN_MEAN (depth CNV caller) when there is
+    no CopyNumber. None if the call has no copy number.
     """
     values = {}
     for item in info_string.split(";"):
         key, _, value = item.partition("=")
-        if key in ("CopyNumber", "CN", "CN_MEAN") and value not in ("", "."):
+        if key in ("CopyNumber", "CN_MEAN") and value not in ("", "."):
             values[key] = float(value.split(",")[0])
-    primary = [values[k] for k in ("CopyNumber", "CN") if k in values]
-    if primary:
-        return min(primary)
-    return values.get("CN_MEAN")
+    return values.get("CopyNumber", values.get("CN_MEAN"))
 
 
 def plot_coverage(

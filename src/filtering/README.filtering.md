@@ -136,22 +136,12 @@ training_prep_pipeline \
 
 #### `training_prep_depth_cnv_pipeline`
 
-Prepares training data for the depth CNV caller's filter (`--vcf_type cnv_depth`).
-
-**Purpose**: label the calls of a sample with truth (e.g. HG002) and write train / test HDF5 files, split by chromosome.
-
-- Every call ≥ `--min_len` (500 bp) inside the benchmark BED is labelled with truvari bench against the truth:
-  matched → 1, unmatched → 0 (pctovl 0.5, pctsize 0.5, pctseq 0, refdist 100 kb, duplications matched to insertions).
-- `--known_events CALL_VCF EVENTS_BED` (repeatable) adds positives from samples with known events (e.g. cell lines):
-  calls of the event's type (BED: chrom, start, end, svtype) with ≥ 50% of their length inside an event.
-- The depth caller gives one call per event, so a long known event adds one row. `cnv_known_event_pieces` (ugbio_cnv)
-  cuts it into training pieces: windows of 10–100 kb inside the event, scored with the depth caller's statistics and
-  kept when the caller would call them (no N, ≤ 10% segdup / low-mappability bins). After the pipeline's evidence and
-  snapping steps they go in as `--known_events` too, and teach the filter that a depth-only call without junction
-  reads can be real.
+Prepares training data for the depth CNV caller's filter (`--vcf_type cnv_depth`): labels the calls of a sample with
+truth (e.g. HG002) and writes train / test HDF5 files, split by chromosome.
 
 ```bash
-# pieces of a known event (per sample; --haploid-contigs chrX for a male sample), then evidence and snapping
+# optional: training pieces (10-100 kb) of a known long event, then evidence and snapping as in the pipeline
+# (one call per event, so a long event alone adds one row); --haploid-contigs chrX for a male sample
 cnv_known_event_pieces --depth-mq0 YLC444.q0.regions.bed.gz --depth-mq20 YLC444.q20.regions.bed.gz \
   --annotation ref.depth_annotation.parquet --events-bed ylc444.events.bed --sample-name YLC444 \
   --fasta-index ref.fasta.fai --n-pieces 15 --min-len 10000 --max-len 100000 --seed 1002 \
@@ -161,6 +151,8 @@ analyze_cnv_breakpoint_reads --bam-file YLC444.cram --vcf-file YLC444.pieces.vcf
 snap_cnv_breakpoints --input-vcf YLC444.pieces.ann.vcf.gz --alignment YLC444.cram --reference-fasta ref.fasta \
   --output-vcf YLC444.pieces.snap.vcf.gz
 
+# labels the calls >= 500 bp in the benchmark BED with truvari: matched 1, unmatched 0;
+# --known_events CALL_VCF EVENTS_BED (chrom, start, end, svtype) adds positives: calls >= 50% inside an event
 training_prep_depth_cnv_pipeline \
   --call_vcf HG002.depth_cnv.vcf.gz \
   --truth_vcf GRCh38_HG2-T2TQ100-V1.1_stvar.ge500.vcf.gz \
@@ -170,23 +162,13 @@ training_prep_depth_cnv_pipeline \
   --known_events YLC444.pieces.snap.vcf.gz ylc444.events.bed \
   --output_prefix hg002_depth_cnv
 
+# the threshold is stored in the pickle; without --decision_threshold it is chosen by the best F1
 train_models_pipeline --train_dfs hg002_depth_cnv.train.h5 --test_dfs hg002_depth_cnv.test.h5 \
   --output_file_prefix cnv_filtering_model --vcf_type cnv_depth --gt_type approximate --decision_threshold 28
 ```
 
-For `cnv_depth`, `train_models_pipeline` also stores `decision_threshold` in the pickle: the out-of-bag probability with
-the best F1 on the training rows as a FilterVCF score (30 + 10 log10(p / (1 − p))), to pass as
-`filter_variants_pipeline --decision_threshold`. `train_models_pipeline --decision_threshold <int>` stores the given
-threshold instead.
-
-`cnv_filtering_model_v2.0.0.pkl` was trained with these commands (threshold 28), on the paired-end pipeline's
-calls: depth, split-read and discordant-pair candidates after snapping and `filter_nested_cnv_candidates`, for HG002
-613168 (training chromosomes) and the YLC444 (chr21 DUP) / GSM704 (chrX DEL) events, with their pieces (15 YLC444 DUP
-pieces, seed 1002; 13 GSM704 DEL pieces, seed 1012; 10–100 kb). The same model filters single-end calls (no pair
-candidates, `source_pair` is 0).
-
-The same model filters the optional cn.mops candidates (`cnmops_cnv_candidates`, `CNV_SOURCE=cn.mops`): they have
-no source feature of their own and are scored on their depth and read evidence like depth calls.
+`cnv_filtering_model_v2.0.0.pkl` was trained this way on HG002 613168 and the YLC444 (chr21 DUP) and GSM704
+(chrX DEL) events with their pieces. The same model filters single-end calls and cn.mops candidates.
 
 ## Typical Workflows
 

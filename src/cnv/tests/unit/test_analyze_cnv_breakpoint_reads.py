@@ -19,6 +19,7 @@ from ugbio_cnv.analyze_cnv_breakpoint_reads import (
     analyze_interval_breakpoints,
     check_pair_cnv_consistency,
     check_read_cnv_consistency,
+    create_bam_header,
     get_parser,
     get_supplementary_alignments,
 )
@@ -660,6 +661,7 @@ def test_analyze_cnv_breakpoints_with_bam_output(temp_bam_file, temp_vcf_file, d
             # Collect reads and their read groups
             reads = list(bam_out)
             assert len(reads) == 4  # Four reads: 2 primary + 2 supplementary
+            assert {read.get_tag("RG") for read in reads} <= rg_ids  # every RG written is declared
 
             # Group reads by query_name
             reads_by_name = {}
@@ -1446,3 +1448,14 @@ def test_breakpoint_windows_are_read_from_one_handle(temp_bam_file):
     assert calls == [(900, 1100, False), (1900, 2100, False)]
     assert evidence.supporting_reads
     assert evidence.supplementary_reads  # taken from the same two windows
+
+
+def test_create_bam_header_declares_the_evidence_read_groups():
+    """DUP / DEL (split reads) and PAIR (discordant pairs) are added once; the input's read groups are kept."""
+    reads_header = pysam.AlignmentHeader.from_dict(
+        {"SQ": [{"SN": "chr1", "LN": 1000}], "RG": [{"ID": "orig", "SM": "S1"}, {"ID": "DEL", "SM": "S1"}]}
+    )
+    rg_ids = [rg["ID"] for rg in create_bam_header(reads_header).to_dict()["RG"]]
+    assert sorted(rg_ids) == sorted(["orig", "DEL", "DUP", PAIR_READ_GROUP])
+    no_rg = create_bam_header(pysam.AlignmentHeader.from_dict({"SQ": [{"SN": "chr1", "LN": 1000}]}))
+    assert sorted(rg["ID"] for rg in no_rg.to_dict()["RG"]) == sorted(["DEL", "DUP", PAIR_READ_GROUP])

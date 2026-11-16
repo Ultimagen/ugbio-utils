@@ -8,10 +8,11 @@ chromosome and strand are split into their two aligned pieces, ordered along the
 When the two pieces overlap on the read by h bases (microhomology at the junction: the aligner puts the shared bases
 in both pieces), the junction is left-normalized as in VCF: L - h for a deletion, E - h for a duplication.
 Junctions are grouped by similar position (+-100 bp) and size (+-10%); the largest group with >= 2 reads replaces the
-call's breakpoints (SNAP=SR). Calls > 3 kb only accept junctions at least half their size, so a small indel near a
-large event cannot shrink it. Without a junction, DEL calls are shrunk to the interval allowed by FR discordant pairs
-spanning both edges (SNAP=PE). Otherwise the call is unchanged (SNAP=none). The depth breakpoints are kept in
-DEPTH_POS / DEPTH_END.
+call's breakpoints (BREAKPOINT_SOURCE=split_read). Calls > 3 kb only accept junctions at least half their size, so
+a small indel near a large event cannot shrink it. Without a junction, DEL calls are shrunk to the interval allowed
+by FR discordant pairs spanning both edges (BREAKPOINT_SOURCE=pair). Otherwise the call is unchanged
+(BREAKPOINT_SOURCE=depth). The depth breakpoints are kept in DEPTH_START / DEPTH_END; BREAKPOINT_SUPPORT is the
+number of reads or pairs used.
 """
 
 import argparse
@@ -24,7 +25,7 @@ from multiprocessing import Pool
 
 import numpy as np
 import pysam
-from ugbio_cnv.cnv_vcf_consts import DEPTH_CNV_INFO_TAGS
+from ugbio_cnv.cnv_vcf_consts import CNV_SOURCE_DEPTH, CNV_SOURCE_PAIR, CNV_SOURCE_SPLIT_READ, DEPTH_CNV_INFO_TAGS
 from ugbio_core.logger import logger
 
 CIGAR_PATTERN = re.compile(r"(\d+)([MIDNSHP=X])")
@@ -191,14 +192,14 @@ def _snap_contig(args: tuple) -> dict:
             svtype, s, e = rec.info["SVTYPE"], rec.start, rec.stop
             hit = best_junction_cluster(edge_junctions(aln, chrom, s, e, svtype, p), e - s, p)
             if hit:
-                res[rec.id] = ("SR", hit[0], hit[1], hit[2])
+                res[rec.id] = (CNV_SOURCE_SPLIT_READ, hit[0], hit[1], hit[2])
                 continue
             if svtype == "DEL":
                 pb = pair_bounds(aln, chrom, s, e, p)
                 if pb and pb[1] > pb[0]:
                     ns, ne = max(s, pb[0]), min(e, pb[1])
                     if ne - ns >= p.min_pe_len and (ns, ne) != (s, e):
-                        res[rec.id] = ("PE", ns, ne, pb[2])
+                        res[rec.id] = (CNV_SOURCE_PAIR, ns, ne, pb[2])
     return res
 
 
@@ -226,7 +227,7 @@ def snap_cnv_breakpoints(
     Returns
     -------
     Counter
-        Number of calls per snap source (SR, PE).
+        Number of calls per breakpoint source (split_read, pair).
     """
     p = params or SnapParams()
     if not any(os.path.exists(input_vcf + ext) for ext in (".tbi", ".csi")):
@@ -239,20 +240,20 @@ def snap_cnv_breakpoints(
             snaps.update(r)
     with pysam.VariantFile(input_vcf) as vin:
         header = vin.header.copy()
-        for tag in ("SNAP", "SNAP_N", "DEPTH_POS", "DEPTH_END", "CIEND"):
+        for tag in ("BREAKPOINT_SOURCE", "BREAKPOINT_SUPPORT", "DEPTH_START", "DEPTH_END", "CIEND"):
             if tag not in header.info:
                 header.info.add(*DEPTH_CNV_INFO_TAGS[tag][:-1])
         records = []
         for rec in vin:
-            source, ns, ne, n_support = snaps.get(rec.id, ("none", rec.start, rec.stop, 0))
+            source, ns, ne, n_support = snaps.get(rec.id, (CNV_SOURCE_DEPTH, rec.start, rec.stop, 0))
             new = rec.copy()
             new.translate(header)
-            new.info["DEPTH_POS"], new.info["DEPTH_END"] = rec.pos, rec.stop
-            new.info["SNAP"], new.info["SNAP_N"] = source, n_support
-            if source != "none":
+            new.info["DEPTH_START"], new.info["DEPTH_END"] = rec.pos, rec.stop
+            new.info["BREAKPOINT_SOURCE"], new.info["BREAKPOINT_SUPPORT"] = source, n_support
+            if source != CNV_SOURCE_DEPTH:
                 new.start, new.stop = ns, ne
                 new.info["SVLEN"] = ne - ns
-                ci = (-10, 10) if source == "SR" else (-200, 200)
+                ci = (-10, 10) if source == CNV_SOURCE_SPLIT_READ else (-200, 200)
                 new.info["CIPOS"], new.info["CIEND"] = ci, ci
             records.append(new)
     order = {c: i for i, c in enumerate(header.contigs)}

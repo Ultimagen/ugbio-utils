@@ -584,7 +584,7 @@ print_and_execute("bcftools view file.vcf")
 | `src/cnv/ugbio_cnv/depth_cnv_caller.py` | Cohort-free depth CNV caller |
 | `src/cnv/ugbio_cnv/process_cnvs.py` | CNV processing and VCF generation |
 | `src/cnv/ugbio_cnv/cnv_bed_format_utils.py` | CNV VCF writing utilities |
-| `src/cnv/ugbio_cnv/combine_cnv_vcf_utils.py` | CNV VCF merging and aggregation |
+| `src/cnv/ugbio_cnv/combine_cnv_vcf_utils.py` | Combine CNV and SV VCFs (headers, source tags) for `merge_cnv_sv` |
 | `src/cnv/ugbio_cnv/cnv_vcf_consts.py` | CNV VCF field definitions |
 | `src/featuremap/ugbio_featuremap/featuremap_to_dataframe.py` | FeatureMap VCF→Parquet (per-read / aggregate) |
 | `src/featuremap/ugbio_featuremap/filter_dataframe.py` | `filter_featuremap` Parquet filters |

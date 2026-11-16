@@ -20,7 +20,7 @@ pair_cnv_candidates:
      dedup_clusters): one deletion often gives several clusters of pairs.
   3. The same depth check as the split-read candidates (split_read_candidates.score_with_depth), and candidates with a
      same-type call of the input VCF overlapping >= 50% reciprocally are dropped (already called). The rest are added
-     with CNV_SOURCE=pair, PAIR_READS and CIPOS / CIEND = +-ci (as snapping gives pair-shrunk calls).
+     with CNV_SOURCE=pair, CLUSTER_SUPPORT (pairs) and CIPOS / CIEND = +-ci (as snapping gives pair-shrunk calls).
 
 Paired-end data only. Run after split_read_cnv_candidates; the nested / short filter (filter_nested_cnv_candidates)
 after snapping treats pair candidates like split-read candidates, and drops the candidates that snapping has made
@@ -119,7 +119,7 @@ def cluster_pairs(pairs: pd.DataFrame, p: PairParams, cp: CandidateParams) -> pd
     return pd.DataFrame(rows, columns=["chrom", "start", "end", "svtype", "n_reads"])
 
 
-def pair_cnv_candidates(  # noqa: PLR0913
+def pair_cnv_candidates(
     alignment: str,
     reference: str,
     input_vcf: str,
@@ -156,7 +156,6 @@ def pair_cnv_candidates(  # noqa: PLR0913
         cp,
         source=CNV_SOURCE_PAIR,
         id_prefix="PAIR",
-        count_tag="PAIR_READS",
         ci=(-p.ci, p.ci),
     )
     logger.info(

@@ -424,10 +424,9 @@ def segment(units: pd.DataFrame, p: Params) -> pd.DataFrame:
                 }
             )
             s = e
-    columns = ["chrom", "stretch", "start", "end", "n_units", "cn_mean", "baseline", "z", "difficult_frac", "lowmap"]
-    segs = pd.DataFrame(
-        rows, columns=[*columns, "segdup", "uniq_frac"]
-    )  # the columns also when no chromosome is segmented
+    # the columns also when no chromosome is segmented
+    columns = ["chrom", "stretch", "start", "end", "n_units", "cn_mean", "baseline", "z"]
+    segs = pd.DataFrame(rows, columns=[*columns, "difficult_frac", "lowmap", "segdup", "uniq_frac"])
     dcn = segs["cn_mean"] - segs["baseline"]
     called = (dcn.abs() >= p.min_abs_dcn) & (segs["z"].abs() >= p.min_z)
     segs["direction"] = np.where(called, np.where(dcn < 0, "DEL", "DUP"), "")
@@ -594,9 +593,17 @@ def depth_cnv_header(sample_name: str, fasta_index: str, sex: SexChromosomes | N
     return header
 
 
-def genotype_for(svtype: str) -> tuple:
-    """Genotype from the call type: DEL 0/1, DUP ./1 (copy number gains are not genotyped)."""
-    return (0, 1) if svtype == "DEL" else (None, 1)
+HOM_DEL_MAX_CN = 0.5  # a deletion with a lower copy number has lost every copy
+
+
+def genotype_for(svtype: str, cn_mean: float | None = None) -> tuple:
+    """
+    Genotype of a call, as in the cn.mops / CNVpytor output: DEL 1/1 when no copy is left (cn_mean <
+    HOM_DEL_MAX_CN, on any contig, a male chrX included), else 0/1; DUP ./1 (copy number gains are not genotyped).
+    """
+    if svtype != "DEL":
+        return (None, 1)
+    return (1, 1) if cn_mean is not None and cn_mean < HOM_DEL_MAX_CN else (0, 1)
 
 
 def write_depth_calls(
@@ -625,10 +632,10 @@ def write_depth_calls(
             rec.info["BASE_CN"] = int(c.baseline)
             rec.info["Z"] = round(float(c.z), 2)
             rec.info["N_MERGED"] = int(c.n_merged)
-            rec.info["SEGDUP"] = round(float(c.segdup), 3)
+            rec.info["SEGDUP_FRAC"] = round(float(c.segdup), 3)
             if not np.isnan(c.uniq_frac):
                 rec.info["UNIQ_FRAC"] = round(float(c.uniq_frac), 3)
-            rec.samples[sample_name]["GT"] = genotype_for(c.direction)
+            rec.samples[sample_name]["GT"] = genotype_for(c.direction, float(c.cn_mean))
             out.write(rec)
     pysam.tabix_index(output_vcf, preset="vcf", force=True)
 

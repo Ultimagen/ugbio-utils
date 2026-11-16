@@ -272,7 +272,7 @@ class TestOutput:
                 "BASE_CN",
                 "Z",
                 "N_MERGED",
-                "SEGDUP",
+                "SEGDUP_FRAC",
                 "UNIQ_FRAC",
                 "LOW_CONF",
                 "CIPOS",
@@ -312,6 +312,15 @@ class TestPseudoautosomal:
         x = noisy_cn(3000, rng, level=1.0)
         x[: self.PAR[1] // dc.BIN_SIZE] = noisy_cn(self.PAR[1] // dc.BIN_SIZE, rng, level=2.0)
         return {"chr1": noisy_cn(5000, rng), "chrX": x}
+
+    def test_genotype_from_copy_number(self):
+        """No copy left (on an autosome or a male chrX alike) is 1/1; a partial loss 0/1; gains are not genotyped."""
+        assert dc.genotype_for("DEL", 1.02) == (0, 1)
+        assert dc.genotype_for("DEL", 0.07) == (1, 1)  # e.g. a male chrX deletion: the one copy is gone
+        assert dc.genotype_for("DEL", 0.49) == (1, 1)
+        assert dc.genotype_for("DEL", 0.5) == (0, 1)
+        assert dc.genotype_for("DEL") == (0, 1)
+        assert dc.genotype_for("DUP", 3.1) == (None, 1)
 
     def test_par_bed_parsing(self, tmp_path):
         bed = tmp_path / "par.bed"

@@ -89,7 +89,7 @@ class TestMergeWithDepthCalls:
         out = str(tmp_path / "cand.vcf.gz")
         assert src.add_candidates_to_calls(dvcf, cand, out, src.CandidateParams()) == 2
         with pysam.VariantFile(out) as v:
-            recs = [(r.start, r.stop, r.info["SVTYPE"], r.info["CNV_SOURCE"], r.info.get("SR_READS")) for r in v]
+            recs = [(r.start, r.stop, r.info["SVTYPE"], r.info["CNV_SOURCE"], r.info.get("CLUSTER_SUPPORT")) for r in v]
             gts = [r.samples["S1"]["GT"] for r in pysam.VariantFile(out)]
         assert recs == [
             (10000, 20000, "DEL", ("depth",), None),
@@ -131,7 +131,7 @@ class TestNestedFilter:
         cvcf, out = str(tmp_path / "cand.vcf.gz"), str(tmp_path / "filtered.vcf.gz")
         pairs = candidates([("chr1", 300_500, 320_500, "DEL", 3)])  # same event as the cn.mops DEL
         src.add_candidates_to_calls(
-            cm, pairs, cvcf, p, source=src.CNV_SOURCE_PAIR, id_prefix="PAIR", count_tag="PAIR_READS"
+            cm, pairs, cvcf, p, source=src.CNV_SOURCE_PAIR, id_prefix="PAIR", count_tag="CLUSTER_SUPPORT"
         )
         assert src.filter_nested_cnv_candidates(cvcf, out) == {"nested": 0, "short": 0, "duplicate": 1}
         with pysam.VariantFile(out) as v:
@@ -156,7 +156,7 @@ class TestNestedFilter:
         cvcf, out = str(tmp_path / "cand.vcf.gz"), str(tmp_path / "filtered.vcf.gz")
         p = src.CandidateParams(min_overlap=1.1)  # add all of them (the "already called" check is not tested here)
         src.add_candidates_to_calls(
-            sr, pairs, cvcf, p, source=src.CNV_SOURCE_PAIR, id_prefix="PAIR", count_tag="PAIR_READS"
+            sr, pairs, cvcf, p, source=src.CNV_SOURCE_PAIR, id_prefix="PAIR", count_tag="CLUSTER_SUPPORT"
         )
         dropped = src.filter_nested_cnv_candidates(cvcf, out)
         assert dropped == {"nested": 0, "short": 0, "duplicate": 2}

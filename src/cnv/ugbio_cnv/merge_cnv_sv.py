@@ -54,7 +54,7 @@ def _aggregate_removed_variants(removed_vcf: str) -> dict[float, dict]:
     - Removed variants get a MatchId field pointing to the CollapseId
 
     This function groups removed variants by MatchId and aggregates:
-    - CNV_SOURCE: All source tools (depth, split_read, gridss, etc.)
+    - CNV_SOURCE: All source tools (depth, split_read, pair, cn.mops, gridss)
     - IDs: All variant IDs that were removed
 
     Parameters
@@ -221,7 +221,7 @@ def merge_cnv_sv_vcfs(
     sv_vcf: str,
     output_vcf: str,
     fasta_index: str,
-    min_sv_length: int = 1000,
+    min_sv_length: int = 500,
     max_sv_length: int | None = 5000000,
     min_sv_qual: float = 0,
     distance: int = 0,
@@ -256,7 +256,7 @@ def merge_cnv_sv_vcfs(
         Path to reference genome FASTA index (.fai). VCF headers will be updated
         to match contigs from this index to ensure consistency.
     min_sv_length : int, optional
-        Minimum absolute SVLEN for SV calls to include (default: 1000)
+        Minimum absolute SVLEN for SV DEL / DUP calls to merge with the CNV calls (default: 500)
     max_sv_length : int | None, optional
         Maximum absolute SVLEN for SV calls. SVs larger than this are only kept if
         they overlap CNVs by at least pctsize (default: 5000000)
@@ -395,7 +395,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--output_vcf", help="Output merged VCF file", required=True, type=str)
     parser.add_argument("--fasta_index", help="Reference genome FASTA index (.fai) file", required=True, type=str)
     parser.add_argument(
-        "--min_sv_length", help="Minimum absolute SVLEN for SV calls to include (default: 1000)", type=int, default=1000
+        "--min_sv_length",
+        help="Minimum absolute SVLEN for SV DEL / DUP calls to merge with the CNV calls (default: 500, the minimum CNV "
+        "call length); shorter SV calls are kept unmerged",
+        type=int,
+        default=500,
     )
     parser.add_argument(
         "--max_sv_length",

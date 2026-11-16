@@ -120,7 +120,10 @@ class _FragmentEvidence:
 
 
 def create_bam_header(reads_header: pysam.AlignmentHeader) -> pysam.AlignmentHeader:
-    """Create a BAM header with the evidence read groups (REF1, REF2, DUP, DEL) added.
+    """Copy of the input alignment header with the evidence BAM's read groups added.
+
+    Split-read evidence is written under DUP / DEL, discordant-pair evidence under PAIR_READ_GROUP; every RG value
+    used in the reads must be declared in the header.
 
     Parameters
     ----------
@@ -130,25 +133,14 @@ def create_bam_header(reads_header: pysam.AlignmentHeader) -> pysam.AlignmentHea
     Returns
     -------
     pysam.AlignmentHeader
-        BAM header with REF1, REF2, DUP, and DEL read groups added
+        Header with the DUP, DEL and PAIR_READ_GROUP read groups
     """
     header_dict = reads_header.to_dict()
-    # Add read groups if not present
-    if "RG" not in header_dict:
-        header_dict["RG"] = []
-
-    # Ensure all required read groups are present
-    existing_rg_ids = {rg["ID"] for rg in header_dict.get("RG", [])}
-    for rgid in ["REF1", "REF2", "DUP", "DEL"]:
-        if rgid not in existing_rg_ids:
-            header_dict["RG"].append(
-                {
-                    "ID": rgid,
-                    "SM": "SAMPLE",
-                    "PL": "ULTIMA",
-                }
-            )
-
+    read_groups = header_dict.setdefault("RG", [])
+    existing = {rg["ID"] for rg in read_groups}
+    for rgid in ("DUP", "DEL", PAIR_READ_GROUP):
+        if rgid not in existing:
+            read_groups.append({"ID": rgid, "SM": "SAMPLE", "PL": "ULTIMA"})
     return pysam.AlignmentHeader.from_dict(header_dict)
 
 
@@ -966,15 +958,6 @@ def _process_variants(
     return variant_count
 
 
-def _add_pair_read_group(header: pysam.AlignmentHeader) -> pysam.AlignmentHeader:
-    """Return a copy of an evidence BAM header with the PAIR_READ_GROUP read group added."""
-    header_dict = header.to_dict()
-    read_groups = header_dict.setdefault("RG", [])
-    if PAIR_READ_GROUP not in {rg["ID"] for rg in read_groups}:
-        read_groups.append({"ID": PAIR_READ_GROUP, "SM": "SAMPLE", "PL": "ULTIMA"})
-    return pysam.AlignmentHeader.from_dict(header_dict)
-
-
 def analyze_cnv_breakpoints(
     bam_file: str,
     vcf_file: str,
@@ -1053,7 +1036,6 @@ def analyze_cnv_breakpoints(
         bam_out = None
         if output_bam:
             bam_header = create_bam_header(alignment_file.header)
-            bam_header = _add_pair_read_group(bam_header)
             bam_out = pysam.AlignmentFile(output_bam, "wb", header=bam_header)
 
         # Process all variants
@@ -1142,7 +1124,7 @@ def _merge_chunk_outputs(prefixes: list[str], output_file: str | None, output_ba
                         bam_out.write(read)
 
 
-def _analyze_cnv_breakpoints_in_chunks(  # noqa: PLR0913
+def _analyze_cnv_breakpoints_in_chunks(
     bam_file: str,
     vcf_file: str,
     reference_fasta: str,

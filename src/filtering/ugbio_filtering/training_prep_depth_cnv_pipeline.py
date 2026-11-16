@@ -147,7 +147,7 @@ def known_event_positives(call_vcf: str, events_bed: str, min_inside: float = 0.
     return calls[keep].assign(label=1)
 
 
-def training_prep_depth_cnv(  # noqa: PLR0913
+def training_prep_depth_cnv(
     call_vcf: str,
     truth_vcf: str,
     benchmark_bed: str,

@@ -130,7 +130,7 @@ class TestPairBounds:
         with pysam.VariantFile(out) as v:
             recs = {r.info["SVTYPE"]: r for r in v}
         d = recs["DEL"]
-        assert d.info["SNAP"] == "PE" and d.info["SNAP_N"] == 3  # noqa: PLR2004
-        assert (d.info["DEPTH_POS"], d.info["DEPTH_END"]) == (501, 2500)  # the depth edges are kept
+        assert d.info["BREAKPOINT_SOURCE"] == "pair" and d.info["BREAKPOINT_SUPPORT"] == 3  # noqa: PLR2004
+        assert (d.info["DEPTH_START"], d.info["DEPTH_END"]) == (501, 2500)  # the depth edges are kept
         assert 950 <= d.start <= 1000 and 2000 <= d.stop <= 2100
-        assert recs["DUP"].info["SNAP"] == "none" and (recs["DUP"].start, recs["DUP"].stop) == (500, 2500)
+        assert recs["DUP"].info["BREAKPOINT_SOURCE"] == "depth" and (recs["DUP"].start, recs["DUP"].stop) == (500, 2500)

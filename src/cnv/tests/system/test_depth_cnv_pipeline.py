@@ -128,11 +128,11 @@ def test_depth_cnv_pipeline_finds_and_snaps_the_deletion(inputs, tmp_path):
     assert len(dels) == 1
     d = dels[0]
     assert (d.pos, d.stop) == TRUE_DEL  # snapped to the split-read junction
-    assert d.info["SNAP"] == "SR"
+    assert d.info["BREAKPOINT_SOURCE"] == "split_read"
     assert d.info["CNV_SOURCE"] == ("depth",)
     assert d.info["CNV_DEL_READS"] > 0
     assert d.info["CNV_DEL_PAIRS"] > 0
-    assert abs(d.info["DEPTH_POS"] - TRUE_DEL[0]) <= 1000
+    assert abs(d.info["DEPTH_START"] - TRUE_DEL[0]) <= 1000
     assert d.samples[SAMPLE]["GT"] == (0, 1)
     assert "PASS" in d.filter.keys()
 
@@ -154,7 +154,7 @@ def test_output_merges_with_sv_calls(inputs, tmp_path):
     pysam.tabix_index(sv_region, preset="vcf", force=True)
     merged = str(tmp_path / "merged.vcf.gz")
     merge_cnv_sv_vcfs(
-        scored, sv_region, merged, inputs["fai"], min_sv_length=1000, max_sv_length=5_000_000, min_sv_qual=600
+        scored, sv_region, merged, inputs["fai"], min_sv_length=500, max_sv_length=5_000_000, min_sv_qual=600
     )
     with pysam.VariantFile(merged) as v:
         dels = [
@@ -196,7 +196,7 @@ def test_pair_candidates_find_the_deletion_from_pairs(inputs, tmp_path):
         found = [r for r in v if r.id.startswith("PAIR_") and r.info["SVTYPE"] == "DEL"]
     hit = [r for r in found if abs(r.start - TRUE_DEL[0]) <= 600 and abs(r.stop - TRUE_DEL[1]) <= 600]
     assert len(hit) == 1
-    assert hit[0].info["CNV_SOURCE"] == ("pair",) and hit[0].info["PAIR_READS"] >= 3
+    assert hit[0].info["CNV_SOURCE"] == ("pair",) and hit[0].info["CLUSTER_SUPPORT"] >= 3
     # with the depth call present, the deletion is not added a second time
     pair_candidates.pair_cnv_candidates(*args, f"{t}/depth.vcf.gz", *tracks, f"{t}/pair2.vcf.gz", ["chr19"], 1)
     with pysam.VariantFile(f"{t}/pair2.vcf.gz") as v:

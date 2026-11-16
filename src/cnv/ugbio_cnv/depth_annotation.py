@@ -85,7 +85,7 @@ def parse_region(region: str) -> tuple[str, int, int | None]:
     return contig, int(start) - 1, int(end)
 
 
-def build_depth_annotation(  # noqa: PLR0913
+def build_depth_annotation(
     reference_fasta: str,
     lowmap_bed: str,
     segdup_bed: str,

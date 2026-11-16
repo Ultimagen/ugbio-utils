@@ -257,8 +257,8 @@ Y\t2000\t3000\t28
 @pytest.mark.parametrize(
     ("info", "expected"),
     [
-        ("SVTYPE=DEL;CopyNumber=1.2;CN=1", 1.0),  # cn.mops / CNVpytor: the smaller of the two
-        ("SVTYPE=DUP;CopyNumber=3.5", 3.5),
+        ("SVTYPE=DUP;CopyNumber=3.5", 3.5),  # cn.mops
+        ("SVTYPE=DEL;CopyNumber=1;CN_MEAN=0.9", 1.0),  # CopyNumber first
         ("SVTYPE=DEL;CN_MEAN=1.04;BASE_CN=2;FILTER=PASS", 1.04),  # depth CNV caller
         ("SVTYPE=DEL;CopyNumber=.;CN_MEAN=0.9", 0.9),
         ("SVTYPE=DEL;FILTER=PASS", None),

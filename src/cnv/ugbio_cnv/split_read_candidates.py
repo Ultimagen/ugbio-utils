@@ -22,8 +22,8 @@ filter_nested_cnv_candidates (after breakpoint snapping):
   Drop split-read, pair and cn.mops candidates that are shorter than 500 bp, >= 50% inside a same-type depth call (a
   second call on an event that is already called), or with >= 50% reciprocal overlap with a same-type candidate kept
   before them (snapping often moves several candidates of one deletion to the same breakpoints). Split-read
-  candidates are kept first, each by the most reads in their cluster (SR_READS), then pair candidates (PAIR_READS),
-  then cn.mops candidates.
+  candidates are kept first, then pair candidates, each by the most reads in their cluster (CLUSTER_SUPPORT), then
+  cn.mops candidates.
 """
 
 import argparse
@@ -77,7 +77,7 @@ def samtools_lines(alignment: str, reference: str, region: str, args: list[str],
     """SAM lines of `samtools view <args> <alignment> <region>`, decoding only `fields` (CRAM)."""
     cmd = ["samtools", "view", "-@", "1", "-T", reference, "--input-fmt-option", f"required_fields={fields}"]
     cmd += [*args, alignment, region]
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, bufsize=1 << 20) as proc:  # noqa: S603
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, bufsize=1 << 20) as proc:
         yield from proc.stdout
     if proc.returncode:
         raise RuntimeError(f"samtools view failed ({proc.returncode}): {' '.join(cmd)}")
@@ -195,7 +195,7 @@ def _depth_per_copy(
     return depth / base, base
 
 
-def score_with_depth(  # noqa: PLR0913
+def score_with_depth(
     cand: pd.DataFrame,
     depth_mq0: str,
     depth_mq20: str,
@@ -250,7 +250,7 @@ def score_with_depth(  # noqa: PLR0913
     return pd.DataFrame(out)
 
 
-def add_candidates_to_calls(  # noqa: PLR0913
+def add_candidates_to_calls(
     depth_vcf: str,
     cand: pd.DataFrame,
     output_vcf: str,
@@ -258,7 +258,7 @@ def add_candidates_to_calls(  # noqa: PLR0913
     *,
     source: str = CNV_SOURCE_SPLIT_READ,
     id_prefix: str = "SR",
-    count_tag: str | None = "SR_READS",
+    count_tag: str | None = "CLUSTER_SUPPORT",
     ci: tuple[int, int] = (-10, 10),
 ) -> int:
     """
@@ -291,12 +291,12 @@ def add_candidates_to_calls(  # noqa: PLR0913
         rec.info["CNV_SOURCE"] = (source,)
         rec.info["CN_MEAN"], rec.info["BASE_CN"] = round(float(r.cn_mean), 3), round(float(r.baseline))
         rec.info["Z"], rec.info["N_MERGED"] = round(float(r.z), 2), 1
-        rec.info["SEGDUP"] = round(float(r.segdup), 3)
+        rec.info["SEGDUP_FRAC"] = round(float(r.segdup), 3)
         if not np.isnan(r.uniq_frac):
             rec.info["UNIQ_FRAC"] = round(float(r.uniq_frac), 3)
         if count_tag:
             rec.info[count_tag] = int(r.n_reads)
-        rec.samples[sample]["GT"] = genotype_for(r.svtype)
+        rec.samples[sample]["GT"] = genotype_for(r.svtype, float(r.cn_mean))
         new.append(rec)
     order = {c: k for k, c in enumerate(header.contigs)}
     with pysam.VariantFile(output_vcf, "wz", header=header) as vout:
@@ -307,7 +307,7 @@ def add_candidates_to_calls(  # noqa: PLR0913
     return len(new)
 
 
-def split_read_cnv_candidates(  # noqa: PLR0913
+def split_read_cnv_candidates(
     alignment: str,
     reference: str,
     depth_vcf: str,
@@ -354,12 +354,12 @@ def _candidate_rank(r: pysam.VariantRecord) -> tuple:
     """Order in which candidates are kept: split-read, pair, then cn.mops; then the most reads, then position."""
     source = r.info.get("CNV_SOURCE", ())
     rank = next((k for k, s in enumerate(CANDIDATE_KEEP_ORDER) if s in source), 0)
-    tag = {0: "SR_READS", 1: "PAIR_READS"}.get(rank)  # cn.mops candidates have no read count
-    reads = (r.info.get(tag) if tag and tag in r.header.info else None) or 0  # the tag is not always defined
+    # cn.mops candidates have no read count; the tag is not defined when no candidate has one
+    reads = (r.info.get("CLUSTER_SUPPORT") if "CLUSTER_SUPPORT" in r.header.info else None) or 0
     return (rank, -reads, r.start, r.stop)
 
 
-def cnmops_cnv_candidates(  # noqa: PLR0913
+def cnmops_cnv_candidates(
     input_vcf: str,
     cnmops_vcf: str,
     depth_mq0: str,

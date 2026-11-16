@@ -6,7 +6,8 @@ This module provides Python scripts and utilities for Copy Number Variation (CNV
 
 The CNV module integrates multiple CNV calling algorithms and provides tools for processing, filtering, combining, annotating, and visualizing CNV calls. It supports both germline and somatic CNV detection workflows.
 
-Apart from the depth CNV caller, the package does not call variants itself: it provides facilities for preparing data, calling, changing the format and combining callsets.
+Apart from the depth CNV caller, the package does not call variants itself: it provides facilities for preparing
+data, calling, changing the format and combining callsets.
 
 The package is designed to work with the following CNV callers:
 
@@ -50,7 +51,11 @@ process_cnvs \
 - `--intersection_cutoff` - Overlap threshold with the cnv lcr(default: 0.5)
 
 #### `add_cipos_to_vcf`
-Add CIPOS (± half the window size) to the calls of a cn.mops VCF: `add_cipos_to_vcf --input_vcf calls.vcf.gz --window_size 1000 --output_vcf calls.cipos.vcf.gz`.
+Add CIPOS (± half the window size) to the calls of a cn.mops VCF.
+
+```bash
+add_cipos_to_vcf --input_vcf calls.vcf.gz --window_size 1000 --output_vcf calls.cipos.vcf.gz
+```
 
 ### Breakpoint evidence and SV merge
 
@@ -88,9 +93,10 @@ analyze_cnv_breakpoint_reads \
 - With `--output-bam`, pair mates get read group `PAIR`, apart from the split reads (`DUP` / `DEL`).
 
 #### `merge_cnv_sv`
-Merge CNV calls with SV calls (e.g. GRIDSS) of the same sample: SV deletions and duplications in the size range are
-added, and where a CNV and an SV call overlap (truvari collapse) the higher-QUAL call is kept with the sources and IDs of
-both.
+Merge CNV calls with SV calls (e.g. GRIDSS) of the same sample.
+
+- SV deletions and duplications in the size range are added.
+- Where a CNV and an SV call overlap (truvari collapse), the higher-QUAL call is kept, with the sources and IDs of both.
 
 ```bash
 merge_cnv_sv \
@@ -98,88 +104,62 @@ merge_cnv_sv \
   --sv_vcf sv_calls.vcf.gz \
   --output_vcf merged.vcf.gz \
   --fasta_index Homo_sapiens_assembly38.fasta.fai \
-  --min_sv_length 1000
+  --min_sv_length 500
 ```
 
 ### Depth CNV caller (cohort-free germline calling)
 
-Calls germline CNVs (≥500 bp) of one sample from its own read depth, with no cohort, and gives one call per event.
-Depth in 100 bp windows (mosdepth, all reads and MAPQ≥20) is GC-corrected on the sample, segmented with a weighted
-change-point search (segdup / low-mappability windows weighted by their own noise), and same-direction calls are
-merged across noise and short masked gaps. Segments and merges stop at assembly gaps (runs of N of at least 100 kb,
-e.g. centromeres) and at the edges of the pseudoautosomal regions. Split-read junction clusters add short events the depth misses. Breakpoints are
-then annotated with the existing evidence tool and snapped to split-read junctions.
+Calls germline CNVs (≥ 500 bp) of one sample from its own read depth, without a cohort, with one call per event.
 
-Order of the steps for one sample:
+Steps for one sample:
 
 ```bash
-# once per reference
+# once per reference: GC, N, low-mappability and segdup fraction per 100 bp bin
 build_depth_annotation --reference-fasta ref.fasta --lowmap-bed GRCh38_lowmappabilityall.bed.gz \
   --segdup-bed GRCh38_segdups.bed.gz --output ref.depth_annotation.parquet
 
+# depth in 100 bp bins, all reads and MAPQ >= 20
 mosdepth -n -x -b 100 -f ref.fasta -Q 0 sample.q0 sample.cram
 mosdepth -n -x -b 100 -f ref.fasta -Q 20 sample.q20 sample.cram
 
+# depth calls: GC correction, weighted change-point segmentation, one call per event
 call_depth_cnvs --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.regions.bed.gz \
   --annotation ref.depth_annotation.parquet --sample-name SAMPLE \
   --fasta-index ref.fasta.fai --output-vcf sample.depth.vcf.gz
+
+# adds events from clusters of split reads that the depth misses
 split_read_cnv_candidates --alignment sample.cram --reference-fasta ref.fasta --depth-vcf sample.depth.vcf.gz \
   --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.regions.bed.gz \
   --annotation ref.depth_annotation.parquet --output-vcf sample.cand.vcf.gz
-# paired-end only
+
+# paired-end only: adds events from clusters of discordant pairs
 pair_cnv_candidates --alignment sample.cram --reference-fasta ref.fasta --input-vcf sample.cand.vcf.gz \
   --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.regions.bed.gz \
   --annotation ref.depth_annotation.parquet --output-vcf sample.pair_cand.vcf.gz
-# optional, with the cn.mops calls of the sample (process_cnvs output)
+
+# optional: adds cn.mops calls (process_cnvs output) the depth caller misses
 cnmops_cnv_candidates --input-vcf sample.pair_cand.vcf.gz --cnmops-vcf sample.cnmops.vcf.gz \
   --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.regions.bed.gz \
   --annotation ref.depth_annotation.parquet --output-vcf sample.cnmops_cand.vcf.gz
-# on the last candidates VCF
-analyze_cnv_breakpoint_reads --bam-file sample.cram --vcf-file sample.cnmops_cand.vcf.gz --reference-fasta ref.fasta \
-  --cushion 1500 --output-file sample.ann.vcf.gz --output-bam sample.evidence.bam   # then samtools sort + index
+
+# split-read and pair evidence at the breakpoints, on the last candidates VCF
+# (then samtools sort + index the evidence BAM)
+analyze_cnv_breakpoint_reads --bam-file sample.cram --vcf-file sample.cnmops_cand.vcf.gz \
+  --reference-fasta ref.fasta --cushion 1500 --output-file sample.ann.vcf.gz --output-bam sample.evidence.bam
+
+# moves the breakpoints to split-read junctions
 snap_cnv_breakpoints --input-vcf sample.ann.vcf.gz --alignment sample.cram --reference-fasta ref.fasta \
   --output-vcf sample.snap.vcf.gz
+
+# drops candidates that are short, inside a depth call, or duplicates
 filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.calls.vcf.gz
 ```
 
-- `filter_nested_cnv_candidates` drops split-read, pair and cn.mops candidates that are < 500 bp after snapping,
-  >= 50% inside a same-type depth call, or with >= 50% reciprocal overlap with a same-type candidate kept before them
-  (snapping often moves several candidates of one deletion to the same breakpoints; split-read candidates are kept
-  first, then pair candidates, by the reads in their cluster, then cn.mops candidates).
+Sex chromosomes are inferred from the depth (or set with `--sex male|female`). For a male sample, pass
+`--par-bed` (the `par_regions` genome resource); otherwise the chrX pseudoautosomal regions look like gains.
 
-- Discordant-pair candidates (paired-end only): `pair_cnv_candidates` runs after
-  `split_read_cnv_candidates` on its output (same `--depth-mq0` / `--depth-mq20` / `--annotation`, and `--input-vcf`
-  instead of `--depth-vcf`). FR pairs with a span >= 800 (the evidence step's `--min-pair-span` default) give deletion
-  candidates; RF (everted) pairs with the mate > 50 bp after the read give duplication candidates (an everted pair
-  lies inside the duplicated copy, so a span floor would miss small duplications); no insert size is estimated.
-  Clusters of >= 3 pairs: a deletion is the gap between the reads and their mates (snapping's pair rule), kept from
-  300 bp since the 500 bp minimum is applied after snapping; a duplication contains the pairs, 500 bp - 1 Mb.
-  With the split-read candidates' depth check, and not already called. They get `CNV_SOURCE=pair` and
-  `PAIR_READS`; overlapping pair clusters are collapsed to the one with most pairs, and
-  `filter_nested_cnv_candidates` treats them like split-read candidates. The filter model
-  `cnv_filtering_model_v2.0.0.pkl` is trained with them (`source_pair` feature).
-- cn.mops candidates (optional): the cohort caller cn.mops (R scripts in `cnmops/`, run with a reads-count cohort and
-  `process_cnvs`) finds losses in low-mappability / segdup sequence where the sample's own all-read depth shows none.
-  `cnmops_cnv_candidates --input-vcf <calls so far> --cnmops-vcf <cn.mops calls>` (same `--depth-mq0` /
-  `--depth-mq20` / `--annotation`) adds every cn.mops call (whatever its FILTER) without a same-type call (>= 50%
-  reciprocal) as `CNV_SOURCE=cn.mops`, with the candidates' depth features but no depth-change check; they then go
-  through the evidence, snapping, nested / duplicate filter and FilterVCF with the same `cnv_depth` model.
-- Filter training: `cnv_known_event_pieces` cuts a sample's known long CNV into 10–100 kb depth calls (the windows the
-  caller would call), as extra positives for `training_prep_depth_cnv_pipeline --known_events` (README.filtering.md).
-- Sex chromosomes: `call_depth_cnvs` infers them from the median depth of the clean (unique, non-segdup) chrX and
-  chrY bins relative to the autosomes, with the karyotype table of `estimate_ploidy`. One chrX copy makes chrX
-  haploid, two diploid; chrY is haploid when present and not called otherwise. If the depth is ambiguous, chrX and
-  chrY are not called (the autosomes are). `--sex male|female` sets it instead. In a male, `--par-bed` (the
-  `par_regions` genome resource) keeps the chrX pseudoautosomal regions at 2 copies: the reference masks their chrY
-  copy, so all their reads map to chrX (without it the whole male chrX is haploid and the PARs look like gains). The setup is written to the VCF
-  header (`depth_cnv_haploid_contigs`, `depth_cnv_skipped_contigs`, `depth_cnv_karyotype`, `depth_cnv_diploid_regions`), and
-  the candidate steps read it from there: their depth check divides each bin by its baseline, so a candidate across
-  a PAR edge is not read as a gain or a loss.
-- The output is filtered with `filter_variants_pipeline` and a `cnv_depth` model (`ugbio_filtering`); the INFO fields
-  the model reads are listed in `ugbio_filtering.transformers.DEPTH_CNV_INFO_FIELDS` (pass each as
-  `--custom_annotations`, and use `--overwrite_qual_tag` so QUAL holds the score for `merge_cnv_sv`).
-- Calls carry `CNV_SOURCE` (`depth`, `split_read`, `pair` or `cn.mops`), `CN_MEAN`, `BASE_CN`, `Z`, `SEGDUP`,
-  `UNIQ_FRAC`, `LOW_CONF` and the snapping fields `SNAP`, `SNAP_N`, `DEPTH_POS`, `DEPTH_END` (see `cnv_vcf_consts.DEPTH_CNV_INFO_TAGS`).
+Filter the calls with `filter_variants_pipeline` and a `cnv_depth` model. Pass the fields in
+`ugbio_filtering.transformers.DEPTH_CNV_INFO_FIELDS` as `--custom_annotations`, and use `--overwrite_qual_tag`.
 
 ### Somatic CNV Tools (ControlFREEC)
 

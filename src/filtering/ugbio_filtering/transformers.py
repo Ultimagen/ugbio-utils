@@ -117,14 +117,14 @@ DEPTH_CNV_INFO_FIELDS = [
     "BASE_CN",
     "Z",
     "N_MERGED",
-    "SEGDUP",
+    "SEGDUP_FRAC",
     "UNIQ_FRAC",
     "LOW_CONF",
     "CNV_SOURCE",
-    "SR_READS",
-    "SNAP",
-    "SNAP_N",
-    "DEPTH_POS",
+    "CLUSTER_SUPPORT",
+    "BREAKPOINT_SOURCE",
+    "BREAKPOINT_SUPPORT",
+    "DEPTH_START",
     "DEPTH_END",
     "CNV_DEL_READS",
     "CNV_DUP_READS",
@@ -199,10 +199,11 @@ def depth_cnv_features(df: pd.DataFrame) -> pd.DataFrame:
     base = num("base_cn").replace(0, 2.0)
     cn_mean = num("cn_mean")
     sr_same, pe_same = by_type("cnv_{}_reads", same=True), by_type("cnv_{}_pairs", same=True)
-    depth_len = num("depth_end") - num("depth_pos")
-    snap = df["snap"] if "snap" in df else pd.Series("", index=df.index)
+    depth_len = num("depth_end") - num("depth_start")
+    snap = df["breakpoint_source"] if "breakpoint_source" in df else pd.Series("", index=df.index)
     source = df["cnv_source"] if "cnv_source" in df else pd.Series([()] * len(df), index=df.index)
     source = source.apply(lambda x: tuple(x) if isinstance(x, tuple | list) else ())  # None / NaN: no source
+    source_sr = source.apply(lambda x: float(x == ("split_read",)))
     out = pd.DataFrame(
         {
             "is_del": is_del.astype(float),
@@ -212,7 +213,7 @@ def depth_cnv_features(df: pd.DataFrame) -> pd.DataFrame:
             "rel_cn": cn_mean / base,
             "abs_z": num("z").abs(),
             "n_merged": num("n_merged"),
-            "segdup": num("segdup"),
+            "segdup": num("segdup_frac"),
             "uniq_frac": num("uniq_frac"),
             "sr_same": sr_same,
             "sr_opp": by_type("cnv_{}_reads", same=False),
@@ -225,13 +226,13 @@ def depth_cnv_features(df: pd.DataFrame) -> pd.DataFrame:
             "sr_insert": by_type("{}_reads_median_insert_size", same=True),
             "pe_span": by_type("{}_pairs_median_span", same=True),
             "log_support": np.log1p(sr_same + pe_same),
-            "snap_sr": (snap == "SR").astype(float),
-            "snap_pe": (snap == "PE").astype(float),
-            "snap_n": num("snap_n"),
+            "snap_sr": (snap == "split_read").astype(float),
+            "snap_pe": (snap == "pair").astype(float),
+            "snap_n": num("breakpoint_support"),
             "snap_shrink": np.where(depth_len > 0, 1 - svlen / depth_len.clip(lower=1), 0.0),
-            "source_sr": source.apply(lambda x: float(x == ("split_read",))),
+            "source_sr": source_sr,
             "source_pair": source.apply(lambda x: float(x == ("pair",))),
-            "sr_reads": num("sr_reads"),
+            "sr_reads": num("cluster_support") * source_sr,  # the cluster of a split-read candidate
         },
         index=df.index,
     )
