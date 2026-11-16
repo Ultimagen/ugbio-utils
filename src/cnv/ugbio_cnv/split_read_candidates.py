@@ -5,7 +5,7 @@ split_read_cnv_candidates:
   1. Per contig, in parallel: the supplementary records give each split read's other pieces (in place of the SA tag,
      so that no tags are decoded), then the primary records (MAPQ >= 20) of those reads are streamed; each read's two
      pieces on the same chromosome and strand give a deletion or tandem-duplication junction
-     (breakpoint_snapping.split_read_junctions).
+     (breakpoint_refinement.split_read_junctions).
   2. Junctions are clustered (position +-100 bp, size +-10%); clusters with >= 2 reads and 500 bp - 1 Mb are kept,
      and clusters with >= 50% reciprocal overlap are collapsed to the one with most reads.
   3. Each cluster is scored with depth (all reads, 100 bp): mean inside vs median of the 5 kb flanks. Candidates
@@ -18,10 +18,10 @@ cnmops_cnv_candidates (optional, with the cn.mops calls of the sample):
   depth features of the other candidates, without the depth-change check (cn.mops finds losses in low-mappability
   sequence where the all-read depth shows none).
 
-filter_nested_cnv_candidates (after breakpoint snapping):
+filter_nested_cnv_candidates (after breakpoint refinement):
   Drop split-read, pair and cn.mops candidates that are shorter than 500 bp, >= 50% inside a same-type depth call (a
   second call on an event that is already called), or with >= 50% reciprocal overlap with a same-type candidate kept
-  before them (snapping often moves several candidates of one deletion to the same breakpoints). Split-read
+  before them (refinement often moves several candidates of one deletion to the same breakpoints). Split-read
   candidates are kept first, then pair candidates, each by the most reads in their cluster (CLUSTER_SUPPORT), then
   cn.mops candidates.
 """
@@ -36,7 +36,7 @@ from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 import pysam
-from ugbio_cnv.breakpoint_snapping import split_read_junctions
+from ugbio_cnv.breakpoint_refinement import split_read_junctions
 from ugbio_cnv.cnv_vcf_consts import (
     CNV_SOURCE_CNMOPS,
     CNV_SOURCE_DEPTH,
@@ -490,9 +490,9 @@ def parse_args_nested(argv: list[str]) -> argparse.Namespace:
         prog="filter_nested_cnv_candidates",
         description="Drop split-read, pair and cn.mops candidates that are < 500 bp, nested or duplicates",
     )
-    parser.add_argument("--input-vcf", required=True, help="Snapped calls")
+    parser.add_argument("--input-vcf", required=True, help="Refined calls")
     parser.add_argument("--output-vcf", required=True, help="Output .vcf.gz")
-    parser.add_argument("--min-len", type=int, default=500, help="Minimal candidate length after snapping")
+    parser.add_argument("--min-len", type=int, default=500, help="Minimal candidate length after refinement")
     return parser.parse_args(argv)
 
 

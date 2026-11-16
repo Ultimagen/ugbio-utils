@@ -1,5 +1,5 @@
 """
-Snap CNV breakpoints to split-read junctions, or shrink deletions with discordant pairs.
+Refine CNV breakpoints to split-read junctions, or shrink deletions with discordant pairs.
 
 For each DEL/DUP call, primary reads (MAPQ >= 20) within +-window of either edge that carry an SA tag on the same
 chromosome and strand are split into their two aligned pieces, ordered along the read:
@@ -32,7 +32,7 @@ CIGAR_PATTERN = re.compile(r"(\d+)([MIDNSHP=X])")
 
 
 @dataclass
-class SnapParams:
+class RefineParams:
     window: int = 1500  # search reads within +-window of each call edge
     min_reads: int = 2  # split reads (or pairs) needed to move a breakpoint
     min_mapq: int = 20  # primary read MAPQ
@@ -42,6 +42,7 @@ class SnapParams:
     min_junction: int = 100  # shorter junctions are small indels
     small_call: int = 3000  # longer calls need a junction of >= 0.5 x their size
     min_pe_len: int = 50  # a pair-shrunk deletion must keep at least this length
+    max_edge_shift: int = 2000  # a junction's start and end must lie within this of the call's start and end
 
 
 def read_length_from_cigar(cigar: str) -> int:
@@ -111,7 +112,7 @@ def split_read_junctions(
 
 
 def edge_junctions(
-    aln: pysam.AlignmentFile, chrom: str, start: int, end: int, svtype: str, p: SnapParams
+    aln: pysam.AlignmentFile, chrom: str, start: int, end: int, svtype: str, p: RefineParams
 ) -> list[tuple[int, int]]:
     """Split-read junctions of the call's type from reads near either edge of [start, end)."""
     out, seen = [], set()
@@ -136,12 +137,22 @@ def edge_junctions(
 
 
 def best_junction_cluster(
-    junctions: list[tuple[int, int]], call_len: int, p: SnapParams
+    junctions: list[tuple[int, int]], start: int, end: int, p: RefineParams
 ) -> tuple[int, int, int] | None:
-    """Largest group of junctions with similar position and size; breakpoints are the group medians."""
+    """
+    Largest group of junctions with similar position and size; breakpoints are the group medians.
+
+    Only junctions whose start and end are within max_edge_shift of the call's start and end are used, so a read
+    near one edge cannot move the call onto a nearby event.
+    """
+    call_len = end - start
     # depth cannot resolve events below ~1-2 kb, so only short calls may shrink to a much smaller junction
     min_size = p.min_junction if call_len <= p.small_call else 0.5 * call_len
-    js = [(a, b) for a, b in junctions if min_size <= b - a <= 3 * call_len + 2 * p.window]
+    js = [
+        (a, b)
+        for a, b in junctions
+        if min_size <= b - a and abs(a - start) <= p.max_edge_shift and abs(b - end) <= p.max_edge_shift
+    ]
     if len(js) < p.min_reads:
         return None
     js = np.array(js)
@@ -158,7 +169,7 @@ def best_junction_cluster(
 
 
 def pair_bounds(
-    aln: pysam.AlignmentFile, chrom: str, start: int, end: int, p: SnapParams
+    aln: pysam.AlignmentFile, chrom: str, start: int, end: int, p: RefineParams
 ) -> tuple[int, int, int] | None:
     """Interval allowed by FR pairs with one read near the left edge and its mate near the right edge."""
     left_end, right_start = [], []
@@ -182,7 +193,7 @@ def pair_bounds(
     return int(np.percentile(left_end, 90)), int(np.percentile(right_start, 10)), len(left_end)
 
 
-def _snap_contig(args: tuple) -> dict:
+def _refine_contig(args: tuple) -> dict:
     vcf, aln_path, reference, chrom, p = args
     res = {}
     with pysam.AlignmentFile(aln_path, reference_filename=reference) as aln, pysam.VariantFile(vcf) as v:
@@ -190,7 +201,7 @@ def _snap_contig(args: tuple) -> dict:
             return res
         for rec in v.fetch(chrom):
             svtype, s, e = rec.info["SVTYPE"], rec.start, rec.stop
-            hit = best_junction_cluster(edge_junctions(aln, chrom, s, e, svtype, p), e - s, p)
+            hit = best_junction_cluster(edge_junctions(aln, chrom, s, e, svtype, p), s, e, p)
             if hit:
                 res[rec.id] = (CNV_SOURCE_SPLIT_READ, hit[0], hit[1], hit[2])
                 continue
@@ -203,11 +214,16 @@ def _snap_contig(args: tuple) -> dict:
     return res
 
 
-def snap_cnv_breakpoints(
-    input_vcf: str, alignment: str, reference: str, output_vcf: str, threads: int = 8, params: SnapParams | None = None
+def refine_cnv_breakpoints(
+    input_vcf: str,
+    alignment: str,
+    reference: str,
+    output_vcf: str,
+    threads: int = 8,
+    params: RefineParams | None = None,
 ) -> Counter:
     """
-    Snap the breakpoints of every call in input_vcf and write output_vcf (bgzipped, indexed).
+    Refine the breakpoints of every call in input_vcf and write output_vcf (bgzipped, indexed).
 
     Parameters
     ----------
@@ -221,23 +237,23 @@ def snap_cnv_breakpoints(
         Output .vcf.gz.
     threads : int
         Contigs processed in parallel.
-    params : SnapParams, optional
-        Snapping parameters.
+    params : RefineParams, optional
+        Refinement parameters.
 
     Returns
     -------
     Counter
         Number of calls per breakpoint source (split_read, pair).
     """
-    p = params or SnapParams()
+    p = params or RefineParams()
     if not any(os.path.exists(input_vcf + ext) for ext in (".tbi", ".csi")):
         pysam.tabix_index(input_vcf, preset="vcf", force=True)  # contigs are fetched in parallel
     with pysam.VariantFile(input_vcf) as v:
         contigs = list(dict.fromkeys(r.chrom for r in v))
-    snaps = {}
+    refined = {}
     with Pool(threads) as pool:
-        for r in pool.imap_unordered(_snap_contig, [(input_vcf, alignment, reference, c, p) for c in contigs]):
-            snaps.update(r)
+        for r in pool.imap_unordered(_refine_contig, [(input_vcf, alignment, reference, c, p) for c in contigs]):
+            refined.update(r)
     with pysam.VariantFile(input_vcf) as vin:
         header = vin.header.copy()
         for tag in ("BREAKPOINT_SOURCE", "BREAKPOINT_SUPPORT", "DEPTH_START", "DEPTH_END", "CIEND"):
@@ -245,7 +261,7 @@ def snap_cnv_breakpoints(
                 header.info.add(*DEPTH_CNV_INFO_TAGS[tag][:-1])
         records = []
         for rec in vin:
-            source, ns, ne, n_support = snaps.get(rec.id, (CNV_SOURCE_DEPTH, rec.start, rec.stop, 0))
+            source, ns, ne, n_support = refined.get(rec.id, (CNV_SOURCE_DEPTH, rec.start, rec.stop, 0))
             new = rec.copy()
             new.translate(header)
             new.info["DEPTH_START"], new.info["DEPTH_END"] = rec.pos, rec.stop
@@ -262,14 +278,14 @@ def snap_cnv_breakpoints(
         for r in records:
             vout.write(r)
     pysam.tabix_index(output_vcf, preset="vcf", force=True)
-    counts = Counter(s[0] for s in snaps.values())
-    logger.info(f"{output_vcf}: {sum(counts.values())} of {len(records)} calls snapped ({dict(counts)})")
+    counts = Counter(s[0] for s in refined.values())
+    logger.info(f"{output_vcf}: {sum(counts.values())} of {len(records)} calls refined ({dict(counts)})")
     return counts
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="snap_cnv_breakpoints", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+        prog="refine_cnv_breakpoints", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--input-vcf", required=True, help="CNV calls (unique IDs)")
     parser.add_argument("--alignment", required=True, help="Sample BAM / CRAM")
@@ -281,7 +297,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def run(argv: list[str]):
     args = parse_args(argv[1:])
-    snap_cnv_breakpoints(args.input_vcf, args.alignment, args.reference_fasta, args.output_vcf, args.threads)
+    refine_cnv_breakpoints(args.input_vcf, args.alignment, args.reference_fasta, args.output_vcf, args.threads)
 
 
 def main():

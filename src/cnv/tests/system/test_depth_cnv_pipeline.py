@@ -3,7 +3,7 @@ End-to-end run of the depth CNV caller on HG002 chr19:19.45-19.95 Mb (612365, 40
 heterozygous deletion (T2T-Q100 truth: POS 19,723,634, SVLEN 5,219; also called by the SV caller).
 
 Chain as in the pipeline: call_depth_cnvs -> split_read_cnv_candidates -> analyze_cnv_breakpoint_reads ->
-snap_cnv_breakpoints -> filter_nested_cnv_candidates, then merge_cnv_sv with the SV calls; with the optional cn.mops
+refine_cnv_breakpoints -> filter_nested_cnv_candidates, then merge_cnv_sv with the SV calls; with the optional cn.mops
 calls, cnmops_cnv_candidates after the split-read candidates.
 """
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_cnv import analyze_cnv_breakpoint_reads, breakpoint_snapping, depth_cnv_caller
+from ugbio_cnv import analyze_cnv_breakpoint_reads, breakpoint_refinement, depth_cnv_caller
 from ugbio_cnv import split_read_candidates as src
 from ugbio_cnv.merge_cnv_sv import merge_cnv_sv_vcfs
 
@@ -97,9 +97,9 @@ def run_chain(inputs: dict, tmp_path: Path) -> str:
     )
     pysam.sort("-o", f"{t}/ev.sort.bam", f"{t}/ev.bam")
     pysam.index(f"{t}/ev.sort.bam")
-    breakpoint_snapping.run(
+    breakpoint_refinement.run(
         [
-            "snap_cnv_breakpoints",
+            "refine_cnv_breakpoints",
             "--input-vcf",
             f"{t}/ann.vcf.gz",
             "--alignment",
@@ -107,18 +107,18 @@ def run_chain(inputs: dict, tmp_path: Path) -> str:
             "--reference-fasta",
             inputs["fasta"],
             "--output-vcf",
-            f"{t}/snap.vcf.gz",
+            f"{t}/refined.vcf.gz",
             "--threads",
             "1",
         ]
     )
     src.run_nested(
-        ["filter_nested_cnv_candidates", "--input-vcf", f"{t}/snap.vcf.gz", "--output-vcf", f"{t}/final.vcf.gz"]
+        ["filter_nested_cnv_candidates", "--input-vcf", f"{t}/refined.vcf.gz", "--output-vcf", f"{t}/final.vcf.gz"]
     )
     return f"{t}/final.vcf.gz"
 
 
-def test_depth_cnv_pipeline_finds_and_snaps_the_deletion(inputs, tmp_path):
+def test_depth_cnv_pipeline_finds_and_refines_the_deletion(inputs, tmp_path):
     final = run_chain(inputs, tmp_path)
     with pysam.VariantFile(final) as v:
         assert list(v.header.samples) == [SAMPLE]
@@ -127,7 +127,7 @@ def test_depth_cnv_pipeline_finds_and_snaps_the_deletion(inputs, tmp_path):
         dels = [r for r in v if r.info["SVTYPE"] == "DEL"]
     assert len(dels) == 1
     d = dels[0]
-    assert (d.pos, d.stop) == TRUE_DEL  # snapped to the split-read junction
+    assert (d.pos, d.stop) == TRUE_DEL  # refined to the split-read junction
     assert d.info["BREAKPOINT_SOURCE"] == "split_read"
     assert d.info["CNV_SOURCE"] == ("depth",)
     assert d.info["CNV_DEL_READS"] > 0

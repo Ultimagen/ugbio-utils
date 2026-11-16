@@ -9,8 +9,8 @@ copy number of the ~500 bp units, noise-weighted mean and z, segdup / unique fra
 windows the caller would call in the event's direction, without N bases and with at most max_segdup / max_lowmap
 segmental-duplication / low-mappability bins. The windows are written as depth calls (call_depth_cnvs format).
 
-Run the pipeline's evidence and snapping steps on them (analyze_cnv_breakpoint_reads, snap_cnv_breakpoints), and pass
-the snapped VCF with the events BED to training_prep_depth_cnv_pipeline --known_events: every piece is a positive.
+Run the pipeline's evidence and refinement steps on them (analyze_cnv_breakpoint_reads, refine_cnv_breakpoints), and
+pass the refined VCF with the events BED to training_prep_depth_cnv_pipeline --known_events: every piece is a positive.
 """
 
 import argparse

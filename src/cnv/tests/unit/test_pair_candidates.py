@@ -22,7 +22,7 @@ def test_deletion_is_the_gap_between_the_reads_and_the_mates():
     assert len(c) == 1
     r = c.iloc[0]
     assert (r.chrom, r.svtype, r.n_reads) == ("chr1", "DEL", 5)
-    # same rule as breakpoint_snapping.pair_bounds
+    # same rule as breakpoint_refinement.pair_bounds
     assert (r.start, r.end) == (int(np.percentile(le, 90)), int(np.percentile(rs, 10)))
 
 
@@ -35,7 +35,7 @@ def test_duplication_contains_the_everted_pairs():
 
 
 def test_size_and_pair_limits():
-    # deletions are kept from a 300 bp gap (500 bp is required after snapping), duplications from 500 bp
+    # deletions are kept from a 300 bp gap (500 bp is required after refinement), duplications from 500 bp
     gap400 = pairs([("chr1", 850, 1000, 1400 + k, 1550 + k, "DEL") for k in range(5)])
     assert len(pc.cluster_pairs(gap400, pc.PairParams(), CP)) == 1
     gap250 = pairs([("chr1", 850, 1000, 1250 + k, 1400 + k, "DEL") for k in range(5)])

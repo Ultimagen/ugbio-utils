@@ -11,19 +11,19 @@ pair_cnv_candidates:
      its span is at most the duplication length and a span floor of 800 would miss the duplications below ~1 kb.
   2. Pairs are clustered per chromosome and type when both the left reads' ends and the mates' starts agree within
      cluster_tol; clusters with >= min_pairs pairs and up to 1 Mb are kept. A deletion is the gap between the left
-     reads' ends (90th percentile) and the mates' starts (10th percentile), the interval breakpoint snapping allows
-     (breakpoint_snapping.pair_bounds); it is kept from min_del_gap (300 bp): the gap can come out shorter than the
-     deletion, and the 500 bp minimum is applied after snapping (filter_nested_cnv_candidates), when split reads have
+     reads' ends (90th percentile) and the mates' starts (10th percentile), the interval breakpoint refinement allows
+     (breakpoint_refinement.pair_bounds); it is kept from min_del_gap (300 bp): the gap can come out shorter than the
+     deletion, and the 500 bp minimum is applied after refinement (filter_nested_cnv_candidates), when split reads have
      moved a real deletion to its breakpoints. A duplication contains the pairs: from the left reads' first start to
      the mates' last end (left start + TLEN), so the evidence step brackets the same pairs; kept from 500 bp.
      Clusters with >= 50% reciprocal overlap are collapsed to the one with most pairs (split_read_candidates.
      dedup_clusters): one deletion often gives several clusters of pairs.
   3. The same depth check as the split-read candidates (split_read_candidates.score_with_depth), and candidates with a
      same-type call of the input VCF overlapping >= 50% reciprocally are dropped (already called). The rest are added
-     with CNV_SOURCE=pair, CLUSTER_SUPPORT (pairs) and CIPOS / CIEND = +-ci (as snapping gives pair-shrunk calls).
+     with CNV_SOURCE=pair, CLUSTER_SUPPORT (pairs) and CIPOS / CIEND = +-ci (as refinement gives pair-shrunk calls).
 
 Paired-end data only. Run after split_read_cnv_candidates; the nested / short filter (filter_nested_cnv_candidates)
-after snapping treats pair candidates like split-read candidates, and drops the candidates that snapping has made
+after refinement treats pair candidates like split-read candidates, and drops the candidates that refinement has made
 duplicates of a call.
 """
 
@@ -35,7 +35,7 @@ from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 from ugbio_cnv.analyze_cnv_breakpoint_reads import MIN_PAIR_SPAN
-from ugbio_cnv.breakpoint_snapping import alignment_piece
+from ugbio_cnv.breakpoint_refinement import alignment_piece
 from ugbio_cnv.cnv_vcf_consts import CNV_SOURCE_PAIR
 from ugbio_cnv.depth_cnv_caller import read_sex_chromosomes
 from ugbio_cnv.split_read_candidates import (
@@ -54,7 +54,7 @@ class PairParams:
     min_mapq: int = 20
     min_span: int = MIN_PAIR_SPAN  # FR pairs (deletions): TLEN floor
     min_rf_gap: int = 50  # RF pairs (duplications): mate start - read start; overlapping short fragments are below it
-    min_del_gap: int = 300  # shortest deletion candidate (the gap); 500 bp is required after snapping
+    min_del_gap: int = 300  # shortest deletion candidate (the gap); 500 bp is required after refinement
     cluster_tol: int = 600  # pairs in one cluster: left ends and mate starts within +-cluster_tol
     min_pairs: int = 3
     ci: int = 200  # CIPOS / CIEND = +-ci
@@ -109,7 +109,7 @@ def cluster_pairs(pairs: pd.DataFrame, p: PairParams, cp: CandidateParams) -> pd
             used |= m
             if m.sum() < p.min_pairs:
                 continue
-            if svtype == "DEL":  # the rule of breakpoint_snapping.pair_bounds
+            if svtype == "DEL":  # the rule of breakpoint_refinement.pair_bounds
                 start, end = int(np.percentile(le[m], 90)), int(np.percentile(rs[m], 10))
             else:
                 start, end = int(ls[m].min()), int(re_[m].max())

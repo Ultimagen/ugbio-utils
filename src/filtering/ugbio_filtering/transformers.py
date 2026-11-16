@@ -161,10 +161,10 @@ DEPTH_CNV_FEATURES = [
     "sr_insert",
     "pe_span",
     "log_support",
-    "snap_sr",
-    "snap_pe",
-    "snap_n",
-    "snap_shrink",
+    "bp_split_read",
+    "bp_pair",
+    "bp_support",
+    "refine_shrink",
     "source_sr",
     "source_pair",
     "sr_reads",
@@ -200,7 +200,7 @@ def depth_cnv_features(df: pd.DataFrame) -> pd.DataFrame:
     cn_mean = num("cn_mean")
     sr_same, pe_same = by_type("cnv_{}_reads", same=True), by_type("cnv_{}_pairs", same=True)
     depth_len = num("depth_end") - num("depth_start")
-    snap = df["breakpoint_source"] if "breakpoint_source" in df else pd.Series("", index=df.index)
+    bp_source = df["breakpoint_source"] if "breakpoint_source" in df else pd.Series("", index=df.index)
     source = df["cnv_source"] if "cnv_source" in df else pd.Series([()] * len(df), index=df.index)
     source = source.apply(lambda x: tuple(x) if isinstance(x, tuple | list) else ())  # None / NaN: no source
     source_sr = source.apply(lambda x: float(x == ("split_read",)))
@@ -226,10 +226,10 @@ def depth_cnv_features(df: pd.DataFrame) -> pd.DataFrame:
             "sr_insert": by_type("{}_reads_median_insert_size", same=True),
             "pe_span": by_type("{}_pairs_median_span", same=True),
             "log_support": np.log1p(sr_same + pe_same),
-            "snap_sr": (snap == "split_read").astype(float),
-            "snap_pe": (snap == "pair").astype(float),
-            "snap_n": num("breakpoint_support"),
-            "snap_shrink": np.where(depth_len > 0, 1 - svlen / depth_len.clip(lower=1), 0.0),
+            "bp_split_read": (bp_source == "split_read").astype(float),
+            "bp_pair": (bp_source == "pair").astype(float),
+            "bp_support": num("breakpoint_support"),
+            "refine_shrink": np.where(depth_len > 0, 1 - svlen / depth_len.clip(lower=1), 0.0),
             "source_sr": source_sr,
             "source_pair": source.apply(lambda x: float(x == ("pair",))),
             "sr_reads": num("cluster_support") * source_sr,  # the cluster of a split-read candidate

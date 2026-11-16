@@ -148,11 +148,11 @@ analyze_cnv_breakpoint_reads --bam-file sample.cram --vcf-file sample.cnmops_can
   --reference-fasta ref.fasta --cushion 1500 --output-file sample.ann.vcf.gz --output-bam sample.evidence.bam
 
 # moves the breakpoints to split-read junctions
-snap_cnv_breakpoints --input-vcf sample.ann.vcf.gz --alignment sample.cram --reference-fasta ref.fasta \
-  --output-vcf sample.snap.vcf.gz
+refine_cnv_breakpoints --input-vcf sample.ann.vcf.gz --alignment sample.cram --reference-fasta ref.fasta \
+  --output-vcf sample.refined.vcf.gz
 
 # drops candidates that are short, inside a depth call, or duplicates
-filter_nested_cnv_candidates --input-vcf sample.snap.vcf.gz --output-vcf sample.calls.vcf.gz
+filter_nested_cnv_candidates --input-vcf sample.refined.vcf.gz --output-vcf sample.calls.vcf.gz
 ```
 
 Sex chromosomes are inferred from the depth (or set with `--sex male|female`). For a male sample, pass
@@ -160,6 +160,13 @@ Sex chromosomes are inferred from the depth (or set with `--sex male|female`). F
 
 Filter the calls with `filter_variants_pipeline` and a `cnv_depth` model. Pass the fields in
 `ugbio_filtering.transformers.DEPTH_CNV_INFO_FIELDS` as `--custom_annotations`, and use `--overwrite_qual_tag`.
+
+Then merge overlapping PASS calls of the same type into one call (DEL and DUP are never merged, and calls that are
+not PASS are kept unchanged):
+
+```bash
+collapse_cnv_calls --input-vcf sample.filtered.vcf.gz --output-vcf sample.cnv.vcf.gz
+```
 
 ### Somatic CNV Tools (ControlFREEC)
 

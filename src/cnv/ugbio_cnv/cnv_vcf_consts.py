@@ -112,7 +112,7 @@ FILTER_TAG_REGISTRY = {
     ),
 }
 
-# INFO tags written by the depth CNV caller (depth_cnv_caller, split_read_candidates, breakpoint_snapping).
+# INFO tags written by the depth CNV caller (depth_cnv_caller, split_read_candidates, breakpoint_refinement).
 # Kept apart from INFO_TAG_REGISTRY, whose tags are added to every CNV VCF header (cn.mops, FREEC).
 DEPTH_CNV_INFO_TAGS: dict[str, tuple[str, int | str, str, str, str]] = {
     "END": ("END", 1, "Integer", "End position of the variant", "INFO"),
@@ -157,8 +157,8 @@ DEPTH_CNV_INFO_TAGS: dict[str, tuple[str, int | str, str, str, str]] = {
         "Split reads or discordant pairs supporting the breakpoints (0 for depth breakpoints)",
         "INFO",
     ),
-    "DEPTH_START": ("DEPTH_START", 1, "Integer", "Start of the call from depth, before breakpoint snapping", "INFO"),
-    "DEPTH_END": ("DEPTH_END", 1, "Integer", "End of the call from depth, before breakpoint snapping", "INFO"),
+    "DEPTH_START": ("DEPTH_START", 1, "Integer", "Start of the call from depth, before breakpoint refinement", "INFO"),
+    "DEPTH_END": ("DEPTH_END", 1, "Integer", "End of the call from depth, before breakpoint refinement", "INFO"),
 }
 # CNV_SOURCE values of the depth CNV caller
 CNV_SOURCE_DEPTH = "depth"

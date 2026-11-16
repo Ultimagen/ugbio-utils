@@ -1,6 +1,6 @@
 import pysam
 import pytest
-from ugbio_cnv import breakpoint_snapping as bs
+from ugbio_cnv import breakpoint_refinement as bs
 
 
 class TestJunctionParsing:
@@ -55,19 +55,29 @@ class TestJunctionParsing:
 class TestBestCluster:
     def test_median_of_largest_group(self):
         js = [(10100, 15000), (10102, 15003), (10098, 14999), (30000, 36000)]
-        assert bs.best_junction_cluster(js, 5000, bs.SnapParams()) == (10100, 15000, 3)
+        assert bs.best_junction_cluster(js, 10000, 15000, bs.RefineParams()) == (10100, 15000, 3)
 
     def test_needs_two_reads(self):
-        assert bs.best_junction_cluster([(10100, 15000)], 5000, bs.SnapParams()) is None
+        assert bs.best_junction_cluster([(10100, 15000)], 10000, 15000, bs.RefineParams()) is None
 
     @pytest.mark.parametrize(("call_len", "expected"), [(2000, (1000, 1500, 2)), (20000, None)])
     def test_large_calls_need_large_junctions(self, call_len, expected):
-        # a 500 bp junction may refine a 2 kb call but must not shrink a 20 kb call
+        # a 500 bp junction may refine a 2 kb call but must not shrink a 20 kb call (edges within the shift limit)
         js = [(1000, 1500), (1001, 1500)]
-        assert bs.best_junction_cluster(js, call_len, bs.SnapParams()) == expected
+        p = bs.RefineParams(max_edge_shift=call_len)
+        assert bs.best_junction_cluster(js, 500, 500 + call_len, p) == expected
 
     def test_small_indels_ignored(self):
-        assert bs.best_junction_cluster([(1000, 1050), (1000, 1050)], 1000, bs.SnapParams()) is None
+        assert bs.best_junction_cluster([(1000, 1050), (1000, 1050)], 1000, 2000, bs.RefineParams()) is None
+
+    def test_junction_away_from_the_call_edges_ignored(self):
+        # a 1.2 kb call; the reads near its end point to another deletion that starts 400 bp after it and ends 4 kb
+        # after it: the call is not moved onto that event
+        js = [(12400, 16100), (12405, 16100), (12398, 16102)]
+        assert bs.best_junction_cluster(js, 10800, 12000, bs.RefineParams()) is None
+        # with both junction ends near the call's edges, the call is refined
+        js = [(10900, 12100), (10902, 12100)]
+        assert bs.best_junction_cluster(js, 10800, 12000, bs.RefineParams()) == (10901, 12100, 2)
 
 
 def _write_pairs_bam(path, pairs, chrom_len=20000):
@@ -113,20 +123,20 @@ class TestPairBounds:
     def test_bounds_are_the_innermost_read_ends(self, tmp_path):
         bam = _write_pairs_bam(str(tmp_path / "p.bam"), [(800, 2100), (850, 2050), (900, 2000)])
         with pysam.AlignmentFile(bam) as aln:
-            left, right, n = bs.pair_bounds(aln, "chr1", 950, 2200, bs.SnapParams())
+            left, right, n = bs.pair_bounds(aln, "chr1", 950, 2200, bs.RefineParams())
         assert n == 3  # noqa: PLR2004
         assert 950 <= left <= 1000 and 2000 <= right <= 2100  # 90th / 10th percentile of the read ends
 
     def test_one_pair_is_not_enough(self, tmp_path):
         bam = _write_pairs_bam(str(tmp_path / "p.bam"), [(900, 2000)])
         with pysam.AlignmentFile(bam) as aln:
-            assert bs.pair_bounds(aln, "chr1", 950, 2200, bs.SnapParams()) is None
+            assert bs.pair_bounds(aln, "chr1", 950, 2200, bs.RefineParams()) is None
 
     def test_deletion_without_split_reads_is_shrunk_by_the_pairs(self, tmp_path):
         bam = _write_pairs_bam(str(tmp_path / "p.bam"), [(800, 2100), (850, 2050), (900, 2000)])
         vcf = _write_calls_vcf(str(tmp_path / "calls.vcf.gz"), [(500, 2500, "DEL"), (500, 2500, "DUP")])
-        out = str(tmp_path / "snap.vcf.gz")
-        bs.snap_cnv_breakpoints(vcf, bam, None, out, threads=1)
+        out = str(tmp_path / "refined.vcf.gz")
+        bs.refine_cnv_breakpoints(vcf, bam, None, out, threads=1)
         with pysam.VariantFile(out) as v:
             recs = {r.info["SVTYPE"]: r for r in v}
         d = recs["DEL"]

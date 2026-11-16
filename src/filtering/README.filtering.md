@@ -140,7 +140,7 @@ Prepares training data for the depth CNV caller's filter (`--vcf_type cnv_depth`
 truth (e.g. HG002) and writes train / test HDF5 files, split by chromosome.
 
 ```bash
-# optional: training pieces (10-100 kb) of a known long event, then evidence and snapping as in the pipeline
+# optional: training pieces (10-100 kb) of a known long event, then evidence and refinement as in the pipeline
 # (one call per event, so a long event alone adds one row); --haploid-contigs chrX for a male sample
 cnv_known_event_pieces --depth-mq0 YLC444.q0.regions.bed.gz --depth-mq20 YLC444.q20.regions.bed.gz \
   --annotation ref.depth_annotation.parquet --events-bed ylc444.events.bed --sample-name YLC444 \
@@ -148,8 +148,8 @@ cnv_known_event_pieces --depth-mq0 YLC444.q0.regions.bed.gz --depth-mq20 YLC444.
   --output-vcf YLC444.pieces.vcf.gz
 analyze_cnv_breakpoint_reads --bam-file YLC444.cram --vcf-file YLC444.pieces.vcf.gz --reference-fasta ref.fasta \
   --cushion 1500 --output-file YLC444.pieces.ann.vcf.gz --output-bam YLC444.pieces.ev.bam
-snap_cnv_breakpoints --input-vcf YLC444.pieces.ann.vcf.gz --alignment YLC444.cram --reference-fasta ref.fasta \
-  --output-vcf YLC444.pieces.snap.vcf.gz
+refine_cnv_breakpoints --input-vcf YLC444.pieces.ann.vcf.gz --alignment YLC444.cram --reference-fasta ref.fasta \
+  --output-vcf YLC444.pieces.refined.vcf.gz
 
 # labels the calls >= 500 bp in the benchmark BED with truvari: matched 1, unmatched 0;
 # --known_events CALL_VCF EVENTS_BED (chrom, start, end, svtype) adds positives: calls >= 50% inside an event
@@ -159,7 +159,7 @@ training_prep_depth_cnv_pipeline \
   --benchmark_bed GRCh38_HG2-T2TQ100-V1.1_stvar.benchmark.bed \
   --train_chromosomes chr1 chr10 chr11 chr12 chr13 chr14 chr15 \
   --known_events YLC444.depth_cnv.vcf.gz ylc444.events.bed \
-  --known_events YLC444.pieces.snap.vcf.gz ylc444.events.bed \
+  --known_events YLC444.pieces.refined.vcf.gz ylc444.events.bed \
   --output_prefix hg002_depth_cnv
 
 # the threshold is stored in the pickle; without --decision_threshold it is chosen by the best F1

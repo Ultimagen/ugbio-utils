@@ -139,7 +139,7 @@ class TestNestedFilter:
         assert kept == [(10_000, "DEL", ("depth",)), (300_500, "DEL", ("pair",)), (400_000, "DUP", ("cn.mops",))]
 
     def test_duplicate_candidates_dropped(self, tmp_path, fasta_index):
-        """Candidates snapped onto the same event: split-read kept first, then the pair candidate with most pairs."""
+        """Candidates refined onto the same event: split-read kept first, then the pair candidate with most pairs."""
         dvcf = str(tmp_path / "depth.vcf.gz")
         write_depth_calls(depth_calls([("chr1", 10_000, 12_000, "DEL")]), dvcf, "S1", fasta_index)
         sr = str(tmp_path / "sr.vcf.gz")
