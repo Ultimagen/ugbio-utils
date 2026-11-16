@@ -85,12 +85,16 @@ When the module has its own strict/conflicting version constraints, it's still m
 
 ## CVE Scanning in the Build Pipeline
 
-Two distinct scans run, with different timing and different consequences:
+Every image is built and scanned by one composite action, `.github/actions/docker-build-scan`, used both by CI (`run-workspace-tests`, nothing pushed) and by `docker-build-push.yml` (which pushes only if the action passed). Releases and the base images use `policy: block`; CI and dev member builds (`build-ugbio-member-docker.yml`) use `warn`, which only reports (secrets block under any policy). The action runs, before any push:
 
-- **Trivy config + fs scans** (`docker-build-push.yml`, before image build) — `exit-code: '1'`, severity `CRITICAL,HIGH` — **these block the build** if they find something.
-- **ECR/Inspector2 scan** (`.github/utils/ecr_scan_results.py`, step "Check ECR scan results") — runs **after** the image is built and pushed, at the end of `docker-build-push.yml`. It polls AWS Inspector2 for the pushed image's findings, writes a JSON findings file plus a GitHub step summary table, but is `continue-on-error: true` and never fails the build itself — it's a report, not a gate. This is the source of the CRITICAL counts tracked in `docs/agent_docs/DATA-9903-docker-cve-remediation-summary.md`.
+- **Trivy Dockerfile config scan** of the built Dockerfile: reports CRITICAL/HIGH; fails on CRITICAL with `policy: block`.
+- **Trivy image scan** (vulnerabilities + secrets), gated by `trivy_json_to_summary.py`: with `policy: block`, a CRITICAL vulnerability with a fix, or a CRITICAL in a language package, fails. A HIGH/CRITICAL secret fails under any policy.
+- **Build-token check**: the image must not contain the token passed as the `github_token` build secret (raw or as the base64 git `extraheader`).
+- **Syft + Grype binaries check** (`binary_findings.py`): CVEs in binaries Trivy can't see (e.g. CPython in `/usr/local`); with `policy: block`, a CRITICAL with a fix, or missing Grype results, fails. It also lists executables that belong to no package (source-built tools), report only.
 
-**Practical flow:** push your Dockerfile change → trigger `build-ugbio-member-docker.yml` for the module → check the run's step summary for the ECR scan table → compare CRITICAL count before/after.
+`ci.yml` also runs a Trivy filesystem scan of the repo (lockfile vulnerabilities, secrets and misconfigurations in every Dockerfile, including `ugbio_base/Dockerfile`); it fails the PR on CRITICAL/HIGH findings.
+
+**Practical flow:** push your Dockerfile change → the PR's CI builds and scans every module → check the job summary (Trivy table, binaries section) → compare CRITICAL count before/after. CI uploads no artifact; for the full JSON results (`trivy-results.json`, `sbom.json`, `grype-results.json`), run `build-ugbio-member-docker.yml` for the module and download its `trivy-image-findings-*` artifact. That artifact is not uploaded when a secret was found (the results embed the image config).
 
 ## Maintenance Note
 

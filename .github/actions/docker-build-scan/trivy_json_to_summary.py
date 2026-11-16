@@ -6,10 +6,14 @@ Gate policy:
   - Blocking finding: a CRITICAL vulnerability that is either in a language package
     (jar, pip, npm, ...) or in an OS package with a published fix.
     Unfixed CRITICAL OS vulnerabilities and all HIGH vulnerabilities are flagged only.
-    Secret findings are not reported here; they are only in the uploaded JSON artifact.
-  - policy=warn:  every finding is reported as a warning annotation, exit code 0.
+  - Secret findings (files and image config) always block, whatever the policy:
+    a published secret is exposed as soon as the image is pushed.
+  - policy=warn:  vulnerabilities are reported as warning annotations, exit code 0 unless
+    a secret is found.
   - policy=block: blocking findings are reported as error annotations and the script
-    exits with code 1. A missing results file also blocks (the image could not be verified).
+    exits with code 1.
+  - A failed scan or a missing results file blocks under any policy: the image was not
+    checked for secrets.
 """
 
 import argparse
@@ -52,6 +56,7 @@ def parse_trivy_json(json_path: Path) -> dict:
         data = json.load(f)
 
     findings = []
+    secrets = []
     counts = defaultdict(int)
 
     # Trivy JSON has a "Results" array with vulnerability lists
@@ -74,8 +79,39 @@ def parse_trivy_json(json_path: Path) -> dict:
                     "blocking": severity == "CRITICAL" and (is_lang_pkg or bool(fixed)),
                 }
             )
+        # "Match" holds the (partly masked) secret itself and is deliberately not copied
+        for secret in result.get("Secrets") or []:
+            secrets.append(
+                {
+                    "rule": secret.get("RuleID", "N/A"),
+                    "title": secret.get("Title", ""),
+                    "severity": secret.get("Severity", "UNKNOWN"),
+                    "location": result.get("Target", ""),
+                    "line": secret.get("StartLine", ""),
+                    "layer": (secret.get("Layer") or {}).get("DiffID", ""),
+                }
+            )
 
-    return {"counts": dict(counts), "findings": findings}
+    return {"counts": dict(counts), "findings": findings, "secrets": secrets}
+
+
+def secrets_summary(secrets: list[dict]) -> list[str]:
+    """Markdown lines for secret findings; empty when there are none."""
+    if not secrets:
+        return []
+    lines = [
+        "> [!CAUTION]",
+        f"> **{len(secrets)} secrets detected in the image; push blocked.**",
+        "",
+        "| Rule | Severity | Location | Line | Layer |",
+        "|------|----------|----------|------|-------|",
+    ]
+    for s in secrets[:MAX_DISPLAYED_CVES]:
+        lines.append(f"| {s['rule']} | {s['severity']} | {s['location']} | {s['line']} | {s['layer']} |")
+    if len(secrets) > MAX_DISPLAYED_CVES:
+        lines.append(f"| ... | | *({len(secrets) - MAX_DISPLAYED_CVES} more)* | | |")
+    lines.append("")
+    return lines
 
 
 def generate_summary(image_name: str, image_tag: str, data: dict, policy: str) -> str:
@@ -92,6 +128,7 @@ def generate_summary(image_name: str, image_tag: str, data: dict, policy: str) -
         f"**CVE policy:** `{policy}` (blocks on CRITICAL with a fix, or CRITICAL in language packages)",
         "",
     ]
+    lines.extend(secrets_summary(data.get("secrets", [])))
 
     total = sum(counts.values())
     if total == 0:
@@ -157,6 +194,9 @@ def emit_annotations(image: str, data: dict, policy: str) -> None:
     blocking = [f for f in findings if f["blocking"]]
     level = "error" if policy == "block" else "warning"
 
+    for s in data.get("secrets", [])[:MAX_ANNOTATIONS]:
+        print(f"::error title=Secret {s['rule']} in image::{s['location']} line {s['line']} (layer {s['layer']})")
+
     for f in blocking[:MAX_ANNOTATIONS]:
         print(
             f"::{level} title=Blocking {f['cve']}::{f['package']} {f['version']} "
@@ -181,6 +221,7 @@ def write_outputs(data: dict, *, blocked: bool) -> None:
     with open(github_output, "a") as f:
         f.write(f"blocked={'true' if blocked else 'false'}\n")
         f.write(f"blocking-count={sum(1 for x in data['findings'] if x['blocking'])}\n")
+        f.write(f"secret-count={len(data.get('secrets', []))}\n")
         f.write(f"critical-count={counts.get('CRITICAL', 0)}\n")
         f.write(f"high-count={counts.get('HIGH', 0)}\n")
 
@@ -209,17 +250,11 @@ def main():
     args = parser.parse_args()
 
     results_path = Path(args.results_file)
-    if args.scan_outcome != "success" and args.policy == "block":
-        print(f"::error::Trivy scan did not succeed (outcome: {args.scan_outcome}); the image could not be verified")
-        write_outputs({"counts": {}, "findings": []}, blocked=True)
+    if args.scan_outcome != "success" or not results_path.exists():
+        reason = f"outcome: {args.scan_outcome}" if args.scan_outcome != "success" else f"{results_path} not found"
+        print(f"::error::Trivy scan did not complete ({reason}); the image could not be checked for secrets")
+        write_outputs({"counts": {}, "findings": [], "secrets": []}, blocked=True)
         raise SystemExit(1)
-    if not results_path.exists():
-        level = "error" if args.policy == "block" else "warning"
-        print(f"::{level}::Trivy results file not found: {results_path}")
-        write_outputs({"counts": {}, "findings": []}, blocked=args.policy == "block")
-        if args.policy == "block":
-            raise SystemExit(1)
-        return
 
     data = parse_trivy_json(results_path)
     summary = generate_summary(args.image_name, args.image_tag, data, args.policy)
@@ -233,7 +268,7 @@ def main():
     emit_annotations(f"{args.image_name}:{args.image_tag}", data, args.policy)
 
     has_blocking = any(f["blocking"] for f in data["findings"])
-    blocked = args.policy == "block" and has_blocking
+    blocked = bool(data["secrets"]) or (args.policy == "block" and has_blocking)
     write_outputs(data, blocked=blocked)
     if blocked:
         raise SystemExit(1)
