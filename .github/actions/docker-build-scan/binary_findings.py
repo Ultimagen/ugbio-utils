@@ -2,12 +2,13 @@
 """
 Report software that Trivy does not inventory: binaries installed outside a package manager.
 
-Two sources, both report-only (warning annotations, exit code 0):
+Two sources:
   - Grype matches on Syft "binary" packages, i.e. versions detected from the executable itself
     (e.g. CPython built into /usr/local by the official python images). Matches on OS and
-    language packages are skipped: Trivy already reports those.
+    language packages are skipped: Trivy already reports those. With policy=block, a Critical
+    match that has a fix, or missing Grype results, fails (exit 1).
   - Executables Syft could not attribute to any package (source-built tools such as samtools).
-    Nothing checks these for vulnerabilities, so they are listed for review.
+    Nothing checks these for vulnerabilities, so they are listed for review (never blocking).
 """
 
 import argparse
@@ -34,13 +35,16 @@ def parse_grype(path: Path) -> list[dict]:
             continue
         vuln = match.get("vulnerability", {})
         fix = vuln.get("fix") or {}
+        fixed = fix.get("versions") or []
+        severity = vuln.get("severity", "Unknown")
         findings.append(
             {
                 "cve": vuln.get("id", "N/A"),
                 "package": artifact.get("name", "N/A"),
                 "version": artifact.get("version", "N/A"),
-                "severity": vuln.get("severity", "Unknown"),
-                "fixed": ", ".join(fix.get("versions") or []) or "NotAvailable",
+                "severity": severity,
+                "fixed": ", ".join(fixed) or "NotAvailable",
+                "blocking": severity == "Critical" and bool(fixed),
                 "location": ", ".join(loc.get("path", "") for loc in artifact.get("locations", [])),
             }
         )
@@ -59,30 +63,38 @@ def parse_unscanned(path: Path) -> list[str]:
     return sorted(p for p in paths if not COVERED_PATHS.search(p))
 
 
-def generate_summary(image: str, findings: list[dict] | None, unscanned: list[str] | None) -> str:
+def generate_summary(image: str, findings: list[dict] | None, unscanned: list[str] | None, policy: str) -> str:
     lines = [
         "",
         "---",
-        "### Binaries not covered by Trivy (report only)",
+        "### Binaries not covered by Trivy",
         f"**Image:** `{image}`",
         "",
     ]
 
     lines.append("#### Vulnerabilities in binaries (Grype)")
     if findings is None:
-        lines.extend(["Grype results not available.", ""])
+        verdict = "release blocked" if policy == "block" else "would block a release"
+        lines.extend(["> [!CAUTION]", f"> **Grype results not available ({verdict}).**", ""])
     elif not findings:
         lines.extend(["✅ No vulnerabilities found in binaries.", ""])
     else:
         counts = Counter(f["severity"] for f in findings)
+        blocking = sum(f["blocking"] for f in findings)
         lines.extend(
             [
                 "| Severity | Count |",
                 "|----------|-------|",
                 *(f"| {s} | {counts[s]} |" for s in SEVERITY_ORDER if counts[s]),
+                f"| Blocking | {blocking} |",
                 "",
             ]
         )
+        if blocking:
+            verdict = "release blocked" if policy == "block" else "would block a release"
+            lines.extend(
+                ["> [!CAUTION]", f"> **{blocking} Critical vulnerabilities with a fix in binaries ({verdict})!**", ""]
+            )
         top = [f for f in findings if f["severity"] in ("Critical", "High")]
         if top:
             lines.extend(
@@ -90,16 +102,17 @@ def generate_summary(image: str, findings: list[dict] | None, unscanned: list[st
                     "<details>",
                     "<summary>Critical and High details</summary>",
                     "",
-                    "| CVE ID | Package | Installed Version | Fixed In | Severity | Location |",
-                    "|--------|---------|-------------------|----------|----------|----------|",
+                    "| CVE ID | Package | Installed Version | Fixed In | Severity | Blocking | Location |",
+                    "|--------|---------|-------------------|----------|----------|----------|----------|",
                 ]
             )
             lines.extend(
-                f"| {f['cve']} | {f['package']} | {f['version']} | {f['fixed']} | {f['severity']} | {f['location']} |"
+                f"| {f['cve']} | {f['package']} | {f['version']} | {f['fixed']} | {f['severity']} | "
+                f"{'yes' if f['blocking'] else 'no'} | {f['location']} |"
                 for f in top[:MAX_ROWS]
             )
             if len(top) > MAX_ROWS:
-                lines.append(f"| ... | | | *({len(top) - MAX_ROWS} more)* | | |")
+                lines.append(f"| ... | | | *({len(top) - MAX_ROWS} more)* | | | |")
             lines.extend(["", "</details>", ""])
 
     lines.append("#### Executables not checked for vulnerabilities")
@@ -122,10 +135,11 @@ def generate_summary(image: str, findings: list[dict] | None, unscanned: list[st
     return "\n".join(lines)
 
 
-def emit_annotations(image: str, findings: list[dict] | None, unscanned: list[str] | None) -> None:
+def emit_annotations(image: str, findings: list[dict] | None, unscanned: list[str] | None, policy: str) -> None:
     for f in [f for f in findings or [] if f["severity"] == "Critical"][:MAX_ANNOTATIONS]:
+        level = "error" if policy == "block" and f["blocking"] else "warning"
         print(
-            f"::warning title=Binary {f['cve']}::{f['package']} {f['version']} "
+            f"::{level} title=Binary {f['cve']}::{f['package']} {f['version']} "
             f"(fixed in {f['fixed']}) in {f['location']}"
         )
     if unscanned:
@@ -144,17 +158,28 @@ def main() -> None:
     ap.add_argument("--grype-results", required=True, help="Grype JSON output (scan of the SBOM)")
     ap.add_argument("--sbom", required=True, help="Syft JSON SBOM")
     ap.add_argument("--image", required=True, help="Image reference (for the summary)")
+    ap.add_argument(
+        "--policy",
+        choices=["warn", "block"],
+        default="warn",
+        help="warn: report only; block: exit 1 on a Critical binary vulnerability with a fix or missing Grype results",
+    )
     ap.add_argument("--github-step-summary", default="", help="Path to GITHUB_STEP_SUMMARY file")
     args = ap.parse_args()
 
     findings = _load(args.grype_results, parse_grype, "Grype results")
     unscanned = _load(args.sbom, parse_unscanned, "SBOM")
-    summary = generate_summary(args.image, findings, unscanned)
+    summary = generate_summary(args.image, findings, unscanned, args.policy)
     print(summary)
     if args.github_step_summary:
         with open(args.github_step_summary, "a") as f:
             f.write(summary)
-    emit_annotations(args.image, findings, unscanned)
+    emit_annotations(args.image, findings, unscanned, args.policy)
+
+    blocked = args.policy == "block" and (findings is None or any(f["blocking"] for f in findings))
+    if blocked:
+        print("::error::Binaries check failed: Critical vulnerabilities with a fix, or no Grype results")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

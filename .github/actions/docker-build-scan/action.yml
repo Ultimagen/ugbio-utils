@@ -39,7 +39,7 @@ inputs:
     description: "Image tag (for the summary and artifact name)"
     required: true
   policy:
-    description: "'warn' (default): only report findings. 'block': fail on a CRITICAL Dockerfile misconfiguration, a CRITICAL vulnerability that has a fix, or a CRITICAL vulnerability in a library (jar, pip, npm, ...)"
+    description: "'warn' (default): only report findings. 'block': fail on a CRITICAL Dockerfile misconfiguration, a CRITICAL vulnerability that has a fix, a CRITICAL vulnerability in a library (jar, pip, npm, ...), or a CRITICAL vulnerability with a fix in a binary found by Grype (or no Grype results)"
     required: false
     default: "warn"
   ignore-unfixed:
@@ -66,9 +66,9 @@ inputs:
 outputs:
   blocked:
     description: "'true' if a secret or the build token was found, or policy=block and blocking vulnerabilities were found"
-    value: ${{ (steps.gate.outputs.blocked == 'true' || steps.token-check.outcome == 'failure') && 'true' || 'false' }}
+    value: ${{ (steps.gate.outputs.blocked == 'true' || steps.token-check.outcome == 'failure' || steps.binaries.outcome == 'failure') && 'true' || 'false' }}
   blocking-count:
-    description: "Number of blocking findings"
+    description: "Number of blocking Trivy vulnerabilities"
     value: ${{ steps.gate.outputs.blocking-count }}
 
 runs:
@@ -272,9 +272,9 @@ runs:
           grype-results.json
         retention-days: ${{ inputs.artifact-retention-days }}
 
-    - name: Report binaries not covered by Trivy
+    - name: Check binaries not covered by Trivy
+      id: binaries
       if: always() && steps.build.outcome == 'success'
-      continue-on-error: true
       shell: bash
       env:
         SCAN_REF: ${{ inputs.scan-ref }}
@@ -283,4 +283,5 @@ runs:
           --grype-results grype-results.json \
           --sbom sbom.json \
           --image "${SCAN_REF}" \
+          --policy "${{ inputs.policy }}" \
           --github-step-summary "$GITHUB_STEP_SUMMARY"

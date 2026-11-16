@@ -96,7 +96,7 @@ Every image is built and scanned by one composite action, `.github/actions/docke
 - **Trivy Dockerfile config scan** of the built Dockerfile: reports CRITICAL/HIGH; fails on CRITICAL with `policy: block`.
 - **Trivy image scan** (vulnerabilities + secrets), gated by `trivy_json_to_summary.py`: with `policy: block`, a CRITICAL vulnerability with a fix, or a CRITICAL in a language package, fails. A HIGH/CRITICAL secret fails under any policy.
 - **Build-token check**: the image must not contain the token passed as the `github_token` build secret (raw or as the base64 git `extraheader`).
-- **Syft + Grype binaries report** (`binary_findings.py`, report only): CVEs in binaries Trivy can't see (e.g. CPython in `/usr/local`) and executables that belong to no package (source-built tools).
+- **Syft + Grype binaries check** (`binary_findings.py`): CVEs in binaries Trivy can't see (e.g. CPython in `/usr/local`); with `policy: block`, a CRITICAL with a fix, or missing Grype results, fails. It also lists executables that belong to no package (source-built tools), report only.
 
 `ci.yml` also runs a Trivy filesystem scan of the repo (lockfile vulnerabilities, secrets and misconfigurations in every Dockerfile, including `ugbio_base/Dockerfile`); it fails the PR on CRITICAL/HIGH findings.
 
