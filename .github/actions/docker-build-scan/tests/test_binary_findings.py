@@ -72,6 +72,7 @@ def test_parse_grype_keeps_only_binary_packages_sorted_by_severity(tmp_path):
     assert findings[1]["fixed"] == "3.12.14"
     assert findings[2]["fixed"] == "NotAvailable"
     assert findings[0]["location"] == "/usr/local/bin/python3.12, /usr/local/lib/libpython3.12.so.1.0"
+    assert [f["blocking"] for f in findings] == [True, False, False]
 
 
 def test_parse_unscanned_skips_language_packages_and_cpython_modules(tmp_path):
@@ -80,22 +81,24 @@ def test_parse_unscanned_skips_language_packages_and_cpython_modules(tmp_path):
 
 def test_summary_lists_high_and_critical_only_in_details(tmp_path):
     findings = bf.parse_grype(_write(tmp_path, "grype.json", GRYPE))
-    summary = bf.generate_summary("img:tag", findings, ["/usr/local/bin/samtools"])
+    summary = bf.generate_summary("img:tag", findings, ["/usr/local/bin/samtools"], "warn")
     assert "| Critical | 1 |" in summary
     assert "| Medium | 1 |" in summary
+    assert "| Blocking | 1 |" in summary
+    assert "would block a release" in summary
     assert "CVE-2026-6100" in summary
     assert "CVE-2026-0001" not in summary
     assert "- `/usr/local/bin/samtools`" in summary
 
 
 def test_summary_when_clean():
-    summary = bf.generate_summary("img:tag", [], [])
+    summary = bf.generate_summary("img:tag", [], [], "warn")
     assert "No vulnerabilities found in binaries" in summary
     assert "Every executable belongs to a known package" in summary
 
 
 def test_summary_when_results_missing():
-    summary = bf.generate_summary("img:tag", None, None)
+    summary = bf.generate_summary("img:tag", None, None, "warn")
     assert "Grype results not available" in summary
     assert "SBOM not available" in summary
 
@@ -126,3 +129,33 @@ def test_cli_missing_inputs_warns_and_passes(tmp_path):
     assert proc.returncode == 0
     assert "::warning::Grype results not found" in proc.stdout
     assert "::warning::SBOM not found" in proc.stdout
+
+
+def test_parse_grype_critical_without_fix_is_not_blocking(tmp_path):
+    grype = {"matches": [_match(PYTHON_BINARY, "CVE-2026-0002", "Critical", [])]}
+    assert bf.parse_grype(_write(tmp_path, "grype.json", grype))[0]["blocking"] is False
+
+
+def test_cli_block_fails_on_critical_binary_with_fix(tmp_path):
+    summary = tmp_path / "summary.md"
+    grype = _write(tmp_path, "grype.json", GRYPE)
+    sbom = _write(tmp_path, "sbom.json", SBOM)
+    proc = _run(["--grype-results", str(grype), "--sbom", str(sbom), "--policy", "block"], summary)
+    assert proc.returncode == 1
+    assert "::error title=Binary CVE-2026-19445::python 3.12.13" in proc.stdout
+    assert "release blocked" in summary.read_text()
+
+
+def test_cli_block_passes_without_blocking_findings(tmp_path):
+    summary = tmp_path / "summary.md"
+    grype = _write(tmp_path, "grype.json", {"matches": [_match(PYTHON_BINARY, "CVE-2026-6100", "High", ["3.12.14"])]})
+    sbom = _write(tmp_path, "sbom.json", SBOM)
+    proc = _run(["--grype-results", str(grype), "--sbom", str(sbom), "--policy", "block"], summary)
+    assert proc.returncode == 0
+
+
+def test_cli_block_fails_when_grype_results_missing(tmp_path):
+    summary = tmp_path / "summary.md"
+    sbom = _write(tmp_path, "sbom.json", SBOM)
+    proc = _run(["--grype-results", str(tmp_path / "none.json"), "--sbom", str(sbom), "--policy", "block"], summary)
+    assert proc.returncode == 1
