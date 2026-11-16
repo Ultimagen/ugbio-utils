@@ -2,12 +2,15 @@
 ARG BASE_IMAGE
 ARG BASE_BUILD_IMAGE
 ARG OUT_DIR=/tmp/ugbio
-# R from CRAN's Debian packages: the same version in both stages, so the R library built here runs in the runtime
-ARG R_VERSION=4.5.3-1~bookwormcran.0
+# R from Posit's prebuilt Debian 12 package (installs to /opt/R/<version>), pinned by SHA-256. CRAN's own Debian
+# repository is not used: its signing key expired on 2026-11-15, so apt rejects it.
+ARG R_VERSION=4.5.3
+ARG R_DEB_SHA256=66bfa95bc41608867cdff09dd2798acf5d6b39fe1b6c756b387cc25a1700bf6d
 FROM $BASE_BUILD_IMAGE AS build
 
 ARG OUT_DIR
 ARG R_VERSION
+ARG R_DEB_SHA256
 ARG MODULE_DIR=cnv
 RUN mkdir -p $OUT_DIR
 
@@ -30,13 +33,11 @@ RUN AVX2=1 pip install ${OUT_DIR}/*.whl
 RUN pip install pytest
 
 # Optional cn.mops path (src/cnv/cnmops): R and the R packages its scripts load, compiled here into /opt/rlib
-RUN apt-get update && apt-get install -y --no-install-recommends gnupg dirmngr ca-certificates && \
-    gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
-    gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' > /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
-    echo "deb https://cloud.r-project.org/bin/linux/debian bookworm-cran40/" > /etc/apt/sources.list.d/cran.list && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    r-base-core=${R_VERSION} r-base-dev=${R_VERSION} gfortran libssl-dev libxml2-dev && \
-    rm -rf /var/lib/apt/lists/*
+RUN python -c "import urllib.request; urllib.request.urlretrieve('https://cdn.posit.co/r/debian-12/pkgs/r-${R_VERSION}_1_amd64.deb', '/tmp/r.deb')" && \
+    echo "${R_DEB_SHA256}  /tmp/r.deb" | sha256sum -c - && \
+    apt-get update && apt-get install -y --no-install-recommends /tmp/r.deb libssl-dev libxml2-dev && \
+    ln -s /opt/R/${R_VERSION}/bin/R /usr/local/bin/R && ln -s /opt/R/${R_VERSION}/bin/Rscript /usr/local/bin/Rscript && \
+    rm -rf /var/lib/apt/lists/* /tmp/r.deb
 RUN mkdir -p /opt/rlib && \
     Rscript -e "install.packages(c('argparse', 'magrittr', 'BiocManager'), lib='/opt/rlib', repos='https://cloud.r-project.org', Ncpus=4)" && \
     R_LIBS=/opt/rlib Rscript -e "BiocManager::install(c('GenomicRanges', 'rhdf5', 'rtracklayer', 'Rsamtools', 'Biobase', 'GenomeInfoDb'), lib='/opt/rlib', ask=FALSE, update=FALSE, Ncpus=4)" && \
@@ -53,15 +54,16 @@ RUN git clone --depth 1 --branch ug.master https://github.com/Ultimagen/cn.mops.
 FROM $BASE_IMAGE
 ARG R_VERSION
 
-# R runtime only (no compilers or -dev headers) for the cn.mops scripts; gnupg is removed once the key is in
-RUN apt-get update && apt-get install -y --no-install-recommends gnupg dirmngr ca-certificates && \
-    gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
-    gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' > /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
-    echo "deb https://cloud.r-project.org/bin/linux/debian bookworm-cran40/" > /etc/apt/sources.list.d/cran.list && \
-    apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends r-base-core=${R_VERSION} libxml2 \
+# R runtime only for the cn.mops scripts: R is copied from the build stage, with the shared libraries it and the
+# R packages load (no compilers or -dev headers); cairo / pango for the PNG of normalize_reads_count.R
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    libopenblas0-pthread libgfortran5 libgomp1 libreadline8 libpcre2-8-0 libcurl4 libicu72 libdeflate0 libbz2-1.0 \
+    liblzma5 libzstd1 zlib1g libxml2 libssl3 libpng16-16 libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libtiff6 \
+    libx11-6 libxt6 fonts-dejavu-core \
     openjdk-17-jre-headless && \
-    apt-get purge -y gnupg dirmngr && apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/* /root/.gnupg
+    rm -rf /var/lib/apt/lists/*
+COPY --from=build /opt/R /opt/R
+RUN ln -s /opt/R/${R_VERSION}/bin/R /usr/local/bin/R && ln -s /opt/R/${R_VERSION}/bin/Rscript /usr/local/bin/Rscript
 
 RUN printf '#!/bin/sh\nexec java -jar /opt/picard/picard.jar "$@"\n' > /usr/local/bin/picard && chmod +x /usr/local/bin/picard
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
