@@ -20,6 +20,7 @@ def sorter_to_h5(
     input_json_file: str,
     output_h5_file: str,
     metric_mapping_file: str = METRIC_MAPPING_FILE,
+    contamination: float | None = None,
 ) -> str:
     """
     Aggregate sorter metrics into a h5 file of the format: aggregated_metrics.h5
@@ -33,6 +34,9 @@ def sorter_to_h5(
         path to the metric mapping file,
     output_h5_file:
         path to which the output h5 file will be written to
+    contamination:
+        optional contamination estimate (e.g. VerifyBamID FREEMIX); when given, it is written
+        under the "contamination" key in the same format as collect_existing_metrics
 
     Returns
     -------
@@ -171,6 +175,10 @@ def sorter_to_h5(
             val = pd.DataFrame(val, index=[0])  # noqa PLW2901
         val.to_hdf(output_h5_file, key=key, mode="a")
 
+    if contamination is not None:
+        contamination_df = pd.DataFrame(pd.Series(data=[float(contamination)], index=["contamination"])).T
+        contamination_df.to_hdf(output_h5_file, key="contamination", mode="a")
+
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -205,6 +213,13 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         default=METRIC_MAPPING_FILE,
         help="Path to the metric mapping file",
     )
+    parser.add_argument(
+        "--contamination",
+        type=float,
+        required=False,
+        default=None,
+        help="Contamination estimate (e.g. VerifyBamID FREEMIX) to add under the 'contamination' key",
+    )
     return parser.parse_args(argv[1:])
 
 
@@ -216,6 +231,7 @@ def run(argv: list[str]):
         input_json_file=args_in.input_json_file,
         metric_mapping_file=args_in.metric_mapping_file,
         output_h5_file=args_in.output_h5_file,
+        contamination=args_in.contamination,
     )
 
 
