@@ -77,7 +77,7 @@ runs:
         github-token: ${{ inputs.github-token }}
         image-name: ${{ inputs.workspace-folder }}
         image-tag: ci
-        policy: block
+        policy: warn
         upload-artifact: "false"
 
     - name: Run python tests (if exist) in the container

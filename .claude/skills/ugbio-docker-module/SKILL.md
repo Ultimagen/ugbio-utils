@@ -91,14 +91,14 @@ This is not a "which base" choice, it's a "can't upgrade yet" blocker:
 
 ## CVE Scanning in the Build Pipeline
 
-Every image is built and scanned by one composite action, `.github/actions/docker-build-scan`, used both by CI (`run-workspace-tests`, nothing pushed) and by `docker-build-push.yml` (which pushes only if the action passed). CI, releases and the base images use `policy: block`; dev member builds (`build-ugbio-member-docker.yml`) use `warn`. In CI a blocking finding fails the module job before its tests run. The action runs, before any push:
+Every image is built and scanned by one composite action, `.github/actions/docker-build-scan`, used both by CI (`run-workspace-tests`, nothing pushed) and by `docker-build-push.yml` (which pushes only if the action passed). Releases and the base images use `policy: block`; CI and dev member builds (`build-ugbio-member-docker.yml`) use `warn`, which only reports (secrets block under any policy). The action runs, before any push:
 
 - **Trivy Dockerfile config scan** of the built Dockerfile: reports CRITICAL/HIGH; fails on CRITICAL with `policy: block`.
 - **Trivy image scan** (vulnerabilities + secrets), gated by `trivy_json_to_summary.py`: with `policy: block`, a CRITICAL vulnerability with a fix, or a CRITICAL in a language package, fails. A HIGH/CRITICAL secret fails under any policy.
 - **Build-token check**: the image must not contain the token passed as the `github_token` build secret (raw or as the base64 git `extraheader`).
 - **Syft + Grype binaries report** (`binary_findings.py`, report only): CVEs in binaries Trivy can't see (e.g. CPython in `/usr/local`) and executables that belong to no package (source-built tools).
 
-`ci.yml` also runs a Trivy filesystem scan of the repo (lockfile + secrets).
+`ci.yml` also runs a Trivy filesystem scan of the repo (lockfile vulnerabilities, secrets and misconfigurations in every Dockerfile, including `ugbio_base/Dockerfile`); it fails the PR on CRITICAL/HIGH findings.
 
 **Practical flow:** push your Dockerfile change → the PR's CI builds and scans every module → check the job summary (Trivy table, binaries section) → compare CRITICAL count before/after. CI uploads no artifact; for the full JSON results (`trivy-results.json`, `sbom.json`, `grype-results.json`), run `build-ugbio-member-docker.yml` for the module and download its `trivy-image-findings-*` artifact. That artifact is not uploaded when a secret was found (the results embed the image config).
 

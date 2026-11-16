@@ -77,7 +77,7 @@ jobs:
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
-          scanners: 'vuln,secret'
+          scanners: 'vuln,secret,misconfig'
           version: ${{ env.TRIVY_VERSION }}
 
   ugbio-utils-CI:
