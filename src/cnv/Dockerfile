@@ -43,30 +43,24 @@ RUN apt-get update && apt-get upgrade -y && \
     libopenblas-dev \
     libstdc++-12-dev \
     libhdf5-dev \
+    libpng-dev \
     libparasail8 \
     tzdata \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
 
-# Download and install R
-# Install R from CRAN's pre-compiled Debian packages
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    dirmngr \
-    gnupg \
-    apt-transport-https \
-    ca-certificates \
-    software-properties-common && \
-    gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
-    gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' | tee /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
-    echo "deb https://cloud.r-project.org/bin/linux/debian bookworm-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-    r-base=4.5.3-1~bookwormcran.0 \
-    r-base-dev=4.5.3-1~bookwormcran.0 && \
+# Install R from Posit's prebuilt Debian 12 package (installs to /opt/R/<version>), pinned by SHA-256.
+# CRAN's own Debian repository is not used: its signing key expired on 2026-11-15, so apt rejects it.
+ARG R_VERSION=4.5.3
+ARG R_DEB_SHA256=66bfa95bc41608867cdff09dd2798acf5d6b39fe1b6c756b387cc25a1700bf6d
+RUN curl -fsSL -o /tmp/r.deb https://cdn.posit.co/r/debian-12/pkgs/r-${R_VERSION}_1_amd64.deb && \
+    echo "${R_DEB_SHA256}  /tmp/r.deb" | sha256sum -c - && \
+    apt-get update && apt-get install -y --no-install-recommends /tmp/r.deb && \
+    ln -s /opt/R/${R_VERSION}/bin/R /usr/local/bin/R && \
+    ln -s /opt/R/${R_VERSION}/bin/Rscript /usr/local/bin/Rscript && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* /tmp/r.deb
 
 # Install samtools
 ARG SAMTOOLS_VERSION=1.17
@@ -98,33 +92,23 @@ RUN cd /opt && \
     fi
 
 
-# Install R packages using apt-get where available (pre-compiled binaries from Debian)
-# This is much faster than compiling from source
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    r-cran-cpp11 \
-    r-cran-crayon \
-    r-cran-formatr \
-    r-cran-jsonlite \
-    r-cran-magrittr \
-    r-cran-r6 \
-    r-cran-rcurl \
-    r-cran-snow && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install remaining R packages that aren't available as Debian packages
-# Using BiocManager for Bioconductor packages and install.packages for CRAN packages
-RUN R -e "install.packages(c('argparse', 'BiocManager', 'bitops', 'codetools', 'findpython', 'futile.logger', 'futile.options', 'lambda.r'), repos='https://cloud.r-project.org/', Ncpus=4)"
+# Install CRAN packages (not from Debian's r-cran-* packages: those depend on Debian's own r-base-core)
+# Using BiocManager for Bioconductor packages and install.packages for CRAN packages.
+# Each R install step drops the R package docs (not used at runtime) in the same layer: openssl's include example
+# private keys, which the image secret scan blocks in any layer
+RUN R -e "install.packages(c('cpp11', 'crayon', 'formatR', 'jsonlite', 'magrittr', 'R6', 'RCurl', 'snow', 'argparse', 'BiocManager', 'bitops', 'codetools', 'findpython', 'futile.logger', 'futile.options', 'lambda.r'), repos='https://cloud.r-project.org/', Ncpus=4)" && \
+    find /opt/R/*/lib/R/library -mindepth 2 -maxdepth 2 -type d -name doc -prune -exec rm -rf {} +
 
 # Install Bioconductor packages - using Ncpus for parallel compilation
-RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase', 'GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'rhdf5', 'rhdf5filters', 'Rhtslib', 'Rsamtools', 'GenomicAlignments', 'BSgenome', 'VariantAnnotation'), ask=FALSE, Ncpus=4)"
+RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase', 'GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'rhdf5', 'rhdf5filters', 'Rhtslib', 'Rsamtools', 'GenomicAlignments', 'BSgenome', 'VariantAnnotation'), ask=FALSE, Ncpus=4)" && \
+    find /opt/R/*/lib/R/library -mindepth 2 -maxdepth 2 -type d -name doc -prune -exec rm -rf {} +
 
 # Remove unnecessary files
 RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 
 # Install cn.mops packages from local
-RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
+RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/ && \
+    find /opt/R/*/lib/R/library -mindepth 2 -maxdepth 2 -type d -name doc -prune -exec rm -rf {} +
 
 # Download para_jalign binary from private jalign repository.
 # The bookworm build links the distro libparasail8 (parasail 2.6) and uses its striped kernels,
