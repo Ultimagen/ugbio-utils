@@ -11,13 +11,19 @@ CSS = (
     "th,td{border:1px solid #ccc;padding:4px 10px;text-align:left}th{background:#eee}"
     ".yes{color:#1a7f37;font-weight:bold}.no{color:#888}"
 )
+REPORT_NAME = "report.html"
 # bcftools type selection for each variant class
 TYPE_OPTIONS = {"snps": ["-v", "snps"], "indels": ["-V", "snps"]}
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="sequins_report", description=__doc__)
-    ap.add_argument("--base-file-name", required=True, help="Prefix of the output file")
+    ap.add_argument("--base-file-name", required=True, help="Sample name, shown in the report title")
+    ap.add_argument("--output", default=REPORT_NAME, help="Output HTML file (default: %(default)s)")
+    ap.add_argument("--input-crams", nargs="+", required=True, help="Paths of the input CRAMs the reads came from")
+    ap.add_argument(
+        "--target-coverage", type=int, required=True, help="Coverage the detected genomes were downsampled to"
+    )
     ap.add_argument("--min-median-depth", type=int, required=True, help="Detection threshold on the median depth")
     ap.add_argument("--genomes", nargs="+", required=True, help="Genome names")
     ap.add_argument("--median-depths", nargs="+", type=int, required=True, help="Median depth per genome")
@@ -94,14 +100,25 @@ def build_report(args: argparse.Namespace) -> str:
         f"<h1>Sequins report: {title}</h1>",
         "<p>A sequins spike is detected when its median depth at the truth-variant sites (duplicates counted) "
         f"is above {args.min_median_depth}.</p>",
+        "<h2>Input</h2>",
+        "<p>Input CRAMs (unmapped reads and reads with an unmapped mate were re-aligned to the sequins genomes):</p>",
+        "<ul>" + "".join(f"<li>{html.escape(c)}</li>" for c in args.input_crams) + "</ul>",
+        f"<p>Reads of each detected genome were downsampled (sequintools calibrate) to a constant coverage of "
+        f"<b>{args.target_coverage}x</b> before variant calling.</p>",
         "<h2>Detected spikes</h2>",
         f"<p>Detected: {html.escape(' '.join(names))}</p>" if names else "<p>No sequins spike was detected.</p>",
     ]
     rows = [
-        [html.escape(g), str(med), str(mean), '<span class="yes">yes</span>' if d else '<span class="no">no</span>']
+        [
+            html.escape(g),
+            str(med),
+            str(mean),
+            '<span class="yes">yes</span>' if d else '<span class="no">no</span>',
+            f"{args.target_coverage}x" if d else "-",
+        ]
         for g, med, mean, d in zip(args.genomes, args.median_depths, args.mean_depths, detected, strict=True)
     ]
-    out += _table(["genome", "median depth", "mean depth", "detected"], rows)
+    out += _table(["genome", "median depth", "mean depth", "detected", "downsampled to"], rows)
 
     k = 0  # indexes the per-genome result lists, which hold only the detected genomes
     for genome, median, is_detected in zip(args.genomes, args.median_depths, detected, strict=True):
@@ -127,10 +144,9 @@ def build_report(args: argparse.Namespace) -> str:
 
 def run(argv: list[str]) -> str:
     args = parse_args(argv[1:])
-    report_path = f"{args.base_file_name}.sequins_report.html"
-    with open(report_path, "w") as fh:
+    with open(args.output, "w") as fh:
         fh.write(build_report(args))
-    return report_path
+    return args.output
 
 
 def main() -> None:

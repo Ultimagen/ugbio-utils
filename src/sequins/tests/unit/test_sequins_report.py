@@ -29,7 +29,10 @@ def make_genome(tmp_path, name, tpb, tp, fp, fn, discordant_rows):
 def cli(tmp_path, genomes, medians, detected, results, min_depth=5):
     argv = [
         "sequins_report",
-        "--base-file-name", str(tmp_path / "out"),
+        "--base-file-name", "sample1",
+        "--output", str(tmp_path / "report.html"),
+        "--input-crams", "s3://bucket/a.cram", "s3://bucket/b<x>.cram",
+        "--target-coverage", "40",
         "--min-median-depth", str(min_depth),
         "--genomes", *genomes,
         "--median-depths", *map(str, medians),
@@ -42,6 +45,30 @@ def cli(tmp_path, genomes, medians, detected, results, min_depth=5):
         "--discordant-tables", *[r["disc"] for r in results],
     ]  # fmt: skip
     return open(sequins_report.run(argv)).read()  # noqa: SIM115
+
+
+def test_input_crams_and_coverage(tmp_path):
+    g = make_genome(tmp_path, "g", [SNP], [SNP], [], [], [])
+    text = cli(tmp_path, ["sequins_clinical", "sequins_core"], [30, 1], ["true", "false"], [g])
+    assert "<li>s3://bucket/a.cram</li>" in text
+    assert "<li>s3://bucket/b&lt;x&gt;.cram</li>" in text
+    assert "<b>40x</b>" in text
+    assert "<td>40x</td>" in text  # detected genome only
+    assert text.count("<td>-</td>") == 1
+
+
+def test_default_output_name(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    g = make_genome(tmp_path, "g", [], [], [], [], [])
+    argv = [
+        "sequins_report", "--base-file-name", "s", "--min-median-depth", "5",
+        "--input-crams", "a.cram", "--target-coverage", "40",
+        "--genomes", "x", "--median-depths", "9", "--mean-depths", "9", "--detected", "true",
+        "--tp-baseline-vcfs", g["tpb"], "--tp-vcfs", g["tp"], "--fp-vcfs", g["fp"], "--fn-vcfs", g["fn"],
+        "--discordant-tables", g["disc"],
+    ]  # fmt: skip
+    assert sequins_report.run(argv) == "report.html"
+    assert (tmp_path / "report.html").exists()
 
 
 def test_precision_recall_f1():
@@ -92,6 +119,7 @@ def test_html_escaping(tmp_path):
 def test_mismatched_lengths_fail(tmp_path):
     with pytest.raises(SystemExit):
         sequins_report.parse_args(
-            ["--base-file-name", "x", "--min-median-depth", "5", "--genomes", "a", "b",
+            ["--base-file-name", "x", "--min-median-depth", "5", "--input-crams", "a.cram", "--target-coverage", "40",
+             "--genomes", "a", "b",
              "--median-depths", "1", "--mean-depths", "1", "--detected", "false"]
         )  # fmt: skip

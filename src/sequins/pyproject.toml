@@ -14,6 +14,7 @@ text = "Apache-2.0"
 [project.scripts]
 run_tests = "pytest:main"
 sequins_report = "ugbio_sequins.sequins_report:main"
+sequins_igv = "ugbio_sequins.sequins_igv:main"
 
 [build-system]
 requires = [
