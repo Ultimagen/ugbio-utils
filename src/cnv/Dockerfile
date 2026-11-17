@@ -43,6 +43,7 @@ RUN apt-get update && apt-get upgrade -y && \
     libopenblas-dev \
     libstdc++-12-dev \
     libhdf5-dev \
+    libpng-dev \
     libparasail8 \
     tzdata \
     && apt-get clean && \
@@ -101,8 +102,10 @@ RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', '
 # Remove unnecessary files
 RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 
-# Install cn.mops packages from local
-RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
+# Install cn.mops packages from local; then drop the R package docs (not used at runtime): openssl's include
+# example private keys, which the image secret scan blocks
+RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/ && \
+    find /opt/R/*/lib/R/library -mindepth 2 -maxdepth 2 -type d -name doc -prune -exec rm -rf {} +
 
 # Download para_jalign binary from private jalign repository.
 # The bookworm build links the distro libparasail8 (parasail 2.6) and uses its striped kernels,
