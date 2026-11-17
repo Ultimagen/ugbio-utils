@@ -34,6 +34,7 @@ src/
 ├── ppmseq/       (6 files)  ugbio_ppmseq       - PPMSeq QC analysis
 ├── srsnv/        (20 files) ugbio_srsnv        - Single-read SNV calling
 ├── methylation/  (12 files) ugbio_methylation  - Methylation analysis
+├── sequins/      (2 files)  ugbio_sequins      - Sequins analysis HTML report
 ├── single_cell/  (8 files)  ugbio_single_cell  - Single-cell genomics
 ├── cloud_utils/  (4 files)  ugbio_cloud_utils  - AWS/GCS integration
 ├── omics/        (25 files) ugbio_omics        - AWS HealthOmics workflows
@@ -45,6 +46,7 @@ src/
 
 **Level 0 (Foundation):**
 - ugbio_core (no dependencies)
+- ugbio_sequins (no workspace dependencies)
 - ugbio_cloud_utils (no workspace dependencies)
 - ugbio_freec (no workspace dependencies)
 
@@ -242,11 +244,21 @@ gh run list --workflow build-ugbio-member-docker.yml --limit 5
 gh run view <run-id>
 ```
 
-**Available modules**: `core`, `cnv`, `comparison`, `featuremap`, `filtering`, `mrd`, `ppmseq`, `srsnv`, `methylation`, `single_cell`, `cloud_utils`, `omics`, `freec`
+**Available modules**: `core`, `cnv`, `comparison`, `featuremap`, `filtering`, `mrd`, `ppmseq`, `srsnv`, `methylation`, `single_cell`, `cloud_utils`, `omics`, `freec`, `sequins`
 
 **Docker registries**:
 - **AWS ECR** (internal): `337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_<module>:<tag>`
 - **Docker Hub** (public): `ultimagenomics/ugbio_<module>:<tag>`
+
+### Adding a New Module (Docker)
+
+1. Create `src/<module>/` with `pyproject.toml` (name `ugbio_<module>`, version equal to the root `pyproject.toml`,
+   `run_tests = "pytest:main"` entry point), `Dockerfile` (copy `src/freec/Dockerfile`; set `MODULE_DIR`),
+   `README.<module>.md`, `ugbio_<module>/__init__.py` and `tests/unit/`. The uv workspace picks up `src/*` automatically.
+2. Add `"<module>"` to the `member` options in `.github/workflows/build-ugbio-member-docker.yml`.
+3. Update this file (workspace tree, available modules, module description).
+4. Push the branch and run `gh workflow run build-ugbio-member-docker.yml --ref <branch> -f member=<module>`;
+   the image tag is `test_<short-sha>` unless `image-tag` is given.
 
 ## Coding Conventions
 **Purpose:** Provides VCF processing, utilities, and infrastructure for all other modules.
@@ -351,6 +363,10 @@ gh run view <run-id>
 **ugbio_omics** (25 files):
 - AWS HealthOmics cost analysis, performance monitoring
 - Entry points: `compare_cromwell_omics`, `get_omics_logs`, `performance`, etc.
+
+**ugbio_sequins** (2 files):
+- Sequins analysis HTML report (detected spikes, SNP/indel precision/recall/F1, discordant variants) from rtg vcfeval outputs
+- Entry point: `sequins_report`; used by the `SequinsAnalysis` WDL in terra_pipeline
 
 **ugbio_methylation, ugbio_single_cell, ugbio_ppmseq, ugbio_cloud_utils, ugbio_freec**:
 - Specialized analysis domains

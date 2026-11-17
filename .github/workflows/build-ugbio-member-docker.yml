@@ -18,6 +18,7 @@ on:
           - "mrd"
           - "omics"
           - "ppmseq"
+          - "sequins"
           - "single_cell"
           - "srsnv"
           - "pypgx"
