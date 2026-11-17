@@ -46,9 +46,11 @@ RUN mkdir -p /opt/rlib && \
 ARG PICARD_VERSION=3.4.0
 RUN mkdir -p /opt/picard && \
     python -c "import urllib.request; urllib.request.urlretrieve('https://github.com/broadinstitute/picard/releases/download/${PICARD_VERSION}/picard.jar', '/opt/picard/picard.jar')"
+# R package docs are not used at runtime; openssl's include example private keys, which the image secret scan blocks
 RUN git clone --depth 1 --branch ug.master https://github.com/Ultimagen/cn.mops.git /tmp/cn.mops && \
     R_LIBS=/opt/rlib R CMD INSTALL --preclean --no-multiarch -l /opt/rlib /tmp/cn.mops && \
-    rm -rf /tmp/cn.mops
+    rm -rf /tmp/cn.mops && \
+    find /opt/rlib -mindepth 2 -maxdepth 2 -type d -name doc -prune -exec rm -rf {} +
 
 ##################################################################
 FROM $BASE_IMAGE
