@@ -93,17 +93,20 @@ RUN cd /opt && \
 
 
 # Install CRAN packages (not from Debian's r-cran-* packages: those depend on Debian's own r-base-core)
-# Using BiocManager for Bioconductor packages and install.packages for CRAN packages
-RUN R -e "install.packages(c('cpp11', 'crayon', 'formatR', 'jsonlite', 'magrittr', 'R6', 'RCurl', 'snow', 'argparse', 'BiocManager', 'bitops', 'codetools', 'findpython', 'futile.logger', 'futile.options', 'lambda.r'), repos='https://cloud.r-project.org/', Ncpus=4)"
+# Using BiocManager for Bioconductor packages and install.packages for CRAN packages.
+# Each R install step drops the R package docs (not used at runtime) in the same layer: openssl's include example
+# private keys, which the image secret scan blocks in any layer
+RUN R -e "install.packages(c('cpp11', 'crayon', 'formatR', 'jsonlite', 'magrittr', 'R6', 'RCurl', 'snow', 'argparse', 'BiocManager', 'bitops', 'codetools', 'findpython', 'futile.logger', 'futile.options', 'lambda.r'), repos='https://cloud.r-project.org/', Ncpus=4)" && \
+    find /opt/R/*/lib/R/library -mindepth 2 -maxdepth 2 -type d -name doc -prune -exec rm -rf {} +
 
 # Install Bioconductor packages - using Ncpus for parallel compilation
-RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase', 'GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'rhdf5', 'rhdf5filters', 'Rhtslib', 'Rsamtools', 'GenomicAlignments', 'BSgenome', 'VariantAnnotation'), ask=FALSE, Ncpus=4)"
+RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase', 'GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'rhdf5', 'rhdf5filters', 'Rhtslib', 'Rsamtools', 'GenomicAlignments', 'BSgenome', 'VariantAnnotation'), ask=FALSE, Ncpus=4)" && \
+    find /opt/R/*/lib/R/library -mindepth 2 -maxdepth 2 -type d -name doc -prune -exec rm -rf {} +
 
 # Remove unnecessary files
 RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 
-# Install cn.mops packages from local; then drop the R package docs (not used at runtime): openssl's include
-# example private keys, which the image secret scan blocks
+# Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/ && \
     find /opt/R/*/lib/R/library -mindepth 2 -maxdepth 2 -type d -name doc -prune -exec rm -rf {} +
 
