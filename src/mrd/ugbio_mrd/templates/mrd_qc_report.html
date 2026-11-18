@@ -267,12 +267,13 @@
           <div class="stat">
             <span class="stat-label">ctDNA VAF</span>
             <span class="stat-value">{{ vaf_str }}</span>
-            <span class="stat-sub">= Total Signal / Total Coverage</span>
+            <span class="stat-sub">= (Supporting Reads / P) / Total Coverage</span>
+            <span class="stat-sub">{{ ci_level_str }} CI: {{ vaf_ci_str }}</span>
           </div>
           <div class="stat">
             <span class="stat-label">p-value (Binomial)</span>
             <span class="stat-value">{{ binom_p_str }}</span>
-            <span class="stat-sub">Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }})</span>
+            <span class="stat-sub">Binom(N={{ "{:,.0f}".format(total_coverage_n) }}, p=P&times;p_err), P={{ "%.3f"|format(snvq_recall) }}, p_err={{ noise_rate_str }}</span>
           </div>
           <div class="stat">
             <span class="stat-label">Supporting Reads</span>
@@ -357,7 +358,7 @@
         <strong>Left plot &mdash; Left axis:</strong> ctDNA VAF (log scale). <strong>Right axis:</strong> Signature supporting reads (= VAF &times; corrected coverage).<br>
         <span style="color:#c0392b;">&#9733;</span> <strong>Patient:</strong> matched patient signature.<br>
         <span style="color:#3a9ad9;">&#9679;</span> <strong>Synthetic control signatures:</strong> Signatures drawn from db_control.<br>
-        <strong>Blue violin:</strong> Fitted Binomial, according to synthetic control error-rates: Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }}).<br>
+        <strong>Blue violin:</strong> Fitted Binomial, according to synthetic control error-rates: Binom(N={{ "{:,.0f}".format(total_coverage_n) }}, p=P&times;p_err), P={{ "%.3f"|format(snvq_recall) }}, p_err={{ noise_rate_str }}.<br>
         <span style="color:#e67e22;">&#9135;&#9135;</span> Detection threshold (min VAF for Binomial p&nbsp;&lt;&nbsp;{{ "%.0f"|format(detection.alpha * 100) }}%).<br>
         <span style="color:#27ae60;">&#183;&ndash;&#183;</span> <strong>Sample-specific LOD</strong> = {{ lod_str }} &mdash; minimum VAF detectable at {{ "%.0f"|format(detection.lod_recall * 100) }}% recall / {{ "%.0f"|format(detection.lod_fpr * 100) }}% FPR for this patient&rsquo;s signature size and coverage.<br>
         <span style="color:#9b59b6;">&#9670;</span> Cohort control signatures.
