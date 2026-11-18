@@ -55,9 +55,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     ap_var.add_argument(
         "--decision_threshold",
-        help="Decision threshold for filtering variants (default: 30)",
+        help="Decision threshold for filtering variants (default: the threshold stored with the model, else 30)",
         type=float,
-        default=30.0,
+        default=None,
     )
 
     ap_var.add_argument(
@@ -75,6 +75,22 @@ def protected_add(hdr, field, n_vals, param_type, description):
         hdr.add(field, n_vals, param_type, description)
 
 
+DEFAULT_DECISION_THRESHOLD = 30.0
+
+
+def resolve_decision_threshold(given: float | None, model_pickle: dict | None) -> float:
+    """
+    The decision threshold to filter with.
+
+    A threshold given on the command line wins; otherwise the one train_models_pipeline stored with the model
+    (cnv_depth models), else DEFAULT_DECISION_THRESHOLD.
+    """
+    if given is not None:
+        return float(given)
+    stored = (model_pickle or {}).get("decision_threshold")
+    return float(stored) if stored is not None else DEFAULT_DECISION_THRESHOLD
+
+
 def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many-branches, disable=too-many-statements
     "POST-GATK variant filtering"
     args = parse_args(argv)
@@ -85,6 +101,7 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
         model = None
         transformer = None
         blacklists = None
+        mf = None
 
         if args.model_file is not None:
             logger.info(f"Loading model from {args.model_file}")
@@ -92,6 +109,9 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
                 mf = pickle.load(model_file)  # noqa S301
                 model = mf["xgb"]
                 transformer = mf["transformer"]
+        decision_threshold = resolve_decision_threshold(args.decision_threshold, mf)
+        if args.model_file is not None:
+            logger.info(f"Decision threshold: {decision_threshold}")
         if args.blacklist is not None:
             logger.info(f"Loading blacklist from {args.blacklist}")
             with open(args.blacklist, "rb") as blf:
@@ -189,7 +209,7 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
                         if args.model_file is not None:
                             if quals is None:
                                 raise RuntimeError("Quals must be computed when model is used")
-                            if quals[i] <= args.decision_threshold:
+                            if quals[i] <= decision_threshold:
                                 if "PASS" in rec.filter.keys():
                                     del rec.filter["PASS"]
                                 rec.filter.add("LOW_SCORE")

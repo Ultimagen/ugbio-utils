@@ -134,3 +134,21 @@ class TestDepthCnvModel:
         assert transformers.get_needed_features(VcfType.CNV_DEPTH) == [
             f.lower() for f in transformers.DEPTH_CNV_INFO_FIELDS
         ]
+
+
+class TestDecisionThreshold:
+    def test_given_threshold_wins(self):
+        from ugbio_filtering.filter_variants_pipeline import resolve_decision_threshold
+
+        assert resolve_decision_threshold(25.0, {"decision_threshold": 28}) == 25.0
+
+    def test_stored_threshold_is_used(self):
+        from ugbio_filtering.filter_variants_pipeline import resolve_decision_threshold
+
+        assert resolve_decision_threshold(None, {"xgb": None, "decision_threshold": 28}) == 28.0
+
+    def test_default_without_a_stored_threshold(self):
+        from ugbio_filtering.filter_variants_pipeline import DEFAULT_DECISION_THRESHOLD, resolve_decision_threshold
+
+        assert resolve_decision_threshold(None, {"xgb": None}) == DEFAULT_DECISION_THRESHOLD == 30.0
+        assert resolve_decision_threshold(None, None) == 30.0

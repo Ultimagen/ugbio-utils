@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pysam
 import pytest
 from ugbio_cnv import breakpoint_refinement as bs
@@ -159,10 +161,11 @@ class TestPairBounds:
         with pysam.VariantFile(gz) as v, pysam.VariantFile(plain, "w", header=v.header) as o:
             for r in v:
                 o.write(r)
-        before = open(plain).read()
+        before = Path(plain).read_text()
         out = str(tmp_path / "refined.vcf.gz")
         bs.refine_cnv_breakpoints(plain, bam, None, out, threads=1)
-        assert open(plain).read() == before
+        after = Path(plain).read_text()
+        assert after == before
         assert not (tmp_path / "plain.vcf.gz").exists() and not (tmp_path / "plain.vcf.gz.tbi").exists()
         with pysam.VariantFile(out) as v:
             assert [r.info["BREAKPOINT_SOURCE"] for r in v] == ["pair"]
