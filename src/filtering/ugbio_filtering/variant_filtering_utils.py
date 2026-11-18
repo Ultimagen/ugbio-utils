@@ -69,7 +69,13 @@ def train_model(
     if vtype == VcfType.CNV_DEPTH:
         # out-of-bag scores choose the decision threshold (cnv_depth_decision_threshold)
         clf = RandomForestClassifier(
-            n_estimators=500, min_samples_leaf=5, class_weight="balanced", random_state=0, n_jobs=-1, oob_score=True
+            n_estimators=500,
+            max_depth=5,
+            min_samples_leaf=5,
+            class_weight="balanced",
+            random_state=0,
+            n_jobs=-1,
+            oob_score=True,
         )
     else:
         clf = xgboost.XGBClassifier(

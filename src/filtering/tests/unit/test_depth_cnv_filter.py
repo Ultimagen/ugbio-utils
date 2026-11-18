@@ -124,6 +124,7 @@ class TestDepthCnvModel:
         calls["label"] = [1, 0] * 20
         model, fitted = train_model(calls, GtType.APPROXIMATE, VcfType.CNV_DEPTH)  # returns (model, transformer)
         assert model.n_estimators == 500
+        assert model.max_depth == 5
         x = fitted.transform(calls)
         assert list(x.columns) == [f"depth_cnv__{f}" for f in transformers.DEPTH_CNV_FEATURES]
         predictions, probabilities = apply_model(calls, model, fitted)
