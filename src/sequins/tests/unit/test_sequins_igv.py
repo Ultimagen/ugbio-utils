@@ -4,25 +4,23 @@ import pytest
 from ugbio_sequins import sequins_igv
 
 HEADER = "##fileformat=VCFv4.2\n##contig=<ID=chrQ_mirror,length=1000>\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
-TABLE = (
-    "class\ttype\tchrom\tpos\tref\talt\tgt\tqual\tfilter\n"
-    "FN\tindels\tchrQ_mirror\t300\tGT\tG\t1|0\t.\t.\n"
-    "FP\tsnps\tchrQ_mirror\t100\tC\tT\t1/1\t8.7\tPASS\n"
-)
+FP_VCF = HEADER + "chrQ_mirror\t100\t.\tC\tT\t8.7\tPASS\t.\n"
+FN_VCF = HEADER + "chrQ_mirror\t300\t.\tGT\tG\t.\t.\t.\n"
 
 
 @pytest.fixture
 def files(tmp_path):
     (tmp_path / "truth.vcf").write_text(HEADER + "chrQ_mirror\t100\t.\tC\tT\t.\t.\t.\n")
-    (tmp_path / "disc.tsv").write_text(TABLE)
+    (tmp_path / "fp.vcf").write_text(FP_VCF)
+    (tmp_path / "fn.vcf").write_text(FN_VCF)
     return tmp_path
 
 
-def argv(d, table="disc.tsv"):
+def argv(d, fp="fp.vcf", fn="fn.vcf"):
     return [
         "sequins_igv", "--genome-name", "sequins_core",
         "--ref-fasta", "/some/dir/ref.fasta", "--cram", "/x/y/calibrated.cram",
-        "--truth-vcf", str(d / "truth.vcf"), "--discordant-table", str(d / table),
+        "--truth-vcf", str(d / "truth.vcf"), "--fp-vcf", str(d / fp), "--fn-vcf", str(d / fn),
         "--output-prefix", str(d / "out"),
     ]  # fmt: skip
 
@@ -46,8 +44,8 @@ def test_batch_and_bed(files):
 
 
 def test_no_discordant_variants(files):
-    (files / "empty.tsv").write_text(TABLE.splitlines()[0] + "\n")
-    _, bed = sequins_igv.run(argv(files, "empty.tsv"))
+    (files / "empty.vcf").write_text(HEADER)
+    _, bed = sequins_igv.run(argv(files, "empty.vcf", "empty.vcf"))
     bed_content = Path(bed).read_text()
     assert bed_content == ""
 

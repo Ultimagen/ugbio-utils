@@ -1,10 +1,11 @@
 """IGV batch file for a detected sequins genome: reads, ground-truth VCF and a BED of the discordant positions."""
 
 import argparse
-import csv
 import os
 import subprocess
 import sys
+
+from ugbio_sequins.discordant import read_discordant
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -13,24 +14,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--ref-fasta", required=True, help="Reference fasta of the sequins genome (.fai next to it)")
     ap.add_argument("--cram", required=True, help="CRAM with the reads (.crai next to it)")
     ap.add_argument("--truth-vcf", required=True, help="Ground-truth VCF (.tbi next to it)")
-    ap.add_argument(
-        "--discordant-table", required=True, help="Discordant variants table (class, type, chrom, pos, ref, alt, ...)"
-    )
+    ap.add_argument("--fp-vcf", required=True, help="False-positive VCF (rtg vcfeval fp.vcf.gz)")
+    ap.add_argument("--fn-vcf", required=True, help="False-negative VCF (rtg vcfeval fn.vcf.gz)")
     ap.add_argument(
         "--output-prefix", required=True, help="Prefix of the outputs: <prefix>.igv_batch.txt, <prefix>.discordant.bed"
     )
     return ap.parse_args(argv)
 
 
-def discordant_table_to_bed(table: str, bed: str) -> int:
+def discordant_to_bed(fp_vcf: str, fn_vcf: str, bed: str) -> int:
     """Write the discordant variants as a sorted BED (name: class_type_ref>alt); returns the number of records."""
-    with open(table, newline="") as fh:
-        rows = list(csv.DictReader(fh, delimiter="\t"))
-    records = []
-    for r in rows:
-        start = int(r["pos"]) - 1
-        records.append((r["chrom"], start, start + len(r["ref"]), f"{r['class']}_{r['type']}_{r['ref']}>{r['alt']}"))
-    records.sort(key=lambda rec: (rec[0], rec[1], rec[2], rec[3]))
+    records = [
+        (v.chrom, v.pos - 1, v.pos - 1 + len(v.ref), f"{v.variant_class}_{v.variant_type}_{v.ref}>{v.alt}")
+        for v in read_discordant(fp_vcf, fn_vcf)
+    ]
+    records.sort()
     with open(bed, "w") as fh:
         for rec in records:
             fh.write("\t".join(map(str, rec)) + "\n")
@@ -64,7 +62,7 @@ def run(argv: list[str]) -> tuple[str, str]:
     args = parse_args(argv[1:])
     bed = f"{args.output_prefix}.discordant.bed"
     batch = f"{args.output_prefix}.igv_batch.txt"
-    discordant_table_to_bed(args.discordant_table, bed)
+    discordant_to_bed(args.fp_vcf, args.fn_vcf, bed)
     with open(batch, "w") as fh:
         fh.write(build_batch(args.ref_fasta, args.cram, args.truth_vcf, bed, first_contig(args.truth_vcf)))
     return batch, bed

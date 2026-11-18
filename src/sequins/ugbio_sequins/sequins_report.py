@@ -1,10 +1,11 @@
 """HTML report of a sequins analysis: detected spikes, SNP/indel precision/recall/F1 and discordant variants."""
 
 import argparse
-import csv
 import html
 import subprocess
 import sys
+
+from ugbio_sequins.discordant import COLUMNS, read_discordant
 
 CSS = (
     "body{font-family:sans-serif;margin:2em}table{border-collapse:collapse;margin:1em 0}"
@@ -29,7 +30,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--median-depths", nargs="+", type=int, required=True, help="Median depth per genome")
     ap.add_argument("--detected", nargs="+", required=True, choices=["true", "false"], help="Detected, per genome")
     # Result files exist only for the detected genomes, in the order of --genomes
-    for name in ("tp-baseline-vcfs", "tp-vcfs", "fp-vcfs", "fn-vcfs", "discordant-tables"):
+    for name in ("tp-baseline-vcfs", "tp-vcfs", "fp-vcfs", "fn-vcfs"):
         ap.add_argument(f"--{name}", nargs="*", default=[], help=f"{name} of the detected genomes")
     args = ap.parse_args(argv)
 
@@ -37,7 +38,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     if not (len(args.median_depths) == len(args.detected) == n):
         ap.error("--genomes, --median-depths and --detected must have the same length")
     n_detected = sum(d == "true" for d in args.detected)
-    for name in ("tp_baseline_vcfs", "tp_vcfs", "fp_vcfs", "fn_vcfs", "discordant_tables"):
+    for name in ("tp_baseline_vcfs", "tp_vcfs", "fp_vcfs", "fn_vcfs"):
         if len(getattr(args, name)) != n_detected:
             ap.error(f"--{name.replace('_', '-')} must have one file per detected genome ({n_detected})")
     return args
@@ -84,10 +85,9 @@ def _genome_section(genome: str, files: dict[str, str]) -> list[str]:
     out += [
         "<h3>Discordant variants</h3>",
     ]
-    with open(files["discordant"], newline="") as fh:
-        table = list(csv.reader(fh, delimiter="\t"))
-    if len(table) > 1:
-        out += _table(table[0], [[html.escape(c) for c in row] for row in table[1:]])
+    variants = read_discordant(files["fp"], files["fn"])
+    if variants:
+        out += _table(COLUMNS, [[html.escape(c) for c in v.as_row()] for v in variants])
     else:
         out.append("<p>None.</p>")
     return out
@@ -132,7 +132,6 @@ def build_report(args: argparse.Namespace) -> str:
             "tp": args.tp_vcfs[k],
             "fp": args.fp_vcfs[k],
             "fn": args.fn_vcfs[k],
-            "discordant": args.discordant_tables[k],
         }
         out += _genome_section(genome, files)
         k += 1
