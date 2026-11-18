@@ -11,7 +11,7 @@ precision, recall and F1 (from the `rtg vcfeval` TP/FP/FN VCFs) and the discorda
 sequins_report --base-file-name NAME --min-median-depth 5 \
     --input-crams a.cram b.cram --target-coverage 40 \
     --genomes sequins_clinical sequins_core \
-    --median-depths 30 2 --mean-depths 31 3 --detected true false \
+    --median-depths 30 2 --detected true false \
     --tp-baseline-vcfs tpb.vcf.gz --tp-vcfs tp.vcf.gz --fp-vcfs fp.vcf.gz --fn-vcfs fn.vcf.gz \
     --discordant-tables discordant.tsv
 ```

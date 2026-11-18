@@ -27,7 +27,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--min-median-depth", type=int, required=True, help="Detection threshold on the median depth")
     ap.add_argument("--genomes", nargs="+", required=True, help="Genome names")
     ap.add_argument("--median-depths", nargs="+", type=int, required=True, help="Median depth per genome")
-    ap.add_argument("--mean-depths", nargs="+", type=int, required=True, help="Mean depth per genome")
     ap.add_argument("--detected", nargs="+", required=True, choices=["true", "false"], help="Detected, per genome")
     # Result files exist only for the detected genomes, in the order of --genomes
     for name in ("tp-baseline-vcfs", "tp-vcfs", "fp-vcfs", "fn-vcfs", "discordant-tables"):
@@ -35,8 +34,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     args = ap.parse_args(argv)
 
     n = len(args.genomes)
-    if not (len(args.median_depths) == len(args.mean_depths) == len(args.detected) == n):
-        ap.error("--genomes, --median-depths, --mean-depths and --detected must have the same length")
+    if not (len(args.median_depths) == len(args.detected) == n):
+        ap.error("--genomes, --median-depths and --detected must have the same length")
     n_detected = sum(d == "true" for d in args.detected)
     for name in ("tp_baseline_vcfs", "tp_vcfs", "fp_vcfs", "fn_vcfs", "discordant_tables"):
         if len(getattr(args, name)) != n_detected:

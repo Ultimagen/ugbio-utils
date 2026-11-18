@@ -38,7 +38,6 @@ def cli(tmp_path, genomes, medians, detected, results, min_depth=5):
         "--min-median-depth", str(min_depth),
         "--genomes", *genomes,
         "--median-depths", *map(str, medians),
-        "--mean-depths", *map(str, medians),
         "--detected", *detected,
         "--tp-baseline-vcfs", *[r["tpb"] for r in results],
         "--tp-vcfs", *[r["tp"] for r in results],
@@ -63,7 +62,7 @@ def test_default_output_name(tmp_path, monkeypatch):
     argv = [
         "sequins_report", "--base-file-name", "s", "--min-median-depth", "5",
         "--input-crams", "a.cram", "--target-coverage", "40",
-        "--genomes", "x", "--median-depths", "9", "--mean-depths", "9", "--detected", "true",
+        "--genomes", "x", "--median-depths", "9", "--detected", "true",
         "--tp-baseline-vcfs", g["tpb"], "--tp-vcfs", g["tp"], "--fp-vcfs", g["fp"], "--fn-vcfs", g["fn"],
         "--discordant-tables", g["disc"],
     ]  # fmt: skip
@@ -121,5 +120,5 @@ def test_mismatched_lengths_fail(tmp_path):
         sequins_report.parse_args(
             ["--base-file-name", "x", "--min-median-depth", "5", "--input-crams", "a.cram", "--target-coverage", "40",
              "--genomes", "a", "b",
-             "--median-depths", "1", "--mean-depths", "1", "--detected", "false"]
+             "--median-depths", "1", "--detected", "false"]
         )  # fmt: skip
