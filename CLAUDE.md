@@ -366,7 +366,7 @@ gh run view <run-id>
 
 **ugbio_sequins** (3 files):
 - Sequins analysis HTML report (detected spikes, SNP/indel precision/recall/F1, discordant variants) from rtg vcfeval outputs
-- Entry points: `sequins_report`, `sequins_igv` (IGV batch file + discordant BED); used by the `SequinsAnalysis` WDL in terra_pipeline
+- Entry points: `sequins_report`; used by the `SequinsAnalysis` WDL in terra_pipeline
 
 **ugbio_methylation, ugbio_single_cell, ugbio_ppmseq, ugbio_cloud_utils, ugbio_freec**:
 - Specialized analysis domains
