@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from ugbio_sequins import sequins_igv
 
@@ -27,11 +29,13 @@ def argv(d, table="disc.tsv"):
 
 def test_batch_and_bed(files):
     batch, bed = sequins_igv.run(argv(files))
-    assert open(bed).read().splitlines() == [  # noqa: SIM115
+    bed_lines = Path(bed).read_text().splitlines()
+    batch_lines = Path(batch).read_text().splitlines()
+    assert bed_lines == [
         "chrQ_mirror\t99\t100\tFP_snps_C>T",
         "chrQ_mirror\t299\t301\tFN_indels_GT>G",
     ]
-    assert open(batch).read().splitlines() == [  # noqa: SIM115
+    assert batch_lines == [
         "new",
         "genome ref.fasta",
         "load calibrated.cram",
@@ -44,7 +48,8 @@ def test_batch_and_bed(files):
 def test_no_discordant_variants(files):
     (files / "empty.tsv").write_text(TABLE.splitlines()[0] + "\n")
     _, bed = sequins_igv.run(argv(files, "empty.tsv"))
-    assert open(bed).read() == ""  # noqa: SIM115
+    bed_content = Path(bed).read_text()
+    assert bed_content == ""
 
 
 def test_empty_truth_vcf_fails(files):

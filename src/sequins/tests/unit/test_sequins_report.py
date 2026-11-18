@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from ugbio_sequins import sequins_report
 
@@ -44,7 +46,7 @@ def cli(tmp_path, genomes, medians, detected, results, min_depth=5):
         "--fn-vcfs", *[r["fn"] for r in results],
         "--discordant-tables", *[r["disc"] for r in results],
     ]  # fmt: skip
-    return open(sequins_report.run(argv)).read()  # noqa: SIM115
+    return Path(sequins_report.run(argv)).read_text()
 
 
 def test_input_crams_and_coverage(tmp_path):
@@ -52,9 +54,7 @@ def test_input_crams_and_coverage(tmp_path):
     text = cli(tmp_path, ["sequins_clinical", "sequins_core"], [30, 1], ["true", "false"], [g])
     assert "<li>s3://bucket/a.cram</li>" in text
     assert "<li>s3://bucket/b&lt;x&gt;.cram</li>" in text
-    assert "<b>40x</b>" in text
-    assert "<td>40x</td>" in text  # detected genome only
-    assert text.count("<td>-</td>") == 1
+    assert "Downsampled to 40x" in text
 
 
 def test_default_output_name(tmp_path, monkeypatch):
@@ -99,7 +99,7 @@ def test_second_not_detected_uses_k_index(tmp_path):
     g = make_genome(tmp_path, "g", [SNP], [SNP], [], [], [])
     text = cli(tmp_path, ["sequins_clinical", "sequins_core"], [30, 1], ["true", "false"], [g])
     assert "Detected: sequins_clinical" in text
-    assert "Not detected (median depth 1, required above 5)" in text
+    assert "<p>Not detected</p>" in text
     assert '<span class="no">no</span>' in text
 
 

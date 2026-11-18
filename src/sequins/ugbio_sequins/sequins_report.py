@@ -58,6 +58,12 @@ def precision_recall_f1(tp_baseline: int, tp_call: int, fp: int, fn: int) -> tup
     return precision, recall, f1
 
 
+GENOME_TITLES = {
+    "sequins_clinical": "Sequins WGS Clinical Control Set",
+    "sequins_core": "Sequins WGS Core Control Set",
+}
+
+
 def _table(header: list[str], rows: list[list[str]]) -> list[str]:
     lines = ["<table><tr>" + "".join(f"<th>{html.escape(h)}</th>" for h in header) + "</tr>"]
     lines += ["<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>" for row in rows]
@@ -78,7 +84,6 @@ def _genome_section(genome: str, files: dict[str, str]) -> list[str]:
 
     out += [
         "<h3>Discordant variants</h3>",
-        "<p>FP: called but not in the truth, FN: truth variants that were not called.</p>",
     ]
     with open(files["discordant"], newline="") as fh:
         table = list(csv.reader(fh, delimiter="\t"))
@@ -98,36 +103,30 @@ def build_report(args: argparse.Namespace) -> str:
         f'<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>Sequins report: {title}</title>',
         f"<style>{CSS}</style></head><body>",
         f"<h1>Sequins report: {title}</h1>",
-        "<p>A sequins spike is detected when its median depth at the truth-variant sites (duplicates counted) "
-        f"is above {args.min_median_depth}.</p>",
         "<h2>Input</h2>",
         "<p>Input CRAMs (unmapped reads and reads with an unmapped mate were re-aligned to the sequins genomes):</p>",
         "<ul>" + "".join(f"<li>{html.escape(c)}</li>" for c in args.input_crams) + "</ul>",
-        f"<p>Reads of each detected genome were downsampled (sequintools calibrate) to a constant coverage of "
-        f"<b>{args.target_coverage}x</b> before variant calling.</p>",
+        f"<p>Downsampled to {args.target_coverage}x</p>",
         "<h2>Detected spikes</h2>",
+        "<p>A sequins spike is detected when its median depth at the truth-variant sites (duplicates counted) "
+        f"is above {args.min_median_depth}.</p>",
         f"<p>Detected: {html.escape(' '.join(names))}</p>" if names else "<p>No sequins spike was detected.</p>",
     ]
     rows = [
         [
             html.escape(g),
             str(med),
-            str(mean),
             '<span class="yes">yes</span>' if d else '<span class="no">no</span>',
-            f"{args.target_coverage}x" if d else "-",
         ]
-        for g, med, mean, d in zip(args.genomes, args.median_depths, args.mean_depths, detected, strict=True)
+        for g, med, d in zip(args.genomes, args.median_depths, detected, strict=True)
     ]
-    out += _table(["genome", "median depth", "mean depth", "detected", "downsampled to"], rows)
+    out += _table(["genome", "median depth", "detected"], rows)
 
     k = 0  # indexes the per-genome result lists, which hold only the detected genomes
-    for genome, median, is_detected in zip(args.genomes, args.median_depths, detected, strict=True):
-        out.append(f"<h2>{html.escape(genome)}</h2>")
+    for genome, is_detected in zip(args.genomes, detected, strict=True):
+        out.append(f"<h2>{html.escape(GENOME_TITLES.get(genome, genome))}</h2>")
         if not is_detected:
-            out.append(
-                f"<p>Not detected (median depth {median}, required above {args.min_median_depth}); "
-                "no variant calling was done.</p>"
-            )
+            out.append("<p>Not detected</p>")
             continue
         files = {
             "tp_baseline": args.tp_baseline_vcfs[k],
