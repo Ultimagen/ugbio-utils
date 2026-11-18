@@ -364,12 +364,30 @@ def pelt_weighted_l2(x: np.ndarray, w: np.ndarray, beta: float, min_size: int) -
     return np.array(ends[::-1], dtype=np.int64)
 
 
+def _mad_noise(d: np.ndarray) -> float:
+    """Noise of one unit from successive differences (MAD); NaN when there are none or they are all equal."""
+    s = np.median(np.abs(d)) / 0.6745 / np.sqrt(2) if len(d) else np.nan
+    return float(s) if np.isfinite(s) and s > 0 else np.nan
+
+
 def unit_noise(units: pd.DataFrame) -> pd.Series:
-    """Robust per-class noise of one unit (MAD of successive differences within each class and chromosome)."""
+    """
+    Robust per-class noise of one unit (MAD of successive differences within each class and chromosome).
+
+    A class without usable differences (e.g. at most one difficult unit per chromosome, or all equal) takes the
+    noise of all units, so its weights stay finite; if that is not usable either, 1 (one copy).
+    """
+
+    def diffs(u: pd.DataFrame) -> np.ndarray:
+        parts = [np.diff(g["cn"].to_numpy()) for _, g in u.groupby("chrom", sort=False)]
+        return np.concatenate(parts) if parts else np.array([])
+
+    overall = _mad_noise(diffs(units))
+    overall = overall if np.isfinite(overall) else 1.0
     sigma = {}
     for cls, u in units.groupby("difficult"):
-        d = np.concatenate([np.diff(g["cn"].to_numpy()) for _, g in u.groupby("chrom", sort=False)])
-        sigma[cls] = np.median(np.abs(d)) / 0.6745 / np.sqrt(2)
+        s = _mad_noise(diffs(u))
+        sigma[cls] = s if np.isfinite(s) else overall
     return pd.Series(sigma)
 
 
@@ -397,8 +415,10 @@ def segment(units: pd.DataFrame, p: Params) -> pd.DataFrame:
             for c0 in range(r0, r1, p.chunk_units):
                 c1 = min(c0 + p.chunk_units, r1)
                 if c1 - c0 < 2 * p.min_units:
-                    if ends:
+                    if c0 > r0:  # a short last chunk: part of the stretch's previous segment
                         ends[-1] = c1
+                    else:  # a stretch too short to segment: its own segment, never joined across the boundary
+                        ends.append(c1)
                     continue
                 ends.extend(c0 + pelt_weighted_l2(x[c0:c1], w[c0:c1], beta, p.min_units))
         s = 0

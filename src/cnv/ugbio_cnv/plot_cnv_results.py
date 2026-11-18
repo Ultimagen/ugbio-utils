@@ -18,6 +18,17 @@ sns.set_context("talk")
 sns.set_style("white")
 
 
+def coverage_median(cov: pd.Series) -> float:
+    """
+    Median coverage of the covered windows, the normalization of the plots.
+
+    Windows with no coverage (e.g. outside the regions of a subset input) are left out, so they cannot set the
+    median to 0; if no window is covered, the median of all windows is used.
+    """
+    covered = cov[cov > 0]
+    return float(covered.median()) if len(covered) else float(cov.median())
+
+
 def smooth_wl(df_reads_count, wl=100000, bin_size=1000) -> pd.DataFrame:
     """smooth coverage along the genome to a specicic window size (wl) using data with a specific bin size (bin_size)"""
     multiply_factor = wl / bin_size
@@ -338,7 +349,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     # load & normalize coverage
     df_germline_cov = pd.read_csv(args.germline_coverage, header=None, sep="\t", dtype={0: str})
     df_germline_cov.columns = ["chr", "start", "end", "cov"]
-    df_germline_cov["norm_cov"] = df_germline_cov["cov"] / df_germline_cov["cov"].median()
+    df_germline_cov["norm_cov"] = df_germline_cov["cov"] / coverage_median(df_germline_cov["cov"])
     df_germline_cov["log_norm_cov"] = np.log2(df_germline_cov["norm_cov"])
     df_germline_cov_norm_100k = smooth_wl(df_germline_cov[["chr", "start", "end", "norm_cov"]], 100000)
     df_germline_cov_norm_100k["start_fig"] = list(range(len(df_germline_cov_norm_100k)))
@@ -360,7 +371,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     if is_somatic:
         df_tumor_cov = pd.read_csv(args.tumor_coverage, header=None, sep="\t", dtype={0: str})
         df_tumor_cov.columns = ["chr", "start", "end", "cov"]
-        df_tumor_cov["norm_cov"] = df_tumor_cov["cov"] / df_tumor_cov["cov"].median()
+        df_tumor_cov["norm_cov"] = df_tumor_cov["cov"] / coverage_median(df_tumor_cov["cov"])
         df_tumor_cov["log_norm_cov"] = np.log2(df_tumor_cov["norm_cov"])
         df_tumor_cov_norm_100k = smooth_wl(df_tumor_cov[["chr", "start", "end", "norm_cov"]], 100000)
         df_tumor_cov_norm_100k["start_fig"] = list(range(len(df_tumor_cov_norm_100k)))

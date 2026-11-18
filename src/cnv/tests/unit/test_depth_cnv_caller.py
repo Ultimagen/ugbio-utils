@@ -147,6 +147,20 @@ class TestNormalize:
         with pytest.raises(ValueError, match="No usable coverage"):
             dc.normalize(bins, set(), dc.Params())
 
+    def test_noise_without_usable_differences_falls_back(self):
+        units = pd.DataFrame(
+            {
+                "chrom": ["chr1"] * 5 + ["chr2"] * 5,
+                "cn": [2.0, 2.1, 1.9, 2.0, 3.0, 2.0, 2.2, 1.8, 2.1, 0.0],
+                "difficult": [False] * 4 + [True] + [False] * 4 + [True],  # one difficult unit per chromosome
+            }
+        )
+        sigma = dc.unit_noise(units)
+        assert np.isfinite(sigma[True]) and sigma[True] > 0
+        assert np.isfinite(sigma[False]) and sigma[False] > 0
+        flat = pd.DataFrame({"chrom": ["chr1"] * 4, "cn": [2.0] * 4, "difficult": [False] * 4})
+        assert dc.unit_noise(flat)[False] == 1.0  # all equal: no usable noise at all
+
     def test_static_mask_only(self):
         bins = make_bins({"chr1": np.r_[np.full(3000, 2.0), np.zeros(100), np.full(3000, 2.0)]})
         bins.loc[:9, "n_frac"] = np.float32(0.5)
@@ -185,6 +199,20 @@ class TestCalling:
         calls = dc.merge_calls(dc.segment(dc.make_units(nb, p), p), nb, p)
         assert len(calls) == 1
         assert calls.iloc[0].direction == "DUP"
+
+    def test_short_stretch_between_gaps_is_not_joined_across_them(self):
+        # a 3-unit island between two assembly gaps is its own segment, not part of a segment across a gap
+        rng = np.random.default_rng(8)
+        bins = make_bins({"chr1": noisy_cn(30000, rng)})
+        bins.loc[8000:9999, "n_frac"] = np.float32(1.0)
+        bins.loc[10015:11999, "n_frac"] = np.float32(1.0)
+        p = dc.Params()
+        units = dc.make_units(dc.normalize(bins, set(), p), p)
+        segs = dc.segment(units, p)
+        for s in segs.itertuples():
+            inside = units[(units.chrom == s.chrom) & (units.start >= s.start) & (units.end <= s.end)]
+            assert len(set(inside["stretch"])) == 1
+        assert ((segs.start >= 1_000_000) & (segs.end <= 1_001_500)).sum() == 1  # the island
 
     def test_long_assembly_gap_is_a_boundary(self):
         rng = np.random.default_rng(6)

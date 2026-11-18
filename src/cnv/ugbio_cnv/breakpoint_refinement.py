@@ -9,8 +9,9 @@ When the two pieces overlap on the read by h bases (microhomology at the junctio
 in both pieces), the junction is left-normalized as in VCF: L - h for a deletion, E - h for a duplication.
 Junctions are grouped by similar position (+-100 bp) and size (+-10%); the largest group with >= 2 reads replaces the
 call's breakpoints (BREAKPOINT_SOURCE=split_read). Calls > 3 kb only accept junctions at least half their size, so
-a small indel near a large event cannot shrink it. Without a junction, DEL calls are shrunk to the interval allowed
-by FR discordant pairs spanning both edges (BREAKPOINT_SOURCE=pair). Otherwise the call is unchanged
+a small indel near a large event cannot shrink it, and no call is refined below min_len (500 bp, the caller's
+minimum). Without a junction, DEL calls are shrunk to the interval allowed by FR discordant pairs spanning both edges
+(BREAKPOINT_SOURCE=pair), also to no less than min_len. Otherwise the call is unchanged
 (BREAKPOINT_SOURCE=depth). The depth breakpoints are kept in DEPTH_START / DEPTH_END; BREAKPOINT_SUPPORT is the
 number of reads or pairs used.
 """
@@ -18,7 +19,9 @@ number of reads or pairs used.
 import argparse
 import os
 import re
+import shutil
 import sys
+import tempfile
 from collections import Counter
 from dataclasses import dataclass
 from multiprocessing import Pool
@@ -39,9 +42,8 @@ class RefineParams:
     min_sa_mapq: int = 1  # supplementary alignment MAPQ (from the SA tag)
     pos_tol: int = 100  # junctions in one group: start within +-pos_tol ...
     size_tol: float = 0.10  # ... and size within +-size_tol
-    min_junction: int = 100  # shorter junctions are small indels
+    min_len: int = 500  # a refined call keeps at least the caller's minimum length; shorter junctions are not used
     small_call: int = 3000  # longer calls need a junction of >= 0.5 x their size
-    min_pe_len: int = 50  # a pair-shrunk deletion must keep at least this length
     max_edge_shift: int = 2000  # a junction's start and end must lie within this of the call's start and end
 
 
@@ -147,7 +149,7 @@ def best_junction_cluster(
     """
     call_len = end - start
     # depth cannot resolve events below ~1-2 kb, so only short calls may shrink to a much smaller junction
-    min_size = p.min_junction if call_len <= p.small_call else 0.5 * call_len
+    min_size = p.min_len if call_len <= p.small_call else max(p.min_len, 0.5 * call_len)
     js = [
         (a, b)
         for a, b in junctions
@@ -209,7 +211,7 @@ def _refine_contig(args: tuple) -> dict:
                 pb = pair_bounds(aln, chrom, s, e, p)
                 if pb and pb[1] > pb[0]:
                     ns, ne = max(s, pb[0]), min(e, pb[1])
-                    if ne - ns >= p.min_pe_len and (ns, ne) != (s, e):
+                    if ne - ns >= p.min_len and (ns, ne) != (s, e):
                         res[rec.id] = (CNV_SOURCE_PAIR, ns, ne, pb[2])
     return res
 
@@ -246,8 +248,20 @@ def refine_cnv_breakpoints(
         Number of calls per breakpoint source (split_read, pair).
     """
     p = params or RefineParams()
+    tmp = None
     if not any(os.path.exists(input_vcf + ext) for ext in (".tbi", ".csi")):
-        pysam.tabix_index(input_vcf, preset="vcf", force=True)  # contigs are fetched in parallel
+        # contigs are fetched in parallel, so an index is needed: index a copy, never the caller's file (tabix_index
+        # replaces a plain .vcf with .vcf.gz, and the input's folder may be read-only)
+        tmp = tempfile.mkdtemp(dir=os.path.dirname(os.path.abspath(output_vcf)))
+        indexed = os.path.join(tmp, "input.vcf.gz")
+        with open(input_vcf, "rb") as f:
+            gzipped = f.read(2) == b"\x1f\x8b"
+        if gzipped:
+            shutil.copy(input_vcf, indexed)
+        else:
+            pysam.tabix_compress(input_vcf, indexed)
+        pysam.tabix_index(indexed, preset="vcf", force=True)
+        input_vcf = indexed
     with pysam.VariantFile(input_vcf) as v:
         contigs = list(dict.fromkeys(r.chrom for r in v))
     refined = {}
@@ -278,6 +292,8 @@ def refine_cnv_breakpoints(
         for r in records:
             vout.write(r)
     pysam.tabix_index(output_vcf, preset="vcf", force=True)
+    if tmp:
+        shutil.rmtree(tmp, ignore_errors=True)
     counts = Counter(s[0] for s in refined.values())
     logger.info(f"{output_vcf}: {sum(counts.values())} of {len(records)} calls refined ({dict(counts)})")
     return counts

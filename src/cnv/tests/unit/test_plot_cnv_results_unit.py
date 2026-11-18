@@ -266,3 +266,12 @@ Y\t2000\t3000\t28
 )
 def test_extract_copy_number(info, expected):
     assert plot_cnv_results.extract_copy_number(info) == expected
+
+
+def test_coverage_median_ignores_uncovered_windows():
+    import pandas as pd
+
+    # a subset input: most windows have no coverage; the median of the covered ones is the normalization
+    cov = pd.Series([0.0] * 10 + [30.0, 32.0, 34.0])
+    assert plot_cnv_results.coverage_median(cov) == 32.0
+    assert plot_cnv_results.coverage_median(pd.Series([0.0, 0.0])) == 0.0

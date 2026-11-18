@@ -50,6 +50,16 @@ class TestMergedBreakpoints:
         ]
         assert cc.merged_breakpoints(members, window=2500) == (1800, 8800, (-10, 10), (-10, 10))
 
+    def test_end_never_before_start(self):
+        # the tightest CIPOS start (2000) lies after the tightest CIEND end (1500): the end is taken after the start
+        members = [
+            {"start": 0, "end": 4000, "cipos": (-500, 500), "ciend": (-500, 500)},
+            {"start": 2000, "end": 3500, "cipos": (-10, 10), "ciend": (-200, 200)},
+            {"start": 500, "end": 1500, "cipos": (-200, 200), "ciend": (-10, 10)},
+        ]
+        start, end, _, _ = cc.merged_breakpoints(members, window=2500)
+        assert (start, end) == (2000, 3500)
+
     def test_outer_edges_kept_beyond_the_window(self):
         members = [
             {"start": 1000, "end": 20000, "cipos": (-500, 500), "ciend": (-500, 500)},
@@ -70,8 +80,11 @@ def collapsed(tmp_path):
         ("A", 50000, 52000, "DEL", "PASS", 30.0, "depth", 1.0, 500),
         ("B", 51500, 60000, "DEL", "PASS", 45.0, "depth", 0.0, 500),
         ("C", 59000, 62000, "DEL", "PASS", 31.0, "depth", 1.0, 500),
-        # a LOW_SCORE DEL inside a PASS DEL, and one on its own: both kept unchanged
+        # LOW_SCORE calls: a DEL and a DUP inside the PASS DEL (both dropped, whatever their type), a DEL that only
+        # half-touches the PASS DEL B (kept: < 50% inside), and one on its own (kept)
         ("LOW_1", 12000, 14000, "DEL", "LOW_SCORE", 20.0, "depth", 1.0, 500),
+        ("LOW_DUP", 11000, 13000, "DUP", "LOW_SCORE", 20.0, "pair", 3.0, 200),
+        ("LOW_EDGE", 61000, 66000, "DEL", "LOW_SCORE", 20.0, "depth", 1.0, 500),
         ("LOW_2", 80000, 85000, "DEL", "LOW_SCORE", 20.0, "depth", 1.0, 500),
     ]
     vcf = _write_vcf(tmp_path / "in.vcf.gz", calls)
@@ -104,8 +117,58 @@ class TestCollapseCnvCalls:
         assert info["CN_MEAN"] == pytest.approx((1.0 * 2000 + 0.0 * 8500 + 1.0 * 3000) / 13500, abs=1e-3)
         assert n == 3  # SR_1, A, C
 
-    def test_filtered_calls_untouched(self, collapsed):
+    def test_genotype_follows_the_merged_copy_number(self, tmp_path):
+        # the kept (higher QUAL) deletion is heterozygous, but the merged copy number is below 0.5: GT becomes 1/1
+        calls = [
+            ("HET", 10000, 12000, "DEL", "PASS", 40.0, "split_read", 1.0, 10),
+            ("HOM", 10500, 20500, "DEL", "PASS", 30.0, "depth", 0.0, 500),
+        ]
+        out = str(tmp_path / "out.vcf.gz")
+        cc.collapse_cnv_calls(_write_vcf(tmp_path / "in.vcf.gz", calls), out)
+        with pysam.VariantFile(out) as v:
+            (rec,) = list(v)
+        assert rec.id == "HET" and rec.info["CN_MEAN"] < 0.5
+        assert rec.samples["S"]["GT"] == (1, 1)
+
+    def test_filtered_calls_inside_a_pass_call_dropped(self, collapsed):
         _, calls = collapsed
-        assert calls["LOW_1"][:4] == (12000, 14000, "DEL", "LOW_SCORE")
+        assert "LOW_1" not in calls  # a DEL inside the PASS DEL
+        assert "LOW_DUP" not in calls  # a DUP inside the PASS DEL: dropped too, the type does not matter
+
+    def test_other_filtered_calls_kept_unchanged(self, collapsed):
+        _, calls = collapsed
+        assert calls["LOW_EDGE"][:4] == (61000, 66000, "DEL", "LOW_SCORE")  # 1 kb of 5 kb inside the merged B
         assert calls["LOW_2"][:4] == (80000, 85000, "DEL", "LOW_SCORE")
-        assert calls["LOW_1"][4] is None
+        assert calls["LOW_2"][4] is None
+
+    def test_at_most_two_pass_calls_at_any_position(self, tmp_path):
+        # stacked PASS calls: three DELs and two DUPs over the same region; after the collapse one DEL and one DUP
+        calls = [
+            ("D1", 10000, 20000, "DEL", "PASS", 40.0, "depth", 1.0, 500),
+            ("D2", 12000, 18000, "DEL", "PASS", 35.0, "split_read", 1.0, 10),
+            ("D3", 15000, 25000, "DEL", "PASS", 30.0, "pair", 1.0, 200),
+            ("U1", 11000, 30000, "DUP", "PASS", 33.0, "depth", 3.0, 500),
+            ("U2", 14000, 16000, "DUP", "PASS", 31.0, "split_read", 3.0, 10),
+        ]
+        out = str(tmp_path / "out.vcf.gz")
+        cc.collapse_cnv_calls(_write_vcf(tmp_path / "in.vcf.gz", calls), out)
+        passing = [(s, e) for s, e, _, flt, _, _ in _calls(out).values() if flt == "PASS"]
+        assert len(passing) == 2  # noqa: PLR2004
+        positions = {p for s, e in passing for p in (s, e - 1)}
+        assert max(sum(s <= p < e for s, e in passing) for p in positions) <= 2  # noqa: PLR2004
+
+    def test_filtered_calls_all_kept_when_disabled(self, tmp_path):
+        calls = [
+            ("P", 10000, 20000, "DEL", "PASS", 40.0, "depth", 1.0, 500),
+            ("L", 12000, 14000, "DEL", "LOW_SCORE", 20.0, "depth", 1.0, 500),
+        ]
+        out = str(tmp_path / "out.vcf.gz")
+        cc.collapse_cnv_calls(_write_vcf(tmp_path / "in.vcf.gz", calls), out, filtered_inside_frac=0)
+        assert set(_calls(out)) == {"P", "L"}
+
+
+@pytest.mark.parametrize(("start", "end", "expected"), [(0, 100, 1.0), (50, 150, 0.5), (200, 300, 0.0), (90, 110, 0.5)])
+def test_inside_fraction(start, end, expected):
+    import numpy as np
+
+    assert cc.inside_fraction(start, end, np.array([0, 100]), np.array([100, 100])) == pytest.approx(expected)

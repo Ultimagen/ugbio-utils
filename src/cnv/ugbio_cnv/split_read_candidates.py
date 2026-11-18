@@ -209,7 +209,8 @@ def score_with_depth(
     Depth ratio, copy number and z per candidate; with require_change, those without the expected change drop.
 
     Each depth bin is divided by its baseline (sex chromosome setup, including the male PARs), so a candidate next to
-    or across a baseline change (a PAR edge) is not read as a gain or a loss.
+    or across a baseline change (a PAR edge) is not read as a gain or a loss. A candidate with no bin in the annotation
+    (outside the regions it was built for, e.g. depth_calling_regions) is dropped: the depth caller does not call there.
     """
     t0 = pysam.TabixFile(depth_mq0, index=depth_mq0 + ".csi")
     t20 = pysam.TabixFile(depth_mq20, index=depth_mq20 + ".csi")
@@ -218,6 +219,9 @@ def score_with_depth(
     ann = ann.set_index(["chrom", "start"])
     out = []
     for r in cand.itertuples(index=False):
+        a = ann.reindex([(r.chrom, b) for b in range(r.start // BIN_SIZE * BIN_SIZE, r.end, BIN_SIZE)])
+        if a["segdup"].isna().all():
+            continue
         inside, inside_base = _depth_per_copy(t0, sex, r.chrom, r.start, r.end)
         flanks = np.concatenate(
             [
@@ -236,7 +240,6 @@ def score_with_depth(
             continue
         uniq = _depth_values(t20, r.chrom, r.start, r.end)
         raw_inside = inside * inside_base
-        a = ann.reindex([(r.chrom, b) for b in range(r.start // BIN_SIZE * BIN_SIZE, r.end, BIN_SIZE)])
         out.append(
             {
                 **r._asdict(),

@@ -60,15 +60,21 @@ class TestBestCluster:
     def test_needs_two_reads(self):
         assert bs.best_junction_cluster([(10100, 15000)], 10000, 15000, bs.RefineParams()) is None
 
-    @pytest.mark.parametrize(("call_len", "expected"), [(2000, (1000, 1500, 2)), (20000, None)])
+    @pytest.mark.parametrize(("call_len", "expected"), [(2000, (1000, 1600, 2)), (20000, None)])
     def test_large_calls_need_large_junctions(self, call_len, expected):
-        # a 500 bp junction may refine a 2 kb call but must not shrink a 20 kb call (edges within the shift limit)
-        js = [(1000, 1500), (1001, 1500)]
+        # a 600 bp junction may refine a 2 kb call but must not shrink a 20 kb call (edges within the shift limit)
+        js = [(1000, 1600), (1001, 1600)]
         p = bs.RefineParams(max_edge_shift=call_len)
         assert bs.best_junction_cluster(js, 500, 500 + call_len, p) == expected
 
     def test_small_indels_ignored(self):
         assert bs.best_junction_cluster([(1000, 1050), (1000, 1050)], 1000, 2000, bs.RefineParams()) is None
+
+    def test_no_refinement_below_the_minimum_length(self):
+        # a 1.2 kb call with a 300 bp junction near its edges keeps its breakpoints: refined calls stay >= 500 bp
+        js = [(1100, 1400), (1101, 1400), (1099, 1401)]
+        assert bs.best_junction_cluster(js, 1000, 2200, bs.RefineParams()) is None
+        assert bs.best_junction_cluster(js, 1000, 2200, bs.RefineParams(min_len=200)) == (1100, 1400, 3)
 
     def test_junction_away_from_the_call_edges_ignored(self):
         # a 1.2 kb call; the reads near its end point to another deletion that starts 400 bp after it and ends 4 kb
@@ -144,3 +150,19 @@ class TestPairBounds:
         assert (d.info["DEPTH_START"], d.info["DEPTH_END"]) == (501, 2500)  # the depth edges are kept
         assert 950 <= d.start <= 1000 and 2000 <= d.stop <= 2100
         assert recs["DUP"].info["BREAKPOINT_SOURCE"] == "depth" and (recs["DUP"].start, recs["DUP"].stop) == (500, 2500)
+
+    def test_input_without_index_is_left_untouched(self, tmp_path):
+        # a plain-text VCF with no index: it is refined from an indexed copy, and the caller's file stays as it was
+        bam = _write_pairs_bam(str(tmp_path / "p.bam"), [(800, 2100), (850, 2050), (900, 2000)])
+        gz = _write_calls_vcf(str(tmp_path / "calls.vcf.gz"), [(500, 2500, "DEL")])
+        plain = str(tmp_path / "plain.vcf")
+        with pysam.VariantFile(gz) as v, pysam.VariantFile(plain, "w", header=v.header) as o:
+            for r in v:
+                o.write(r)
+        before = open(plain).read()
+        out = str(tmp_path / "refined.vcf.gz")
+        bs.refine_cnv_breakpoints(plain, bam, None, out, threads=1)
+        assert open(plain).read() == before
+        assert not (tmp_path / "plain.vcf.gz").exists() and not (tmp_path / "plain.vcf.gz.tbi").exists()
+        with pysam.VariantFile(out) as v:
+            assert [r.info["BREAKPOINT_SOURCE"] for r in v] == ["pair"]

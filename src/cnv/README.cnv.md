@@ -159,10 +159,12 @@ Sex chromosomes are inferred from the depth (or set with `--sex male|female`). F
 `--par-bed` (the `par_regions` genome resource); otherwise the chrX pseudoautosomal regions look like gains.
 
 Filter the calls with `filter_variants_pipeline` and a `cnv_depth` model. Pass the fields in
-`ugbio_filtering.transformers.DEPTH_CNV_INFO_FIELDS` as `--custom_annotations`, and use `--overwrite_qual_tag`.
+`ugbio_filtering.transformers.DEPTH_CNV_INFO_FIELDS` as `--custom_annotations`, and use `--overwrite_qual_tag` and the
+model's threshold (`--decision_threshold 28` for `cnv_filtering_model_v2.0.0.pkl`; the default is 30).
 
-Then merge overlapping PASS calls of the same type into one call (DEL and DUP are never merged, and calls that are
-not PASS are kept unchanged):
+Then merge overlapping PASS calls of the same type into one call (DEL and DUP are never merged, so a position has at
+most two PASS calls). A non-PASS call at least half inside a PASS call of either type is dropped; the other non-PASS
+calls are kept unchanged:
 
 ```bash
 collapse_cnv_calls --input-vcf sample.filtered.vcf.gz --output-vcf sample.cnv.vcf.gz

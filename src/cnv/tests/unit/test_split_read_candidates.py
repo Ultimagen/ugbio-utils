@@ -203,6 +203,16 @@ class TestScoreWithDepth:
         assert r.cn_mean == pytest.approx(r.baseline, rel=0.05)
         assert r.baseline == pytest.approx((6 * 1 + 50 * 2) / 56, rel=0.01)  # 6 kb haploid + 50 kb PAR
 
+    def test_candidate_outside_the_annotated_regions_is_dropped(self, tmp_path):
+        # the annotation covers only chrX:0-30 kb (as when built with --regions): a candidate beyond it is not scored
+        depth_file, ann = self.files(tmp_path)
+        a = pd.read_parquet(ann)
+        a[a.start < 30_000].to_parquet(ann)
+        cand = pd.DataFrame([{"chrom": "chrX", "start": 50_000, "end": 60_000, "svtype": "DEL", "n_reads": 5}])
+        sex = SexChromosomes({"chrX"}, set(), "XY")
+        out = src.score_with_depth(cand, depth_file, depth_file, ann, sex, src.CandidateParams(), require_change=False)
+        assert out.empty
+
     def test_without_the_par_the_edge_looks_like_a_gain(self, tmp_path):
         r = self.score(tmp_path, SexChromosomes({"chrX"}, set(), "XY")).iloc[0]  # the false gain at PAR2
         assert r.baseline == 1
