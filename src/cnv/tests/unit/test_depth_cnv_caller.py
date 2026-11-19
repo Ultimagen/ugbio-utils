@@ -91,7 +91,7 @@ class TestSexInference:
         cn = {"chr1": noisy_cn(5000, rng), chrx: noisy_cn(2000, rng, level=x_level)}
         if y_level is not None:
             cn[chry] = noisy_cn(2000, rng, level=y_level, sd=0.05)
-        bins = dc.normalize(make_bins(cn), set(), dc.Params())
+        bins = dc.normalize(make_bins(cn), dc.Params())
         return dc.sex_chromosome_ratios(bins, chrx, chry, dc.Params())
 
     def test_male(self):
@@ -129,7 +129,7 @@ class TestSexInference:
         rng = np.random.default_rng(8)
         bins = make_bins({"chr1": noisy_cn(5000, rng), "chrX": noisy_cn(2000, rng, level=1.0)})
         bins.loc[bins.chrom == "chrX", "segdup"] = np.float32(1.0)
-        bins = dc.normalize(bins, set(), dc.Params())
+        bins = dc.normalize(bins, dc.Params())
         assert dc.sex_chromosome_ratios(bins, "chrX", "chrY", dc.Params()) == (None, None)
 
 
@@ -137,7 +137,7 @@ class TestNormalize:
     def test_copy_number_and_baseline(self):
         rng = np.random.default_rng(1)
         bins = make_bins({"chr1": noisy_cn(5000, rng), "chrX": noisy_cn(2000, rng, level=1.0)})
-        out = dc.normalize(bins, {"chrX"}, dc.Params())
+        out = dc.set_baseline(dc.normalize(bins, dc.Params()), dc.SexChromosomes(haploid={"chrX"}))
         assert out.loc[out.chrom == "chr1", "cn"].median() == pytest.approx(2.0, abs=0.05)
         assert out.loc[out.chrom == "chrX", "cn"].median() == pytest.approx(1.0, abs=0.05)
         assert set(out.loc[out.chrom == "chrX", "baseline"]) == {1.0}
@@ -145,7 +145,7 @@ class TestNormalize:
     def test_no_coverage_is_an_error(self):
         bins = make_bins({"chr1": np.zeros(5000)})
         with pytest.raises(ValueError, match="No usable coverage"):
-            dc.normalize(bins, set(), dc.Params())
+            dc.normalize(bins, dc.Params())
 
     def test_noise_without_usable_differences_falls_back(self):
         units = pd.DataFrame(
@@ -164,7 +164,7 @@ class TestNormalize:
     def test_static_mask_only(self):
         bins = make_bins({"chr1": np.r_[np.full(3000, 2.0), np.zeros(100), np.full(3000, 2.0)]})
         bins.loc[:9, "n_frac"] = np.float32(0.5)
-        out = dc.normalize(bins, set(), dc.Params())
+        out = dc.normalize(bins, dc.Params())
         assert not out.loc[:9, "callable"].any()
         assert out.loc[3000:3099, "callable"].all()  # zero coverage is never masked
 
@@ -172,7 +172,7 @@ class TestNormalize:
 class TestCalling:
     def call(self, cn: np.ndarray, p: dc.Params | None = None) -> pd.DataFrame:
         p = p or dc.Params()
-        bins = dc.normalize(make_bins({"chr1": cn}), set(), p)
+        bins = dc.set_baseline(dc.normalize(make_bins({"chr1": cn}), p), dc.SexChromosomes())
         segs = dc.segment(dc.make_units(bins, p), p)
         return dc.merge_calls(segs, bins, p)
 
@@ -195,7 +195,7 @@ class TestCalling:
         bins = make_bins({"chr1": cn})
         bins.loc[8250:8350, "n_frac"] = np.float32(1.0)  # assembly gap inside the duplication
         p = dc.Params()
-        nb = dc.normalize(bins, set(), p)
+        nb = dc.set_baseline(dc.normalize(bins, p), dc.SexChromosomes())
         calls = dc.merge_calls(dc.segment(dc.make_units(nb, p), p), nb, p)
         assert len(calls) == 1
         assert calls.iloc[0].direction == "DUP"
@@ -209,7 +209,7 @@ class TestCalling:
         bins = make_bins({"chr1": cn})
         bins.loc[8000:8299, "segdup"] = np.float32(1.0)
         p = dc.Params()
-        nb = dc.normalize(bins, set(), p)
+        nb = dc.set_baseline(dc.normalize(bins, p), dc.SexChromosomes())
         calls = dc.merge_calls(dc.segment(dc.make_units(nb, p), p), nb, p)
         assert len(calls) == 1 and calls.iloc[0].n_merged > 1
         assert 0.3 < calls.iloc[0].segdup < 0.7  # not the first segment's 1.0
@@ -222,7 +222,7 @@ class TestCalling:
         bins.loc[8000:9999, "n_frac"] = np.float32(1.0)
         bins.loc[10015:11999, "n_frac"] = np.float32(1.0)
         p = dc.Params()
-        units = dc.make_units(dc.normalize(bins, set(), p), p)
+        units = dc.make_units(dc.set_baseline(dc.normalize(bins, p), dc.SexChromosomes()), p)
         segs = dc.segment(units, p)
         for s in segs.itertuples():
             inside = units[(units.chrom == s.chrom) & (units.start >= s.start) & (units.end <= s.end)]
@@ -236,7 +236,7 @@ class TestCalling:
         bins = make_bins({"chr1": cn})
         bins.loc[10000:11999, "n_frac"] = np.float32(1.0)  # 200 kb assembly gap inside the gain
         p = dc.Params()
-        nb = dc.normalize(bins, set(), p)
+        nb = dc.set_baseline(dc.normalize(bins, p), dc.SexChromosomes())
         calls = dc.merge_calls(dc.segment(dc.make_units(nb, p), p), nb, p)
         assert list(calls.direction) == ["DUP", "DUP"]  # one call on each side, none across the gap
         assert calls.iloc[0].end <= 1_000_000 and calls.iloc[1].start >= 1_200_000
