@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_cnv import combine_cnv_vcf_utils
+from ugbio_cnv import merge_cnv_sv
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ class TestCombineVcfHeadersForCnv:
         header2.add_sample(sample_name)
 
         # Combine the headers (header1 has Number=1 for SVLEN, should be enforced to ".")
-        combined_header = combine_cnv_vcf_utils.combine_vcf_headers_for_cnv(header1, header2)
+        combined_header = merge_cnv_sv.combine_vcf_headers_for_cnv(header1, header2)
 
         # Verify enforced specifications
         assert "SVLEN" in combined_header.info
@@ -75,7 +75,7 @@ class TestCombineVcfHeadersForCnv:
         header2.add_sample("sample1")  # Same sample name
 
         # Should not raise an error - same type and number
-        combined_header = combine_cnv_vcf_utils.combine_vcf_headers_for_cnv(header1, header2)
+        combined_header = merge_cnv_sv.combine_vcf_headers_for_cnv(header1, header2)
 
         # Verify the first definition is used
         assert "DP" in combined_header.info
@@ -99,7 +99,7 @@ class TestCombineVcfHeadersForCnv:
 
         # Should raise RuntimeError due to different types
         with pytest.raises(RuntimeError, match="INFO field 'DP' has conflicting types"):
-            combine_cnv_vcf_utils.combine_vcf_headers_for_cnv(header1, header2)
+            merge_cnv_sv.combine_vcf_headers_for_cnv(header1, header2)
 
     def test_combine_vcf_headers_collision_different_number(self):
         """Test that collisions with different numbers raise RuntimeError"""
@@ -114,7 +114,7 @@ class TestCombineVcfHeadersForCnv:
 
         # Should raise RuntimeError due to different numbers
         with pytest.raises(RuntimeError, match="INFO field 'AF' has conflicting numbers"):
-            combine_cnv_vcf_utils.combine_vcf_headers_for_cnv(header1, header2)
+            merge_cnv_sv.combine_vcf_headers_for_cnv(header1, header2)
 
     def test_combine_vcf_headers_enforced_svlen_svtype(self):
         """Test that SVLEN and SVTYPE specifications are enforced even with conflicts"""
@@ -130,7 +130,7 @@ class TestCombineVcfHeadersForCnv:
         header2.add_line('##INFO=<ID=SVTYPE,Number=R,Type=Integer,Description="Another wrong spec">')
 
         # Should not raise an error because enforcement overrides conflicts
-        combined_header = combine_cnv_vcf_utils.combine_vcf_headers_for_cnv(header1, header2)
+        combined_header = merge_cnv_sv.combine_vcf_headers_for_cnv(header1, header2)
 
         # Verify enforced specifications are applied
         assert "SVLEN" in combined_header.info
@@ -157,7 +157,7 @@ class TestCombineVcfHeadersForCnv:
         header2.add_line('##INFO=<ID=AF,Number=1,Type=Float,Description="Allele Frequency">')
 
         # Combine with keep_filters=True
-        combined_header = combine_cnv_vcf_utils.combine_vcf_headers_for_cnv(header1, header2, keep_filters=True)
+        combined_header = merge_cnv_sv.combine_vcf_headers_for_cnv(header1, header2, keep_filters=True)
 
         # Verify FILTER fields from both headers are present
         assert "LowQual" in combined_header.filters
@@ -204,7 +204,7 @@ class TestWriteVcfRecordsWithSource:
                 for record in vcf_in:
                     if record_count >= 5:
                         break
-                    combine_cnv_vcf_utils.write_vcf_records_with_source(vcf_in, vcf_out, combined_header, source_name)
+                    merge_cnv_sv.write_vcf_records_with_source(vcf_in, vcf_out, combined_header, source_name)
                     record_count += 1
                     break  # write_vcf_records_with_source processes all records internally
 
@@ -254,7 +254,7 @@ class TestWriteVcfRecordsWithSource:
         output_vcf_path = tmp_path / "output_preserve_source.vcf.gz"
         with pysam.VariantFile(str(input_vcf_path), "r") as vcf_in:
             with pysam.VariantFile(str(output_vcf_path), "w", header=input_header) as vcf_out:
-                combine_cnv_vcf_utils.write_vcf_records_with_source(vcf_in, vcf_out, input_header, "NewCaller")
+                merge_cnv_sv.write_vcf_records_with_source(vcf_in, vcf_out, input_header, "NewCaller")
 
         # Verify that existing CNV_SOURCE is preserved
         with pysam.VariantFile(str(output_vcf_path), "r") as vcf_result:
@@ -330,7 +330,7 @@ class TestWriteVcfRecordsWithSource:
         output_vcf_path = tmp_path / "output_cleared_filters.vcf.gz"
         with pysam.VariantFile(str(input_vcf_path), "r") as vcf_in:
             with pysam.VariantFile(str(output_vcf_path), "w", header=combined_header) as vcf_out:
-                combine_cnv_vcf_utils.write_vcf_records_with_source(vcf_in, vcf_out, combined_header, "TestCaller")
+                merge_cnv_sv.write_vcf_records_with_source(vcf_in, vcf_out, combined_header, "TestCaller")
 
         # Verify that all filters are cleared
         with pysam.VariantFile(str(output_vcf_path), "r") as vcf_result:
@@ -414,7 +414,7 @@ class TestWriteVcfRecordsWithSource:
         output_vcf_path = tmp_path / "output_preserved_filters.vcf.gz"
         with pysam.VariantFile(str(input_vcf_path), "r") as vcf_in:
             with pysam.VariantFile(str(output_vcf_path), "w", header=combined_header) as vcf_out:
-                combine_cnv_vcf_utils.write_vcf_records_with_source(
+                merge_cnv_sv.write_vcf_records_with_source(
                     vcf_in, vcf_out, combined_header, "TestCaller", clear_filters=False
                 )
 
@@ -490,7 +490,7 @@ class TestWriteVcfRecordsWithSource:
         output_vcf_path = tmp_path / "output_preserve_source.vcf.gz"
         with pysam.VariantFile(str(input_vcf_path), "r") as vcf_in:
             with pysam.VariantFile(str(output_vcf_path), "w", header=input_header) as vcf_out:
-                combine_cnv_vcf_utils.write_vcf_records_with_source(vcf_in, vcf_out, input_header, source_name=None)
+                merge_cnv_sv.write_vcf_records_with_source(vcf_in, vcf_out, input_header, source_name=None)
 
         # Verify that existing CNV_SOURCE values are preserved exactly
         with pysam.VariantFile(str(output_vcf_path), "r") as vcf_result:
