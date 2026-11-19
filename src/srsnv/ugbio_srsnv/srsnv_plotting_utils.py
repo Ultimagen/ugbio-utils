@@ -53,7 +53,10 @@ from ugbio_srsnv.srsnv_utils import (
     ET,
     ET_FILLNA,
     FS,
+    IS_CYCLE_SKIP_COMBINED,
+    IS_MULTI_CALL_CONCORDANT,
     MAX_PHRED,
+    MULTI_CALL_GROUP,
     PE_DUPLEX_GROUP,
     PE_DUPLEX_GROUP_PE,
     PE_DUPLEX_GROUP_SIMPLEX_PE,
@@ -61,7 +64,9 @@ from ugbio_srsnv.srsnv_utils import (
     RS,
     ST,
     ST_FILLNA,
+    ReportMode,
     construct_trinuc_context_with_alt,
+    dedupe_multi_call_molecules,
     get_base_recall_from_filters,
     phred_to_prob,
     prob_to_logit,
@@ -320,7 +325,7 @@ def create_data_for_report(
     return df, df_tp, df_fp, max_score, cls_features, fprs, recalls
 
 
-def create_srsnv_report_html(
+def create_srsnv_report_html(  # noqa: PLR0913
     out_path,
     out_basename,
     srsnv_metadata_file,
@@ -331,6 +336,9 @@ def create_srsnv_report_html(
     has_hmer_indels: bool = False,
     has_non_hmer_indels: bool = False,
     has_duplex_pe: bool = False,
+    has_multi_call: bool = False,
+    flow_order_r1: str = "TGCA",
+    flow_order_r2: str | None = None,
 ):
     if len(out_basename) > 0 and not out_basename.endswith("."):
         out_basename += "."
@@ -346,6 +354,8 @@ def create_srsnv_report_html(
     non_hmer_indel_by_class_plot = os.path.join(out_path, f"{out_basename}non_hmer_indel_by_class")
     non_hmer_indel_str_plot = os.path.join(out_path, f"{out_basename}non_hmer_indel_str")
     non_hmer_indel_str_context_plot = os.path.join(out_path, f"{out_basename}non_hmer_indel_str_context")
+    # multi-call: per-flow-order trinuc figure (exists only when has_multi_call with two distinct flow orders).
+    trinuc_stats_per_flow_plot = os.path.join(out_path, f"{out_basename}trinuc_stats_per_flow")
 
     [
         FQ_vs_recall_plot,  # noqa: N806
@@ -385,6 +395,10 @@ def create_srsnv_report_html(
         "has_hmer_indels": has_hmer_indels,
         "has_non_hmer_indels": has_non_hmer_indels,
         "has_duplex_pe": has_duplex_pe,
+        "has_multi_call": has_multi_call,
+        "flow_order_r1": flow_order_r1,
+        "flow_order_r2": flow_order_r2,
+        "trinuc_stats_per_flow_plot": trinuc_stats_per_flow_plot,
         "hmer_indel_by_class_plot": hmer_indel_by_class_plot,
         "hmer_indel_fq_recall_plot": hmer_indel_fq_recall_plot,
         "hmer_indel_context_plot": hmer_indel_context_plot,
@@ -1640,6 +1654,9 @@ class SRSNVReport:
                 self.data_df, adapter_version=adapter_version, categorical_features_names=categorical_features
             )
             self.report_mode = self.scheme.mode
+        # Multi-call: metrics are per molecule -> one row per molecule (no-op if prepare_report already deduped).
+        if self.scheme.mode is ReportMode.MULTI_CALL:
+            self.data_df = dedupe_multi_call_molecules(self.data_df)
 
         # add logits to data_df
         self.data_df[ML_LOGIT_TEST] = prob_to_logit(
@@ -2903,6 +2920,7 @@ class SRSNVReport:
         output_filename: str = None,
         order: str = "symmetric",
         motif_orientation: str = "seq_dir",
+        output_per_flow_filename: str | None = None,
     ):
         logger.info("Calculating trinuc context statistics")
 
@@ -2919,27 +2937,51 @@ class SRSNVReport:
             # calc_trinuc_stats names group columns "mixed=<group value>"; match that prefix.
             group_specs = [(f"mixed={label}", label, palette[label]) for label in variant.groups]
 
-        # Call the new plotting function
-        fig, stats_df = calc_and_plot_trinuc_hist(
-            self._snv_rows(),
-            trinuc_col=TRINUC_CONTEXT_WITH_ALT,
-            label_col=LABEL,
-            labels=[True, False],
-            is_forward_col=IS_FORWARD,
-            qual_col=QUAL,
-            order=order,
-            # figsize=(16, 9),
-            collapsed=False,  # Use non-collapsed mode to show both forward and reverse
-            include_quality=True,  # Include quality panels like the original
-            motif_orientation=motif_orientation,
-            q1=0.1,
-            q2=0.9,
-            split_col=split_col,
-            group_specs=group_specs,
-        )
+        flow_orders = self._trinuc_flow_orders()
+        multi_flow = flow_orders is not None and len(flow_orders) > 1
+        trinuc_kws = {
+            "trinuc_col": TRINUC_CONTEXT_WITH_ALT,
+            "label_col": LABEL,
+            "labels": [True, False],
+            "is_forward_col": IS_FORWARD,
+            "qual_col": QUAL,
+            "order": order,
+            "collapsed": False,  # Use non-collapsed mode to show both forward and reverse
+            "include_quality": True,  # Include quality panels like the original
+            "motif_orientation": motif_orientation,
+            "q1": 0.1,
+            "q2": 0.9,
+            "split_col": split_col,
+            "group_specs": group_specs,
+            "flow_orders": flow_orders,
+        }
+        # Multi-call with two flow orders: the default figure is the COMBINED view (cycle skip in R1 or R2 -- the
+        # molecule is read in both); the per-flow-order 4-class view is an additional figure / h5 key.
+        if multi_flow and IS_CYCLE_SKIP_COMBINED in self.data_df.columns:
+            trinuc_kws["cycle_skip_col"] = IS_CYCLE_SKIP_COMBINED
+            trinuc_kws["combine_flow_orders"] = True
+        fig, stats_df = calc_and_plot_trinuc_hist(self._snv_rows(), **trinuc_kws)
         stats_df.to_hdf(self.output_h5_filename, key="trinuc_stats", mode="a")
 
         self._save_plt(output_filename=output_filename, fig=fig)
+
+        if multi_flow and output_per_flow_filename is not None:
+            trinuc_kws["cycle_skip_col"] = IS_CYCLE_SKIP
+            trinuc_kws["combine_flow_orders"] = False
+            fig_pf, stats_pf = calc_and_plot_trinuc_hist(self._snv_rows(), **trinuc_kws)
+            stats_pf.to_hdf(self.output_h5_filename, key="trinuc_stats_per_flow", mode="a")
+            self._save_plt(output_filename=output_per_flow_filename, fig=fig_pf)
+
+    def _trinuc_flow_orders(self) -> tuple[str, ...] | None:
+        """Flow orders for the trinuc cycle-skip tick colouring: ``(r1, r2)`` for multi-call data with a distinct
+        R2 flow order, ``(r1,)`` for a non-default single flow order, ``None`` (module default TGCA) otherwise."""
+        r1 = self.params.get("flow_order_r1")
+        r2 = self.params.get("flow_order_r2")
+        if r1 is None:
+            return None
+        if r2 is not None and r2 != r1:
+            return (r1, r2)
+        return (r1,)
 
     def _snv_rows(self) -> pd.DataFrame:
         """SNV rows of the report dataframe (all rows when there is no ``variant_type`` column).
@@ -3264,7 +3306,7 @@ class SRSNVReport:
         should add its raw group columns here so its group_fn can run on the sliced frame. The pe-duplex
         group_fn reads the pre-assigned ``pe_duplex_group`` column directly (it is not recomputed from raw
         inputs), so include it too."""
-        candidates = [IS_MIXED, IS_MIXED_START, FS, RS, PE_DUPLEX_GROUP]
+        candidates = [IS_MIXED, IS_MIXED_START, FS, RS, PE_DUPLEX_GROUP, MULTI_CALL_GROUP]
         return [c for c in candidates if c in self.data_df.columns]
 
     def _plot_logit_variant(self, plot_df, ax, variant, alpha=0.4):
@@ -3696,6 +3738,67 @@ class SRSNVReport:
                 rows.append(row)
         table = pd.DataFrame(rows)
         table.to_hdf(self.output_h5_filename, key="run_quality_summary_table_pe_concordance", mode="a")
+
+    @exception_handler
+    def calc_multi_call_summary_table(self):
+        """Multi-call (ppmSeq+ dual flow) SNVQ summary: concordant (alt in both calls) vs single-call molecules.
+
+        Rows: variant class x call concordance (concordant / single-call / all). SNVs are additionally split by
+        the COMBINED cycle skip (cycle skip in the R1 or R2 flow order). Per molecule (``data_df`` is deduplicated
+        to one row per molecule in multi-call mode). Reports n_TP, n_FP, % of the class's TP molecules,
+        Median SNVQ (TP/FP), TP%>=60, FP%>=60 and ROC AUC (Phred). Written to the QC h5 under
+        ``multi_call_summary_table``. Self-skips unless the multi-call columns are present.
+        """
+        if IS_MULTI_CALL_CONCORDANT not in self.data_df.columns:
+            logger.info("calc_multi_call_summary_table: no multi-call columns; skipping")
+            return
+        data = self.data_df
+        label = data[LABEL].to_numpy().astype(bool)
+        snvq = pd.to_numeric(data[QUAL], errors="coerce").to_numpy()
+        pct60 = 60  # high-confidence SNVQ threshold
+        conc = data[IS_MULTI_CALL_CONCORDANT].fillna(value=False).astype(bool).to_numpy()
+        n = len(data)
+        vt = data[VARIANT_TYPE].to_numpy() if VARIANT_TYPE in data.columns else np.full(n, VARIANT_TYPE_SNV)
+        is_snv = vt == VARIANT_TYPE_SNV
+        class_masks = [("all", np.ones(n, dtype=bool)), ("snv", is_snv)]
+        cs_col = IS_CYCLE_SKIP_COMBINED if IS_CYCLE_SKIP_COMBINED in data.columns else IS_CYCLE_SKIP
+        if cs_col in data.columns:
+            cs = pd.Series(data[cs_col].to_numpy(), dtype=object)
+            cs_true = cs.eq(True).to_numpy()  # noqa: FBT003
+            cs_false = cs.eq(False).to_numpy()  # noqa: FBT003
+            class_masks += [("snv, cycle skip", is_snv & cs_true), ("snv, non cycle skip", is_snv & cs_false)]
+        for v in (VARIANT_TYPE_HMER_INDEL, VARIANT_TYPE_NONHMER_INDEL):
+            if (vt == v).any():
+                class_masks.append((v, vt == v))
+        rows = []
+        for cls_name, cls_mask in class_masks:
+            n_tp_cls = int((cls_mask & label).sum())
+            for conc_name, conc_mask in (("concordant", conc), ("single-call", ~conc), ("all", np.ones(n, bool))):
+                mask = cls_mask & conc_mask
+                tp_mask, fp_mask = mask & label, mask & ~label
+                n_tp, n_fp = int(tp_mask.sum()), int(fp_mask.sum())
+                row = {
+                    "variant_class": cls_name,
+                    "call_concordance": conc_name,
+                    "n_TP": n_tp,
+                    "n_FP": n_fp,
+                    "% of TP molecules": signif(100 * n_tp / n_tp_cls if n_tp_cls else np.nan, SIG_DIGITS),
+                    "Median SNVQ (TP)": signif(np.nanmedian(snvq[tp_mask]) if n_tp else np.nan, SIG_DIGITS),
+                    "Median SNVQ (FP)": signif(np.nanmedian(snvq[fp_mask]) if n_fp else np.nan, SIG_DIGITS),
+                    "TP%>=60": signif(100 * (tp_mask & (snvq >= pct60)).sum() / n_tp if n_tp else np.nan, SIG_DIGITS),
+                    "FP%>=60": signif(100 * (fp_mask & (snvq >= pct60)).sum() / n_fp if n_fp else np.nan, SIG_DIGITS),
+                }
+                if n_tp > 0 and n_fp > 0:
+                    sub = data[mask]
+                    auc_phred = prob_to_phred(
+                        self._safe_roc_auc(sub[LABEL], sub[ML_PROB_1_TEST], name=f"multi-call {cls_name}/{conc_name}"),
+                        max_value=self.max_qual,
+                    )
+                else:
+                    auc_phred = np.nan
+                row["ROC AUC (Phred)"] = signif(auc_phred, SIG_DIGITS)
+                rows.append(row)
+        pd.DataFrame(rows).to_hdf(self.output_h5_filename, key="multi_call_summary_table", mode="a")
 
     @exception_handler
     def plot_hmer_indel_fq_recall(self, output_filename: str = None, *, font_size: int = 20):
@@ -4450,7 +4553,13 @@ class SRSNVReport:
         self.plot_quality_histogram(output_filename=qual_histogram)
 
         # Trinuc stats plot
-        self.calc_and_plot_trinuc_plot(output_filename=trinuc_stats_plot, order="symmetric")
+        self.calc_and_plot_trinuc_plot(
+            output_filename=trinuc_stats_plot,
+            order="symmetric",
+            output_per_flow_filename=os.path.join(
+                self.params["workdir"], f"{self.params['data_name']}trinuc_stats_per_flow"
+            ),
+        )
 
         # Quality and histogram for numerical features
         for col in self.params["numerical_features"]:
@@ -4469,6 +4578,8 @@ class SRSNVReport:
         # Duplex-PE CS-family concordance summary (PE reads, concordant vs non-concordant). Self-skips
         # unless the CS / pe-duplex columns are present.
         self.calc_pe_concordance_summary_table()
+        # Multi-call concordant vs single-call summary (per molecule). Self-skips unless MATE-derived columns exist.
+        self.calc_multi_call_summary_table()
         hmer_indel_fq_recall_plot = os.path.join(
             self.params["workdir"], f"{self.params['data_name']}hmer_indel_fq_recall"
         )

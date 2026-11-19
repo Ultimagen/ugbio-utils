@@ -1214,3 +1214,65 @@ def test_trinuc_plot_input_is_snv_only():
     # SNV-only runs (no variant_type column) are passed through unchanged
     no_vt = data_df.drop(columns=["variant_type"])
     assert SRSNVReport._snv_rows(SimpleNamespace(data_df=no_vt)) is no_vt
+
+
+# ──────────────────── multi-call (ppmSeq+ dual flow) report path ────────────────────
+
+
+def _to_multi_call(df: pd.DataFrame) -> pd.DataFrame:
+    """Turn a single-call featuremap into a multi-call one: every 2nd molecule is concordant (an R1 row plus an
+    identical R2 row with MATE=2), the rest single-call (R1 or R2 only). Both calls share the score/SNVQ."""
+    df = df.reset_index(drop=True).copy()  # noqa: PD901
+    df["MATE"] = np.where(np.arange(len(df)) % 4 == 3, 2, 1)  # noqa: PLR2004
+    conc = df.iloc[::2].copy()
+    conc["MATE"] = 2
+    df.loc[conc.index, "MATE"] = 1
+    return pd.concat([df, conc], ignore_index=True)
+
+
+def test_multi_call_report_path(resources_dir):
+    """Full prepare_report on a multi-call featuremap: MULTI_CALL scheme, per-molecule metrics, combined +
+    per-flow trinuc figures and the multi-call summary table; mixed keys stay out."""
+    src = pd.read_parquet(resources_dir / "402572-CL10377.featuremap_df.parquet")
+    n_mol = len(src)
+    srsnv_metadata = str(resources_dir / "402572-CL10377.srsnv_metadata.json")
+    with tempfile.TemporaryDirectory() as td:
+        fm = os.path.join(td, "mc.parquet")
+        _to_multi_call(src).to_parquet(fm)
+        for mf in resources_dir.glob("402572-CL10377.model_fold_*.json"):
+            shutil.copy(mf, td)
+        cwd = os.getcwd()
+        os.chdir(td)
+        try:
+            prepare_report(
+                featuremap_df=fm,
+                srsnv_metadata=srsnv_metadata,
+                report_path=td,
+                basename="mc",
+                random_seed=0,
+                flow_order_r1="TGCA",
+                flow_order_r2="TACG",
+            )
+        finally:
+            os.chdir(cwd)
+        h5 = next(Path(td).glob("*single_read_snv.applicationQC.h5"))
+        with pd.HDFStore(str(h5), "r") as store:
+            keys = set(store.keys())
+        for k in (
+            "/trinuc_stats",
+            "/trinuc_stats_per_flow",
+            "/multi_call_summary_table",
+            "/run_info_table_multi_call",
+            "/roc_auc_table_multi_call",
+        ):
+            assert k in keys, f"missing {k}; keys={sorted(keys)}"
+        assert "/run_info_table_mixed_start" not in keys
+        table = pd.read_hdf(h5, "multi_call_summary_table")
+        tot = table[(table["variant_class"] == "all") & (table["call_concordance"] == "all")].iloc[0]
+        assert tot["n_TP"] + tot["n_FP"] == n_mol  # per molecule, not per read row
+        conc = table[(table["variant_class"] == "all") & (table["call_concordance"] == "concordant")].iloc[0]
+        assert conc["n_TP"] + conc["n_FP"] == (n_mol + 1) // 2
+        assert {"snv, cycle skip", "snv, non cycle skip"} <= set(table["variant_class"])
+        assert (Path(td) / "mc.trinuc_stats_per_flow.png").exists()
+        assert (Path(td) / "mc.trinuc_stats.png").exists()
+        assert (Path(td) / "mc.report.html").exists()

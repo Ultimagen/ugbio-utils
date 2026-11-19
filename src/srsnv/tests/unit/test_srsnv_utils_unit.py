@@ -1563,3 +1563,78 @@ class TestAddIsConsensus:
         out = add_is_consensus_to_featuremap_df(data_df)
         assert out[IS_CONSENSUS].tolist() == [False, True, False, False, True]
         assert out[IS_CONSENSUS].dtype == bool
+
+
+# ──────────────────────── multi-call (ppmSeq+ dual flow) ──────────────────────────
+
+
+class TestMultiCallFlowOrder:
+    """Cycle skip in the R2 flow order (TACG) and the per-row flow order selected by MATE."""
+
+    def test_is_cycle_skip_depends_on_flow_order(self):
+        # tcwa = prev, ref, next, alt. A[A>C]G is a cycle skip in TGCA but not in TACG; C[A>C]G the opposite.
+        assert is_cycle_skip("AAGC", flow_order="TGCA")
+        assert not is_cycle_skip("AAGC", flow_order="TACG")
+        assert not is_cycle_skip("CAGC", flow_order="TGCA")
+        assert is_cycle_skip("CAGC", flow_order="TACG")
+        # the default (list FLOW_ORDER = TGCA) equals the TGCA string
+        assert is_cycle_skip("AAGC") == is_cycle_skip("AAGC", flow_order="TGCA")
+
+    def test_flow_order_per_row(self):
+        from ugbio_srsnv.srsnv_utils import flow_order_per_row  # noqa: PLC0415
+
+        df = pd.DataFrame({"MATE": [0, 1, 2, None]}, index=[5, 6, 7, 8])  # noqa: PD901
+        assert flow_order_per_row(df, "TGCA", "TACG").tolist() == ["TGCA", "TGCA", "TACG", "TGCA"]
+        assert flow_order_per_row(df, "TGCA", None).tolist() == ["TGCA"] * 4
+        assert flow_order_per_row(pd.DataFrame({"x": [1]}), "TGCA", "TACG").tolist() == ["TGCA"]
+        assert list(flow_order_per_row(df, "TGCA", "TACG").index) == [5, 6, 7, 8]
+
+
+class TestMultiCallColumns:
+    @staticmethod
+    def _df():
+        return pd.DataFrame(
+            {
+                "CHROM": ["chr1"] * 6,
+                "POS": [10, 10, 20, 30, 30, 40],
+                "RN": ["a", "a", "b", "c", "c", "d"],
+                "REF": ["A", "A", "C", "G", "G", "T"],
+                "ALT": ["T", "T", "A", "C", "T", "G"],  # c: different alts -> two single-call molecules
+                "MATE": [2, 1, 2, 1, 2, 1],
+                "is_mixed_start": [True, True, False, False, False, True],
+            }
+        )
+
+    def test_concordance_representative_and_groups(self):
+        from ugbio_srsnv.srsnv_utils import (  # noqa: PLC0415
+            IS_MOLECULE_REPRESENTATIVE,
+            IS_MULTI_CALL_CONCORDANT,
+            MULTI_CALL_GROUP,
+            add_multi_call_columns_to_featuremap_df,
+        )
+
+        out = add_multi_call_columns_to_featuremap_df(self._df())
+        assert out[IS_MULTI_CALL_CONCORDANT].tolist() == [True, True, False, False, False, False]
+        # the R1 row represents molecule a (row 1, not the first-listed R2 row); others are their own molecule
+        assert out[IS_MOLECULE_REPRESENTATIVE].tolist() == [False, True, True, True, True, True]
+        groups = out[MULTI_CALL_GROUP].astype(object).tolist()
+        assert pd.isna(groups[0])
+        assert groups[1:] == [
+            "concordant, mixed",
+            "single-call, non-mixed",
+            "single-call, non-mixed",
+            "single-call, non-mixed",
+            "single-call, mixed",
+        ]
+
+    def test_dedupe(self):
+        from ugbio_srsnv.srsnv_utils import (  # noqa: PLC0415
+            add_multi_call_columns_to_featuremap_df,
+            dedupe_multi_call_molecules,
+        )
+
+        out = dedupe_multi_call_molecules(add_multi_call_columns_to_featuremap_df(self._df()))
+        assert len(out) == 5  # noqa: PLR2004
+        assert out["RN"].tolist() == ["a", "b", "c", "c", "d"]
+        no_rep = pd.DataFrame({"x": [1, 2]})
+        assert dedupe_multi_call_molecules(no_rep) is no_rep

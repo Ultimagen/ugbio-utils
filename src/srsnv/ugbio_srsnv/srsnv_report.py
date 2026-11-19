@@ -36,9 +36,14 @@ from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_srsnv.split_scheme import resolve_scheme_and_add_columns
 from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport, create_srsnv_report_html
 from ugbio_srsnv.srsnv_utils import (
+    DEFAULT_FLOW_ORDER_R1,
     ET,
+    IS_CYCLE_SKIP_COMBINED,
     PE_DUPLEX_GROUP,
     ST,
+    ReportMode,
+    dedupe_multi_call_molecules,
+    flow_order_per_row,
 )
 
 FOLD_COL = "fold_id"
@@ -82,7 +87,9 @@ EDIT_DIST_FEATURES = ["EDIST", "HAMDIST", "HAMDIST_FILT"]
 pl.enable_string_cache()
 
 
-def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA") -> pd.Series:
+def compute_is_cycle_skip_column(
+    data_df: pd.DataFrame, flow_order: str = DEFAULT_FLOW_ORDER_R1, flow_order_r2: str | None = None
+) -> pd.Series:
     """
     Compute the is_cycle_skip column for a featuremap dataframe.
 
@@ -92,9 +99,12 @@ def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA"
     Parameters
     ----------
     data_df : pd.DataFrame
-        DataFrame containing X_PREV1, REF, ALT, and X_NEXT1 columns.
+        DataFrame containing X_PREV1, REF, ALT, and X_NEXT1 columns (and, for multi-call data, MATE).
     flow_order : str, optional
-        Flow order string (default: "TGCA").
+        Flow order string (default: "TGCA"). For multi-call data this is the R1 flow order.
+    flow_order_r2 : str, optional
+        Multi-call (ppmSeq+ dual flow) R2 flow order: rows with ``MATE == 2`` are evaluated in this flow order,
+        all other rows in ``flow_order``. ``None`` (default) -> every row uses ``flow_order``.
 
     Returns
     -------
@@ -106,23 +116,53 @@ def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA"
     ref_motif = data_df[X_PREV1].astype(str) + data_df[REF].astype(str) + data_df[X_NEXT1].astype(str)
     alt_motif = data_df[X_PREV1].astype(str) + data_df[ALT].astype(str) + data_df[X_NEXT1].astype(str)
 
-    cycle_skip_df = get_cycle_skip_dataframe(flow_order)[[IS_CYCLE_SKIP]]
-
     motif_df = pd.DataFrame(
         {"ref_motif": ref_motif, "alt_motif": alt_motif},
         index=data_df.index,
     )
+    row_flow = flow_order_per_row(data_df, flow_order, flow_order_r2)
+    flow_orders = list(dict.fromkeys(row_flow.tolist())) or [flow_order]
+    if len(flow_orders) == 1:
+        cycle_skip_df = get_cycle_skip_dataframe(flow_orders[0])[[IS_CYCLE_SKIP]]
+        result = motif_df.merge(
+            cycle_skip_df,
+            left_on=["ref_motif", "alt_motif"],
+            right_index=True,
+            how="left",
+        )[IS_CYCLE_SKIP]
+        return result.loc[data_df.index]
 
-    result = motif_df.merge(
-        cycle_skip_df,
-        left_on=["ref_motif", "alt_motif"],
-        right_index=True,
-        how="left",
-    )[IS_CYCLE_SKIP]
-
-    result = result.loc[data_df.index]
-
+    result = pd.Series(np.nan, index=data_df.index, dtype=object)
+    for fo in flow_orders:
+        mask = (row_flow == fo).to_numpy()
+        cycle_skip_df = get_cycle_skip_dataframe(fo)[[IS_CYCLE_SKIP]]
+        sub = motif_df.loc[mask].merge(
+            cycle_skip_df,
+            left_on=["ref_motif", "alt_motif"],
+            right_index=True,
+            how="left",
+        )[IS_CYCLE_SKIP]
+        result.loc[sub.index] = sub.to_numpy()
     return result
+
+
+def compute_is_cycle_skip_combined_column(
+    data_df: pd.DataFrame, flow_order_r1: str = DEFAULT_FLOW_ORDER_R1, flow_order_r2: str | None = None
+) -> pd.Series:
+    """Multi-call combined cycle skip: the SNV motif is a cycle skip in the R1 OR the R2 flow order.
+
+    A multi-call molecule is sequenced in both flow orders, so it is a cycle-skip observation if either call is.
+    Evaluated per motif for every row (independent of MATE). Rows whose motif is not an SNV motif (e.g. indels)
+    are NaN in both flow orders and stay NaN. ``flow_order_r2=None`` -> the R1 cycle skip only.
+    """
+    no_mate = data_df.drop(columns=["MATE"], errors="ignore")
+    cs_r1 = compute_is_cycle_skip_column(no_mate, flow_order_r1)
+    if flow_order_r2 is None or flow_order_r2 == flow_order_r1:
+        return cs_r1
+    cs_r2 = compute_is_cycle_skip_column(no_mate, flow_order_r2)
+    known = cs_r1.notna() | cs_r2.notna()
+    combined = cs_r1.fillna(value=False).astype(bool) | cs_r2.fillna(value=False).astype(bool)
+    return combined.astype(object).where(known, np.nan)
 
 
 def compute_variant_type_column(data_df: pd.DataFrame) -> pd.Series:
@@ -276,6 +316,8 @@ def prepare_report(
     random_seed: int | None = None,
     *,
     use_gpu_for_shap: bool = False,
+    flow_order_r1: str = DEFAULT_FLOW_ORDER_R1,
+    flow_order_r2: str | None = None,
 ) -> None:
     """
     Prepare the SNV report based on the provided featuremap dataframe and metadata.
@@ -288,6 +330,8 @@ def prepare_report(
         models_prefix (str | None): Prefix for model JSON files.
         random_seed (int | None): Random seed for reproducibility.
         use_gpu_for_shap (bool): Whether to use GPU for SHAP calculations if available.
+        flow_order_r1 (str): Flow order for cycle skip (multi-call: of the R1 call, MATE != 2). Default TGCA.
+        flow_order_r2 (str | None): Multi-call R2 flow order (rows with MATE == 2). None -> same as r1.
     """
     logger.info("Preparing SNV report...")
 
@@ -322,7 +366,22 @@ def prepare_report(
         params["categorical_features_names"],
     )
     params["report_mode"] = scheme.mode.value
-    data_df[IS_CYCLE_SKIP] = compute_is_cycle_skip_column(data_df)
+    data_df[IS_CYCLE_SKIP] = compute_is_cycle_skip_column(data_df, flow_order_r1, flow_order_r2)
+    # Flow orders used for cycle skip (the trinuc figure colours ticks per flow order when they differ).
+    params["flow_order_r1"] = flow_order_r1
+    params["flow_order_r2"] = flow_order_r2
+    # Multi-call (ppmSeq+ dual flow; auto-detected from the MATE column): per-molecule report. The combined
+    # (R1 or R2) cycle skip is computed on all read rows, then rows are deduplicated to one per molecule (both
+    # calls share the score / SNVQ; concordance was already derived by the scheme from the read rows).
+    params["has_multi_call"] = scheme.mode is ReportMode.MULTI_CALL
+    if params["has_multi_call"]:
+        if flow_order_r2 is None or flow_order_r2 == flow_order_r1:
+            logger.warning(
+                "Multi-call featuremap (MATE) without a distinct --flow-order-r2: cycle skip uses the R1 flow order "
+                f"({flow_order_r1}) for both calls"
+            )
+        data_df[IS_CYCLE_SKIP_COMBINED] = compute_is_cycle_skip_combined_column(data_df, flow_order_r1, flow_order_r2)
+        data_df = dedupe_multi_call_molecules(data_df)
 
     # Joint SNV + hmer-indel report dimension (orthogonal to the read-group split scheme above).
     # Auto-detected from the featuremap: hmer-indel rows carry X_IC. When present, the report can break
@@ -377,6 +436,9 @@ def prepare_report(
         has_hmer_indels=params["has_hmer_indels"],
         has_non_hmer_indels=params["has_non_hmer_indels"],
         has_duplex_pe=params["has_duplex_pe"],
+        has_multi_call=params["has_multi_call"],
+        flow_order_r1=flow_order_r1,
+        flow_order_r2=flow_order_r2,
     )
 
 
@@ -400,6 +462,17 @@ def _cli() -> argparse.Namespace:
     ap.add_argument("--random-seed", type=int, default=None)
     ap.add_argument("--verbose", action="store_true", help="Enable debug logging")
     ap.add_argument("--use-gpu-for-shap", action="store_true", help="Use GPU for SHAP calculations if available")
+    ap.add_argument(
+        "--flow-order-r1",
+        default=DEFAULT_FLOW_ORDER_R1,
+        help="Flow order used for cycle skip (multi-call data: flow order of the R1 call, MATE != 2). Default TGCA",
+    )
+    ap.add_argument(
+        "--flow-order-r2",
+        default=None,
+        help="Multi-call (ppmSeq+ dual flow) flow order of the R2 call: rows with MATE == 2 are evaluated in this "
+        "flow order for cycle skip. Default: same as --flow-order-r1",
+    )
 
     args = ap.parse_args()
     return args
@@ -421,6 +494,8 @@ def main() -> None:
         models_prefix=args.models_prefix,
         random_seed=args.random_seed,
         use_gpu_for_shap=args.use_gpu_for_shap,
+        flow_order_r1=args.flow_order_r1,
+        flow_order_r2=args.flow_order_r2,
     )
 
 

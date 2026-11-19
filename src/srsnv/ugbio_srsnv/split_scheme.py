@@ -37,9 +37,16 @@ from ugbio_srsnv.srsnv_utils import (
     IS_CONSENSUS,
     IS_MIXED,
     IS_MIXED_START,
+    MATE,
     MIXED_GROUP_NON,
     MIXED_GROUP_POS,
     MIXED_GROUPS,
+    MULTI_CALL_GROUP,
+    MULTI_CALL_GROUP_CONC_MIXED,
+    MULTI_CALL_GROUP_CONC_NON,
+    MULTI_CALL_GROUP_SINGLE_MIXED,
+    MULTI_CALL_GROUP_SINGLE_NON,
+    MULTI_CALL_GROUPS,
     NONE_GROUP_ALL,
     PE_DUPLEX_GROUP,
     PE_DUPLEX_GROUP_PE,
@@ -55,6 +62,7 @@ from ugbio_srsnv.srsnv_utils import (
     ReportMode,
     add_is_consensus_to_featuremap_df,
     add_is_mixed_to_featuremap_df,
+    add_multi_call_columns_to_featuremap_df,
     add_pe_duplex_columns_to_featuremap_df,
 )
 
@@ -215,6 +223,16 @@ def _pe_duplex_groups(data_df: pd.DataFrame) -> pd.Categorical:
     return _ordered(data_df[PE_DUPLEX_GROUP], PE_DUPLEX_GROUPS)
 
 
+def _multi_call_groups(data_df: pd.DataFrame) -> pd.Categorical:
+    """Multi-call split: single-call / concordant x non-mixed / mixed (start tag), one row per molecule.
+
+    Reads the per-row ``multi_call_group`` column assigned by
+    :func:`~ugbio_srsnv.srsnv_utils.add_multi_call_columns_to_featuremap_df`; the non-representative call of a
+    molecule is NaN (in no group), so per-group metrics are counted per molecule.
+    """
+    return _ordered(data_df[MULTI_CALL_GROUP], MULTI_CALL_GROUPS)
+
+
 def _none_groups(data_df: pd.DataFrame) -> pd.Categorical:
     return _ordered([NONE_GROUP_ALL] * len(data_df), [NONE_GROUP_ALL])
 
@@ -232,6 +250,15 @@ def _consensus_add_columns(data_df: pd.DataFrame, kw: dict) -> pd.DataFrame:  # 
 
 def _pe_duplex_add_columns(data_df: pd.DataFrame, kw: dict) -> pd.DataFrame:  # noqa: ARG001
     return add_pe_duplex_columns_to_featuremap_df(data_df)
+
+
+def _multi_call_add_columns(data_df: pd.DataFrame, kw: dict) -> pd.DataFrame:
+    # Mixed-start from the ppmSeq start tag when present (same handler as the MIXED scheme), else all non-mixed.
+    if MIXED_SCHEME.detect(data_df.columns):
+        data_df = _mixed_add_columns(data_df, kw)
+    else:
+        data_df[IS_MIXED_START] = False
+    return add_multi_call_columns_to_featuremap_df(data_df)
 
 
 def _none_add_columns(data_df: pd.DataFrame, kw: dict) -> pd.DataFrame:  # noqa: ARG001
@@ -333,6 +360,30 @@ PE_DUPLEX_SCHEME = SplitScheme(
     ),
 )
 
+MULTI_CALL_SCHEME = SplitScheme(
+    mode=ReportMode.MULTI_CALL,
+    # Multi-call (ppmSeq+ dual flow): snvfind --emit-mate tags every read row with MATE (0/1/2). Checked before
+    # MIXED (multi-call reads also carry st/et) so the concordant x mixed-start split wins.
+    detect=lambda cols: MATE in cols,
+    add_columns=_multi_call_add_columns,
+    tag_axis="call concordance",
+    variants=(
+        SplitVariant(
+            suffix="multi_call",
+            group_fn=_multi_call_groups,
+            groups=tuple(MULTI_CALL_GROUPS),
+            colors={
+                MULTI_CALL_GROUP_SINGLE_NON: "tab:red",
+                MULTI_CALL_GROUP_SINGLE_MIXED: "tab:orange",
+                MULTI_CALL_GROUP_CONC_NON: "tab:purple",
+                MULTI_CALL_GROUP_CONC_MIXED: "tab:green",
+            },
+            is_display=True,
+            tag_axis="call concordance",
+        ),
+    ),
+)
+
 CONSENSUS_SCHEME = SplitScheme(
     mode=ReportMode.CONSENSUS,
     detect=lambda cols: FS in cols and RS in cols,
@@ -367,10 +418,12 @@ NONE_SCHEME = SplitScheme(
 
 # Ordered registry. PE_DUPLEX first: it detects the DNN per-image CS-family stat `cs_n_crossing`,
 # emitted only by duplex-PE DeepSRSNV runs, whose per-molecule split must win over the ppmSeq MIXED
-# split (which also matches because st/et are present). ppmSeq tags then beat per-read fs/rs. NONE is
+# split (which also matches because st/et are present). MULTI_CALL (MATE column) next, also before MIXED for the
+# same reason. ppmSeq tags then beat per-read fs/rs. NONE is
 # the explicit fallback, not consulted via `detect`.
 SPLIT_SCHEMES: tuple[SplitScheme, ...] = (
     PE_DUPLEX_SCHEME,
+    MULTI_CALL_SCHEME,
     MIXED_SCHEME,
     CONSENSUS_SCHEME,
     NONE_SCHEME,

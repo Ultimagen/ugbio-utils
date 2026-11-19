@@ -50,6 +50,17 @@ def test_cli_parses_all_arguments(monkeypatch):
     assert args.verbose is True and args.use_gpu_for_shap is True
 
 
+def test_cli_flow_order_arguments(monkeypatch):
+    base = ["srsnv_report", "--featuremap-df", "fm.parquet", "--srsnv-metadata", "meta.json", "--report-path", "out"]
+    monkeypatch.setattr(sys, "argv", base)
+    args = srsnv_report._cli()
+    assert args.flow_order_r1 == "TGCA"
+    assert args.flow_order_r2 is None
+    monkeypatch.setattr(sys, "argv", [*base, "--flow-order-r1", "TGCA", "--flow-order-r2", "TACG"])
+    args = srsnv_report._cli()
+    assert (args.flow_order_r1, args.flow_order_r2) == ("TGCA", "TACG")
+
+
 def test_cli_requires_mandatory_arguments(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["srsnv_report", "--featuremap-df", "fm.parquet"])
     with pytest.raises(SystemExit) as exc:
@@ -75,6 +86,8 @@ def test_main_forwards_arguments_and_sets_debug(monkeypatch):
         models_prefix=None,
         random_seed=None,
         use_gpu_for_shap=False,
+        flow_order_r1="TGCA",
+        flow_order_r2=None,
     )
 
 

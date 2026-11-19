@@ -117,6 +117,33 @@ PE_DUPLEX_GROUP_SE = "duplex SE"  # duplex (dx==1), 2 reads cross the variant (o
 PE_DUPLEX_GROUP_PE = "duplex PE"  # duplex (dx==1), 4 reads cross the variant (both PE ends)
 PE_DUPLEX_GROUPS = [PE_DUPLEX_GROUP_SIMPLEX_SE, PE_DUPLEX_GROUP_SIMPLEX_PE, PE_DUPLEX_GROUP_SE, PE_DUPLEX_GROUP_PE]
 
+# Multi-call (ppmSeq+ dual flow): every molecule is called twice, R1 in flow order 1 and R2 in flow order 2, stored as
+# a mate pair with the same qname and strand. snvfind --emit-mate tags each read row with MATE (0 unpaired, 1 R1,
+# 2 R2). A candidate molecule = rows sharing CHROM/POS/RN/variant; it is "concordant" when both calls (MATE 1 and 2)
+# show the alt, else "single-call". Split = concordance x mixed-start, counted per molecule (one representative row
+# per molecule -- the R1 row when present -- carries the group; the other call's row is in no group).
+MATE = "MATE"
+MATE_R1 = 1
+MATE_R2 = 2
+DEFAULT_FLOW_ORDER_R1 = "TGCA"
+IS_MULTI_CALL_CONCORDANT = "is_multi_call_concordant"  # per-row: the molecule's alt is seen in both calls
+IS_MOLECULE_REPRESENTATIVE = "is_molecule_representative"  # per-row: the row that represents its molecule
+# per-row: the SNV motif is a cycle skip in EITHER flow order (R1 or R2) -- a multi-call molecule is read in both
+IS_CYCLE_SKIP_COMBINED = "is_cycle_skip_combined"
+MULTI_CALL_GROUP = "multi_call_group"
+MULTI_CALL_GROUP_SINGLE_NON = "single-call, non-mixed"
+MULTI_CALL_GROUP_SINGLE_MIXED = "single-call, mixed"
+MULTI_CALL_GROUP_CONC_NON = "concordant, non-mixed"
+MULTI_CALL_GROUP_CONC_MIXED = "concordant, mixed"
+MULTI_CALL_GROUPS = [
+    MULTI_CALL_GROUP_SINGLE_NON,
+    MULTI_CALL_GROUP_SINGLE_MIXED,
+    MULTI_CALL_GROUP_CONC_NON,
+    MULTI_CALL_GROUP_CONC_MIXED,
+]
+# Variant descriptors (besides locus + read name) that key one multi-call molecule; only present ones are used.
+_MULTI_CALL_MOLECULE_KEY = ("CHROM", "POS", "RN", "REF", "ALT", "X_IC", "X_IL", "X_INDEL_SEQ")
+
 # Mixed groups (2), reproducing the historical binary ppmSeq labels/order.
 MIXED_GROUP_NON = "Non-mixed"
 MIXED_GROUP_POS = "Mixed"
@@ -138,6 +165,8 @@ class ReportMode(Enum):
     CONSENSUS = "consensus"  # consensus data: split on consensus vs non-consensus (fs/rs)
     # paired-end duplex (DNN per-image CS-family stats present): simplex / duplex-SE / duplex-PE
     PE_DUPLEX = "pe_duplex"
+    # multi-call (ppmSeq+ dual flow, MATE present): concordant (both calls) vs single-call x mixed-start
+    MULTI_CALL = "multi_call"
     NONE = "none"  # neither available: single "all reads" group
 
 
@@ -226,6 +255,79 @@ def _assign_pe_duplex_group(data_df: pd.DataFrame) -> None:
     g[mate & (cross <= 2)] = PE_DUPLEX_GROUP_SE  # noqa: PLR2004  (2 reads cross = one PE end)
     g[mate & (cross >= 3)] = PE_DUPLEX_GROUP_PE  # noqa: PLR2004  (>=3 reads cross = both PE ends)
     data_df[PE_DUPLEX_GROUP] = g
+
+
+def add_multi_call_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
+    """Add the multi-call grouping columns (concordance, molecule representative, ``multi_call_group``).
+
+    A molecule is keyed by (CHROM, POS, RN, variant descriptors present among REF/ALT/X_IC/X_IL/X_INDEL_SEQ).
+    It is *concordant* iff it has both an R1 (``MATE == 1``) and an R2 (``MATE == 2``) row, i.e. the alt was
+    seen in both calls. One representative row per molecule (the R1 row when present, else its first row)
+    gets the ``multi_call_group`` label (concordance x ``is_mixed_start``); the other call's row gets NaN, so the
+    report's per-group metrics count molecules, not reads. Requires ``is_mixed_start`` (False when absent).
+    Rows without ``RN`` are their own molecule.
+    """
+    logger.info("Adding multi-call (MATE) columns to featuremap")
+    mate = pd.to_numeric(data_df[MATE], errors="coerce").fillna(0).astype(int)
+    key_cols = [c for c in _MULTI_CALL_MOLECULE_KEY if c in data_df.columns]
+    if "RN" in data_df.columns:
+        key_frame = data_df[key_cols].astype(str)
+        mol_id = pd.Series(pd.util.hash_pandas_object(key_frame, index=False).to_numpy(), index=data_df.index)
+    else:
+        mol_id = pd.Series(np.arange(len(data_df)), index=data_df.index)
+    is_r1 = mate.eq(MATE_R1)
+    has_r1 = is_r1.groupby(mol_id).transform("any")
+    has_r2 = mate.eq(MATE_R2).groupby(mol_id).transform("any")
+    data_df[IS_MULTI_CALL_CONCORDANT] = (has_r1 & has_r2).to_numpy()
+    # Representative: lowest positive MATE first (R1), MATE 0 / unknown last; ties -> first row in frame order.
+    rank = mate.where(mate > 0, 99)
+    order = pd.DataFrame({"m": mol_id.to_numpy(), "r": rank.to_numpy(), "i": np.arange(len(data_df))})
+    first = order.sort_values(["m", "r", "i"], kind="stable").drop_duplicates("m")["i"].to_numpy()
+    rep = np.zeros(len(data_df), dtype=bool)
+    rep[first] = True
+    data_df[IS_MOLECULE_REPRESENTATIVE] = rep
+    mixed = (
+        data_df[IS_MIXED_START].fillna(value=False).astype(bool).to_numpy()
+        if IS_MIXED_START in data_df.columns
+        else np.zeros(len(data_df), dtype=bool)
+    )
+    conc = data_df[IS_MULTI_CALL_CONCORDANT].to_numpy()
+    g = np.where(
+        conc,
+        np.where(mixed, MULTI_CALL_GROUP_CONC_MIXED, MULTI_CALL_GROUP_CONC_NON),
+        np.where(mixed, MULTI_CALL_GROUP_SINGLE_MIXED, MULTI_CALL_GROUP_SINGLE_NON),
+    ).astype(object)
+    g[~rep] = None
+    data_df[MULTI_CALL_GROUP] = pd.Categorical(g, categories=MULTI_CALL_GROUPS, ordered=True)
+    return data_df
+
+
+def dedupe_multi_call_molecules(data_df: pd.DataFrame) -> pd.DataFrame:
+    """Keep one row per multi-call molecule (the representative row, see
+    :func:`add_multi_call_columns_to_featuremap_df`) so report metrics are counted per molecule. Both calls of a
+    molecule share the same model score / SNVQ, and the concordance flag is computed before deduplication, so no
+    information the report uses is lost. No-op when the representative column is absent."""
+    if IS_MOLECULE_REPRESENTATIVE not in data_df.columns:
+        return data_df
+    rep = data_df[IS_MOLECULE_REPRESENTATIVE].astype(bool)
+    if rep.all():
+        return data_df
+    logger.info(f"Multi-call: deduplicating {len(data_df)} read rows -> {int(rep.sum())} molecules")
+    return data_df.loc[rep].copy()
+
+
+def flow_order_per_row(
+    data_df: pd.DataFrame, flow_order_r1: str = DEFAULT_FLOW_ORDER_R1, flow_order_r2: str | None = None
+) -> pd.Series:
+    """Per-row flow order: rows with ``MATE == 2`` (the R2 call) use ``flow_order_r2``, all others ``flow_order_r1``.
+
+    ``flow_order_r2=None`` (or no ``MATE`` column) -> every row uses ``flow_order_r1``.
+    """
+    out = pd.Series(flow_order_r1, index=data_df.index, dtype=object)
+    if flow_order_r2 is not None and MATE in data_df.columns:
+        is_r2 = pd.to_numeric(data_df[MATE], errors="coerce").eq(MATE_R2).to_numpy()
+        out[is_r2] = flow_order_r2
+    return out
 
 
 FLOW_ORDER = ["T", "G", "C", "A"]

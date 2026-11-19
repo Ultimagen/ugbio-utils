@@ -469,3 +469,88 @@ def test_qual_colors_honored_without_group_specs():
     assert specs == [("mixed=True", "Mixed reads", "purple"), ("mixed=False", "Non-mixed reads", "black")]
     # no qual_colors -> historical defaults
     assert _resolve_qual_group_specs(stats_df)[0][2] == "tab:green"
+
+
+# ──────────────────────── multi-call: two flow orders ──────────────────────────
+
+
+class TestMultiFlowCycleSkip:
+    """Per-flow-order (4-class) and combined cycle-skip tick colouring; single flow order unchanged."""
+
+    def _ticks(self, ax):
+        return [t.get_color() for t in ax.get_xticklabels()]
+
+    def test_tick_colors_single_vs_multi(self):
+        import matplotlib.pyplot as plt  # noqa: PLC0415
+        from ugbio_srsnv.srsnv_utils import is_cycle_skip  # noqa: PLC0415
+        from ugbio_srsnv.trinuc_histogram_plotting import (  # noqa: PLC0415
+            CYCLE_SKIP_PAIR_COLORS,
+            _get_trinuc_with_alt_in_order,
+            cycle_skip_combined,
+        )
+
+        trinuc, _, _ = _get_trinuc_with_alt_in_order()
+        hist = {False: np.ones(192), True: np.ones(192)}
+        _, ax0 = plt.subplots()
+        plot_trinuc_hist(hist, ax=ax0)
+        _, ax1 = plt.subplots()
+        plot_trinuc_hist(hist, ax=ax1, flow_orders=("TGCA",))
+        _, ax_tgca_tgca = plt.subplots()
+        plot_trinuc_hist(hist, ax=ax_tgca_tgca, flow_orders=("TGCA", "TGCA"))  # not distinct -> single
+        default = self._ticks(ax0)
+        assert default == self._ticks(ax1) == self._ticks(ax_tgca_tgca)
+        assert set(default) == {"green", "red"}
+
+        _, ax2 = plt.subplots()
+        plot_trinuc_hist(hist, ax=ax2, flow_orders=("TGCA", "TACG"))
+        four = self._ticks(ax2)
+        expected = [
+            CYCLE_SKIP_PAIR_COLORS[(bool(is_cycle_skip(t, "TGCA")), bool(is_cycle_skip(t, "TACG")))]
+            for t in trinuc[:96]
+        ]
+        assert four == expected
+        assert {"tab:blue", "darkorange"} & set(four)  # some contexts skip in only one flow order
+
+        _, ax3 = plt.subplots()
+        plot_trinuc_hist(hist, ax=ax3, flow_orders=("TGCA", "TACG"), combine_flow_orders=True)
+        comb = cycle_skip_combined(trinuc, ("TGCA", "TACG"))
+        assert self._ticks(ax3) == ["green" if c else "red" for c in comb[:96]]
+        plt.close("all")
+
+    def test_calc_and_plot_per_flow_adds_strips(self):
+        import matplotlib.pyplot as plt  # noqa: PLC0415
+        from ugbio_srsnv.trinuc_histogram_plotting import _get_trinuc_with_alt_in_order  # noqa: PLC0415
+
+        trinuc, _, _ = _get_trinuc_with_alt_in_order()
+        rng = np.random.default_rng(0)
+        n = 400
+        df = pd.DataFrame(  # noqa: PD901
+            {
+                "tcwa": rng.choice(trinuc[:96], n),
+                "label": rng.choice([True, False], n),
+                "is_forward": True,
+                "SNVQ": rng.uniform(20, 60, n),
+                "is_mixed": rng.choice([True, False], n),
+                "is_cycle_skip": rng.choice([True, False], n),
+                "is_cycle_skip_combined": True,
+            }
+        )
+        kws = {"trinuc_col": "tcwa", "labels": [True, False], "include_quality": True}
+        fig_single, st_single = calc_and_plot_trinuc_hist(df, **kws)
+        fig_pf, st_pf = calc_and_plot_trinuc_hist(df, flow_orders=("TGCA", "TACG"), **kws)
+        fig_comb, st_comb = calc_and_plot_trinuc_hist(
+            df,
+            flow_orders=("TGCA", "TACG"),
+            cycle_skip_col="is_cycle_skip_combined",
+            combine_flow_orders=True,
+            **kws,
+        )
+        # 2 panel pairs; per-flow adds one strip per pair
+        assert len(fig_single.axes) == 4 and len(fig_comb.axes) == 4 and len(fig_pf.axes) == 6  # noqa: PLR2004
+        assert st_pf.equals(st_single)  # stats do not depend on the tick colouring
+        assert (st_comb["is_cycle_skip"].dropna() == 1.0).all()
+        texts = [t.get_text() for t in fig_pf.texts]
+        assert any("R1 TGCA only" in t for t in texts) and any("R2 TACG only" in t for t in texts)
+        assert any("R1 TGCA or R2 TACG" in t.get_text() for t in fig_comb.texts)
+        assert "Green: Cycle skip" in [t.get_text() for t in fig_single.texts]
+        plt.close("all")

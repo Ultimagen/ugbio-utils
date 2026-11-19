@@ -280,3 +280,52 @@ class TestStartOnlyPpmseq:
         # the display (start-tag) variant still yields both groups
         masks = MIXED_SCHEME.display_variant.group_masks(out)
         assert masks["Mixed"].sum() == 2 and masks["Non-mixed"].sum() == 2
+
+
+class TestMultiCallScheme:
+    """Multi-call (ppmSeq+ dual flow; MATE column): concordant vs single-call x mixed-start, per molecule."""
+
+    @staticmethod
+    def _df():
+        # molecule a: concordant (R1+R2) mixed; b: single-call (R2 only) non-mixed; c: single-call (R1) mixed
+        return pd.DataFrame(
+            {
+                "CHROM": ["chr1"] * 4,
+                "POS": [10, 10, 20, 30],
+                "RN": ["a", "a", "b", "c"],
+                "REF": ["A", "A", "C", "G"],
+                "ALT": ["T", "T", "A", "C"],
+                "MATE": [1, 2, 2, 1],
+                "st": ["MIXED", "MIXED", "PLUS", "MIXED"],
+                "et": ["MIXED", "MIXED", "MINUS", "PLUS"],
+            }
+        )
+
+    def test_detected_and_wins_over_mixed(self):
+        assert resolve_scheme(self._df()) is ss.MULTI_CALL_SCHEME
+        assert ss.MULTI_CALL_SCHEME.mode is ReportMode.MULTI_CALL
+        assert resolve_scheme(mode="multi_call") is ss.MULTI_CALL_SCHEME
+        # no MATE -> unchanged detection
+        assert resolve_scheme(self._df().drop(columns=["MATE"])) is MIXED_SCHEME
+
+    def test_groups_per_molecule(self):
+        out, scheme = resolve_scheme_and_add_columns(self._df(), adapter_version="v1")
+        assert scheme is ss.MULTI_CALL_SCHEME
+        rg = out[READ_GROUP].astype(object).tolist()
+        assert rg[0] == "concordant, mixed"
+        assert pd.isna(rg[1])  # the R2 call of molecule a is in no group (molecule counted once)
+        assert rg[2:] == ["single-call, non-mixed", "single-call, mixed"]
+        masks = scheme.display_variant.group_masks(out)
+        assert {k: int(v.sum()) for k, v in masks.items()} == {
+            "single-call, non-mixed": 1,
+            "single-call, mixed": 1,
+            "concordant, non-mixed": 0,
+            "concordant, mixed": 1,
+        }
+        assert scheme.display_suffix == "multi_call"
+
+    def test_without_ppmseq_tags_all_non_mixed(self):
+        out, scheme = resolve_scheme_and_add_columns(self._df().drop(columns=["st", "et"]))
+        assert scheme is ss.MULTI_CALL_SCHEME
+        assert not out["is_mixed_start"].any()
+        assert out[READ_GROUP].astype(object).tolist()[0] == "concordant, non-mixed"

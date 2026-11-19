@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib import gridspec
+from matplotlib.colors import ListedColormap
 from ugbio_core.logger import logger
 
 from ugbio_srsnv.srsnv_utils import FLOW_ORDER, get_trinuc_context_with_alt_fwd_vectorized, is_cycle_skip
@@ -20,6 +21,105 @@ HIST_COLORS = {
     True: "tab:orange",
     "all reads": "tab:blue",
 }
+
+
+# Multi-call (two flow orders, e.g. ppmSeq+ dual flow R1=TGCA / R2=TACG): 4-class cycle-skip tick colouring keyed on
+# (cycle skip in flow order 1, cycle skip in flow order 2).
+CYCLE_SKIP_PAIR_COLORS = {
+    (True, True): "green",
+    (True, False): "tab:blue",
+    (False, True): "darkorange",
+    (False, False): "red",
+}
+CYCLE_SKIP_STRIP_COLORS = ["#f4a6a6", "#8fd18f"]  # strip cell: no cycle skip / cycle skip in that flow order
+
+
+def _distinct_flow_orders(flow_orders) -> list:
+    """Distinct flow orders (order kept). ``None`` / empty -> ``[FLOW_ORDER]`` (the historical single TGCA)."""
+    if not flow_orders:
+        return [FLOW_ORDER]
+    if isinstance(flow_orders, str):
+        return [flow_orders]
+    out = []
+    for fo in flow_orders:
+        if fo is not None and "".join(fo) not in ["".join(o) for o in out]:
+            out.append(fo)
+    return out or [FLOW_ORDER]
+
+
+def _is_multi_flow(flow_orders) -> bool:
+    return len(_distinct_flow_orders(flow_orders)) > 1
+
+
+def _cycle_skip_per_flow(trinuc_ref_alt, flow_orders) -> list[np.ndarray]:
+    """Per distinct flow order, the boolean cycle-skip array over ``trinuc_ref_alt``."""
+    return [
+        np.array([is_cycle_skip(tcwa, flow_order=fo) for tcwa in trinuc_ref_alt])
+        for fo in _distinct_flow_orders(flow_orders)
+    ]
+
+
+def cycle_skip_combined(trinuc_ref_alt, flow_orders=None) -> np.ndarray:
+    """Combined cycle skip over ``trinuc_ref_alt``: cycle skip in ANY of the distinct flow orders (a multi-call
+    molecule is read in both flow orders, so a context that skips in either one is a cycle-skip context)."""
+    return np.logical_or.reduce(_cycle_skip_per_flow(trinuc_ref_alt, flow_orders))
+
+
+def _cycle_skip_tick_colors(trinuc_ref_alt, inds, flow_orders=None, *, combine_flow_orders=False) -> list[str]:
+    """Tick-label colours for ``inds``: green/red (single flow order, or the combined any-flow-order cycle skip with
+    ``combine_flow_orders``), else 4-class per (flow 1, flow 2) cycle skip."""
+    cs = _cycle_skip_per_flow(trinuc_ref_alt, flow_orders)
+    if len(cs) == 1 or combine_flow_orders:
+        any_cs = np.logical_or.reduce(cs)
+        return ["green" if any_cs[j] else "red" for j in inds]
+    return [CYCLE_SKIP_PAIR_COLORS[(bool(cs[0][j]), bool(cs[1][j]))] for j in inds]
+
+
+def _flow_order_label(i: int, flow_order) -> str:
+    return f"R{i + 1} {''.join(flow_order)}"
+
+
+def _cycle_skip_legend_lines(flow_orders, *, combine_flow_orders=False) -> list[tuple[str, str]]:
+    """``(text, colour)`` lines explaining the tick colours (below the 'Trinuc-SNV ...:' header line)."""
+    fos = _distinct_flow_orders(flow_orders)
+    if len(fos) == 1:
+        return [("Green: Cycle skip", "green"), ("Red: No cycle skip", "red")]
+    f1, f2 = (_flow_order_label(i, fo) for i, fo in enumerate(fos[:2]))
+    if combine_flow_orders:
+        return [(f"Green: Cycle skip in {f1} or {f2}", "green"), ("Red: No cycle skip in either", "red")]
+    return [
+        ("Green: cycle skip in both flow orders", "green"),
+        (f"Blue: cycle skip in {f1} only", "tab:blue"),
+        (f"Orange: cycle skip in {f2} only", "darkorange"),
+        ("Red: no cycle skip", "red"),
+    ]
+
+
+def plot_cycle_skip_strip(ax, panel_num=0, order="symmetric", flow_orders=None):
+    """Draw the per-flow-order cycle-skip strip (one row per flow order; green = cycle skip) for one panel."""
+    trinuc_ref_alt, _, _ = _get_trinuc_with_alt_in_order(order=order)
+    fos = _distinct_flow_orders(flow_orders)
+    cs = _cycle_skip_per_flow(trinuc_ref_alt, fos)
+    inds = np.arange(TRINUC_FORWARD_COUNT) + TRINUC_FORWARD_COUNT * panel_num
+    strip = np.vstack([c[inds] for c in cs]).astype(int)
+    n = strip.shape[0]
+    ax.imshow(
+        strip,
+        aspect="auto",
+        cmap=ListedColormap(CYCLE_SKIP_STRIP_COLORS),
+        vmin=0,
+        vmax=1,
+        extent=(-0.5, 95.5, n - 0.5, -0.5),
+        interpolation="nearest",
+    )
+    ax.set_yticks(list(range(n)), [_flow_order_label(i, fo) for i, fo in enumerate(fos)], fontsize=9)
+    for j in range(5):
+        ax.axvline((j + 1) * 16 - 0.5, color="k", ls="--", lw=1)
+    for r in range(n - 1):
+        ax.axhline(r + 0.5, color="white", lw=1)
+    ax.tick_params(axis="x", length=0, labelbottom=False)
+    ax.set_xlim([-0.5, 95.5])
+    return ax
 
 
 def _get_trinuc_with_alt_in_order(order: str = "symmetric"):
@@ -62,7 +162,7 @@ def _get_trinuc_with_alt_in_order(order: str = "symmetric"):
     return trinuc_ref_alt, trinuc_index, snv_labels
 
 
-def plot_trinuc_hist(  # noqa: C901
+def plot_trinuc_hist(  # noqa: C901, PLR0913
     hist_stats,
     labels=None,
     panel_num=0,
@@ -74,7 +174,12 @@ def plot_trinuc_hist(  # noqa: C901
     order="symmetric",
     *,
     add_annotations=True,
+    flow_orders=None,
+    combine_flow_orders=False,
 ):
+    """Histogram panel. ``flow_orders``: ``None``/one flow order -> green/red cycle-skip ticks (default TGCA); two
+    distinct flow orders -> 4-class tick colours (see :data:`CYCLE_SKIP_PAIR_COLORS`), or green/red by the combined
+    any-flow-order cycle skip with ``combine_flow_orders``."""
     if labels is None:
         labels = [False, True]
     if x_values is None:
@@ -83,7 +188,6 @@ def plot_trinuc_hist(  # noqa: C901
         hist_colors = HIST_COLORS
 
     trinuc_symmetric_ref_alt, symmetric_index, snv_labels = _get_trinuc_with_alt_in_order(order=order)
-    trinuc_is_cycle_skip = np.array([is_cycle_skip(tcwa, flow_order=FLOW_ORDER) for tcwa in trinuc_symmetric_ref_alt])
     if ax is None:
         fig, ax = plt.subplots(figsize=(16, 3))
     inds = np.array(x_values) + 96 * panel_num
@@ -98,7 +202,9 @@ def plot_trinuc_hist(  # noqa: C901
     for j in range(5):
         ax.plot([(j + 1) * 16 - 0.5] * 2, [0, ylim], "k--")
     ax.set_xticks(x_values, symmetric_index[inds], rotation=90, fontsize=xtick_fontsize)
-    tick_label_colors = ["green" if trinuc_is_cycle_skip[j] else "red" for j in inds]
+    tick_label_colors = _cycle_skip_tick_colors(
+        trinuc_symmetric_ref_alt, inds, flow_orders, combine_flow_orders=combine_flow_orders
+    )
     for j in x_values:
         ax.get_xticklabels()[j].set_color(tick_label_colors[j])
     ax.tick_params(axis="x", pad=-2)
@@ -159,7 +265,7 @@ def _resolve_qual_group_specs(stats_df, group_specs=None, qual_colors=None):
     return [(p, default_labels[p], colors[p]) for p in prefixes]
 
 
-def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
+def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0913, PLR0915
     stats_df,
     panel_num=0,
     ax=None,
@@ -170,6 +276,8 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
     group_specs=None,
     *,
     add_annotations=True,
+    flow_orders=None,
+    combine_flow_orders=False,
 ):
     """Plot trinucleotide quality statistics.
 
@@ -195,6 +303,10 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
     group_specs : list, optional
         Ordered list of ``(col_prefix, display_label, color)`` selecting which groups to plot and
         how to label/color them. When None, ppmSeq auto-detection is used (unchanged behavior).
+    flow_orders : sequence of str, optional
+        Flow order(s) for the cycle-skip tick colours; two distinct ones -> 4-class colouring. None -> TGCA.
+    combine_flow_orders : bool
+        With two flow orders, colour ticks green/red by the combined (either flow order) cycle skip instead.
 
     Returns
     -------
@@ -207,7 +319,6 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
         x_values = X_VALUES
 
     trinuc_symmetric_ref_alt, symmetric_index, snv_labels = _get_trinuc_with_alt_in_order(order=order)
-    trinuc_is_cycle_skip = np.array([is_cycle_skip(tcwa, flow_order=FLOW_ORDER) for tcwa in trinuc_symmetric_ref_alt])
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(16, 3))
@@ -254,7 +365,9 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
     # Set x-tick labels and colors based on cycle skip
     ax.set_xticks(x_values)
     ax.set_xticklabels(symmetric_index[inds], rotation=90, fontsize=xtick_fontsize)
-    tick_label_colors = ["green" if trinuc_is_cycle_skip[j] else "red" for j in inds]
+    tick_label_colors = _cycle_skip_tick_colors(
+        trinuc_symmetric_ref_alt, inds, flow_orders, combine_flow_orders=combine_flow_orders
+    )
     for j, _ in enumerate(x_values):
         ax.get_xticklabels()[j].set_color(tick_label_colors[j])
 
@@ -568,13 +681,21 @@ def plot_trinuc_hist_and_qual_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915, 
     hist_to_qual_height_ratio=2.0,
     motif_orientation="seq_dir",
     group_specs=None,
+    *,
+    flow_orders=None,
+    combine_flow_orders=False,
 ):
     """Plot trinuc histogram and quality panels from stats_df DataFrame.
 
     Layout:
     - For collapsed mode: Quality panel above histogram panel
     - For non-collapsed mode: Quality1, Hist1, [space], Quality2, Hist2
+    - With two distinct ``flow_orders`` (multi-call), a thin per-flow-order cycle-skip strip sits between each
+      quality and histogram panel, and the tick labels use the 4-class colouring. One/None -> unchanged layout.
+    - ``combine_flow_orders`` (with two flow orders): the combined view -- standard layout, ticks green/red by
+      cycle skip in either flow order.
     """
+    multi_flow = _is_multi_flow(flow_orders) and not combine_flow_orders
     # Extract histogram labels from columns
     hist_labels = []
     hist_stats = {}
@@ -600,18 +721,21 @@ def plot_trinuc_hist_and_qual_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915, 
         figsize = (18, 5) if collapsed else (18, 10)
     fig = plt.figure(figsize=figsize)
     height_ratios = [1, hist_to_qual_height_ratio]  # Configurable ratio
+    if multi_flow:  # quality / cycle-skip strip / histogram
+        height_ratios = [1, 0.16, hist_to_qual_height_ratio]
+    n_rows = len(height_ratios)
 
     if collapsed:
         # Simple case: Quality above histogram with no space
-        gs = gridspec.GridSpec(2, 1, height_ratios=height_ratios, hspace=0.0)
+        gs = gridspec.GridSpec(n_rows, 1, height_ratios=height_ratios, hspace=0.0)
     else:
         # Complex case: Need custom spacing between panels
         # Create two separate gridspecs for the two panel pairs
         gs_top = gridspec.GridSpec(
-            2, 1, height_ratios=height_ratios, hspace=0.0, top=0.95, bottom=0.5 + hspace / 2
+            n_rows, 1, height_ratios=height_ratios, hspace=0.0, top=0.95, bottom=0.5 + hspace / 2
         )  # Top half of figure
         gs_bottom = gridspec.GridSpec(
-            2, 1, height_ratios=height_ratios, hspace=0.0, top=0.5 - hspace / 2, bottom=0.05
+            n_rows, 1, height_ratios=height_ratios, hspace=0.0, top=0.5 - hspace / 2, bottom=0.05
         )  # Bottom half of figure
 
     # Create panels
@@ -623,16 +747,17 @@ def plot_trinuc_hist_and_qual_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915, 
 
     for panel_idx in range(panels_to_plot):
         if collapsed:
-            qual_ax = fig.add_subplot(gs[0])
-            hist_ax = fig.add_subplot(gs[1], sharex=qual_ax)
+            panel_gs = gs
         elif panel_idx == 0:
-            # First panel pair (top)
-            qual_ax = fig.add_subplot(gs_top[0])
-            hist_ax = fig.add_subplot(gs_top[1], sharex=qual_ax)
+            panel_gs = gs_top  # First panel pair (top)
         else:
-            # Second panel pair (bottom)
-            qual_ax = fig.add_subplot(gs_bottom[0])
-            hist_ax = fig.add_subplot(gs_bottom[1], sharex=qual_ax)
+            panel_gs = gs_bottom  # Second panel pair (bottom)
+        qual_ax = fig.add_subplot(panel_gs[0])
+        hist_ax = fig.add_subplot(panel_gs[n_rows - 1], sharex=qual_ax)
+        if multi_flow:
+            strip_ax = fig.add_subplot(panel_gs[1], sharex=qual_ax)
+            plot_cycle_skip_strip(strip_ax, panel_num=panel_idx, order=order, flow_orders=flow_orders)
+            axes.append(strip_ax)
 
         # Plot quality panel
         _, lines = plot_trinuc_qual(
@@ -643,6 +768,8 @@ def plot_trinuc_hist_and_qual_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915, 
             xtick_fontsize=xtick_fontsize,
             group_specs=group_specs,
             add_annotations=True,
+            flow_orders=flow_orders,
+            combine_flow_orders=combine_flow_orders,
         )
         qual_ax.set_ylabel("SNVQ", fontsize=ylabel_fontsize)
         qual_ax.tick_params(axis="y", labelsize=ytick_fontsize)
@@ -659,6 +786,8 @@ def plot_trinuc_hist_and_qual_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915, 
             order=order,
             xtick_fontsize=xtick_fontsize,
             add_annotations=False,
+            flow_orders=flow_orders,
+            combine_flow_orders=combine_flow_orders,
         )
         hist_ax.set_ylabel("Density", fontsize=ylabel_fontsize)
         hist_ax.tick_params(axis="y", labelsize=ytick_fontsize)
@@ -761,37 +890,58 @@ def plot_trinuc_hist_and_qual_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915, 
         text_y_middle = legend_bottom + 0.07  # Middle line position
         text_y_bottom = legend_bottom + 0.02  # Bottom line position (aligned with legend bottom)
 
-    fig.text(
-        0.7,  # x-position (slightly to the right of the second legend)
-        text_y_top,  # y-position (adjust as necessary)
-        f"Trinuc-SNV {is_forward_text}:",
-        ha="left",  # Horizontal alignment
-        fontsize=14,  # Font size
-        color="black",  # Text color
-    )
-    fig.text(
-        0.73,  # x-position (slightly to the right of the second legend)
-        text_y_middle,  # y-position (adjust as necessary)
-        "Green: Cycle skip",
-        ha="left",  # Horizontal alignment
-        fontsize=14,  # Font size
-        color="green",  # Text color
-    )
-    fig.text(
-        0.73,  # x-position (slightly to the right of the second legend)
-        text_y_bottom,  # y-position (adjust as necessary)
-        "Red: No cycle skip",
-        ha="left",  # Horizontal alignment
-        fontsize=14,  # Font size
-        color="red",  # Text color
-    )
+    if multi_flow:
+        # 4-class cycle-skip legend: header + 4 colour lines + strip note, top-aligned with the single-flow header.
+        line_step = (text_y_top - text_y_bottom) / 2
+        fig.text(0.7, text_y_top, f"Trinuc-SNV {is_forward_text}, cycle skip:", ha="left", fontsize=14, color="black")
+        for k, (txt, color) in enumerate(_cycle_skip_legend_lines(flow_orders), start=1):
+            fig.text(0.73, text_y_top - k * line_step, txt, ha="left", fontsize=14, color=color)
+        fig.text(
+            0.7,
+            text_y_top - 5 * line_step,
+            "Strip under SNVQ: green = cycle skip in that flow order",
+            ha="left",
+            fontsize=12,
+            color="dimgray",
+        )
+    elif _is_multi_flow(flow_orders):  # combined view: header + 2 colour lines in the single-flow positions
+        fig.text(0.7, text_y_top, f"Trinuc-SNV {is_forward_text}:", ha="left", fontsize=14, color="black")
+        for y, (txt, color) in zip(
+            (text_y_middle, text_y_bottom), _cycle_skip_legend_lines(flow_orders, combine_flow_orders=True), strict=True
+        ):
+            fig.text(0.73, y, txt, ha="left", fontsize=14, color=color)
+    else:
+        fig.text(
+            0.7,  # x-position (slightly to the right of the second legend)
+            text_y_top,  # y-position (adjust as necessary)
+            f"Trinuc-SNV {is_forward_text}:",
+            ha="left",  # Horizontal alignment
+            fontsize=14,  # Font size
+            color="black",  # Text color
+        )
+        fig.text(
+            0.73,  # x-position (slightly to the right of the second legend)
+            text_y_middle,  # y-position (adjust as necessary)
+            "Green: Cycle skip",
+            ha="left",  # Horizontal alignment
+            fontsize=14,  # Font size
+            color="green",  # Text color
+        )
+        fig.text(
+            0.73,  # x-position (slightly to the right of the second legend)
+            text_y_bottom,  # y-position (adjust as necessary)
+            "Red: No cycle skip",
+            ha="left",  # Horizontal alignment
+            fontsize=14,  # Font size
+            color="red",  # Text color
+        )
     if suptitle:
         fig.suptitle(suptitle, fontsize=20)
 
     return fig
 
 
-def plot_trinuc_hist_panels(  # noqa: C901, PLR0912, PLR0915
+def plot_trinuc_hist_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915
     hist_stats_df,
     order="symmetric",
     suptitle=None,
@@ -802,8 +952,14 @@ def plot_trinuc_hist_panels(  # noqa: C901, PLR0912, PLR0915
     ylabel_fontsize=16,
     bottom_scale=1.0,
     motif_orientation: str = "seq_dir",
+    *,
+    flow_orders=None,
+    combine_flow_orders=False,
 ):
-    """Plot trinuc histogram panels from hist_stats_df DataFrame."""
+    """Plot trinuc histogram panels from hist_stats_df DataFrame.
+
+    ``flow_orders``: two distinct flow orders -> 4-class cycle-skip tick colours; None/one -> green/red (unchanged).
+    """
     # Reverse engineer labels, hist_stats dict, and total_snvs_per_label
     labels, hist_stats, total_snvs_per_label = reverse_engineer_hist_stats(hist_stats_df)
     # Infer collapsed if not given
@@ -817,14 +973,28 @@ def plot_trinuc_hist_panels(  # noqa: C901, PLR0912, PLR0915
     gs = gridspec.GridSpec(figrows, 1, height_ratios=[1] * figrows, hspace=0.4)
     ax_hist_orig = fig.add_subplot(gs[0])
     _, bars = plot_trinuc_hist(
-        hist_stats, labels=labels, panel_num=0, ax=ax_hist_orig, order=order, xtick_fontsize=xtick_fontsize
+        hist_stats,
+        labels=labels,
+        panel_num=0,
+        ax=ax_hist_orig,
+        order=order,
+        xtick_fontsize=xtick_fontsize,
+        flow_orders=flow_orders,
+        combine_flow_orders=combine_flow_orders,
     )
     ax_hist_orig.set_ylabel("Density", fontsize=ylabel_fontsize)  # <-- Add ylabel
     ax_hist_orig.tick_params(axis="y", labelsize=ytick_fontsize)  # <-- Set ytick label size
     if not collapsed:
         ax_hist_rev = fig.add_subplot(gs[1])
         plot_trinuc_hist(
-            hist_stats, labels=labels, panel_num=1, ax=ax_hist_rev, order=order, xtick_fontsize=xtick_fontsize
+            hist_stats,
+            labels=labels,
+            panel_num=1,
+            ax=ax_hist_rev,
+            order=order,
+            xtick_fontsize=xtick_fontsize,
+            flow_orders=flow_orders,
+            combine_flow_orders=combine_flow_orders,
         )
         ax_hist_rev.set_ylabel("Density", fontsize=ylabel_fontsize)  # <-- Add ylabel
         ax_hist_rev.tick_params(axis="y", labelsize=ytick_fontsize)  # <-- Set ytick label size
@@ -892,8 +1062,14 @@ def plot_trinuc_hist_panels(  # noqa: C901, PLR0912, PLR0915
     fig.text(
         0.63, text_base_y + 2 * text_height, f"Trinuc-SNV {is_forward_text}:", ha="left", fontsize=14, color="black"
     )
-    fig.text(0.66, text_base_y + text_height, "Green: Cycle skip", ha="left", fontsize=14, color="green")
-    fig.text(0.66, text_base_y, "Red: No cycle skip", ha="left", fontsize=14, color="red")
+    if _is_multi_flow(flow_orders):
+        for k, (txt, color) in enumerate(
+            _cycle_skip_legend_lines(flow_orders, combine_flow_orders=combine_flow_orders), start=1
+        ):
+            fig.text(0.66, text_base_y + (2 - k) * text_height, txt, ha="left", fontsize=14, color=color)
+    else:
+        fig.text(0.66, text_base_y + text_height, "Green: Cycle skip", ha="left", fontsize=14, color="green")
+        fig.text(0.66, text_base_y, "Red: No cycle skip", ha="left", fontsize=14, color="red")
     if suptitle:
         fig.suptitle(suptitle, fontsize=20)
     return fig
@@ -921,6 +1097,9 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913, PLR0917
     collapsed=False,
     include_quality: bool = False,
     is_mixed_col: str | None = None,
+    flow_orders=None,
+    cycle_skip_col: str = "is_cycle_skip",
+    combine_flow_orders: bool = False,
 ):
     """Calculate and plot trinuc histogram, optionally with quality panels.
 
@@ -960,6 +1139,14 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913, PLR0917
     is_mixed_col : str, optional
         Backward-compatible alias of ``split_col`` (e.g. "is_mixed_start" for start-tag mixed on start-only
         ppmSeq). Overrides ``split_col`` when given.
+    flow_orders : sequence of str, optional
+        Flow order(s) for cycle-skip tick colouring. Two distinct ones (multi-call R1 / R2) -> 4-class ticks plus
+        per-flow-order cycle-skip strips; None (default, TGCA) or one -> unchanged single-flow output.
+    cycle_skip_col : str
+        Per-row cycle-skip column averaged into the ``is_cycle_skip`` stats column (e.g. the multi-call combined
+        ``is_cycle_skip_combined``).
+    combine_flow_orders : bool
+        With two flow orders: the combined view (ticks green/red by cycle skip in either flow order, no strips).
 
     Returns
     -------
@@ -976,6 +1163,7 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913, PLR0917
         is_forward_col=is_forward_col,
         qual_col=qual_col,
         is_mixed_col=is_mixed_col if is_mixed_col is not None else split_col,
+        cycle_skip_col=cycle_skip_col,
         order=order,
         labels=labels,
         q1=q1,
@@ -1009,6 +1197,8 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913, PLR0917
             hist_to_qual_height_ratio=hist_to_qual_height_ratio,
             bottom_scale=bottom_scale,
             group_specs=group_specs,
+            flow_orders=flow_orders,
+            combine_flow_orders=combine_flow_orders,
         )
     else:
         # Extract only histogram columns for backward compatibility
@@ -1029,6 +1219,8 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913, PLR0917
             collapsed=collapsed,
             motif_orientation=motif_orientation,
             bottom_scale=bottom_scale,
+            flow_orders=flow_orders,
+            combine_flow_orders=combine_flow_orders,
         )
 
     return fig, stats_df

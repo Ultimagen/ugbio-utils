@@ -646,3 +646,58 @@ class TestPrepareReport:
             )
             call_kwargs = mock_report_cls.call_args[1]
             assert call_kwargs["base_name"] == ""
+
+
+# ──────────────────────── multi-call (ppmSeq+ dual flow) cycle skip ──────────────────
+
+
+def _multi_call_motif_df():
+    # A[A>C]G: cycle skip in TGCA only; C[A>C]G: cycle skip in TACG only. Each motif as an R1 and an R2 row.
+    return pd.DataFrame(
+        {
+            "X_PREV1": ["A", "A", "C", "C"],
+            "REF": ["A", "A", "A", "A"],
+            "ALT": ["C", "C", "C", "C"],
+            "X_NEXT1": ["G", "G", "G", "G"],
+            "MATE": [1, 2, 1, 2],
+        },
+        index=[3, 4, 5, 6],
+    )
+
+
+class TestMultiCallCycleSkip:
+    def test_default_ignores_mate(self):
+        df = _multi_call_motif_df()  # noqa: PD901
+        res = compute_is_cycle_skip_column(df)
+        no_mate = compute_is_cycle_skip_column(df.drop(columns=["MATE"]))
+        assert res.tolist() == no_mate.tolist() == [True, True, False, False]
+
+    def test_per_row_flow_order_by_mate(self):
+        res = compute_is_cycle_skip_column(_multi_call_motif_df(), flow_order="TGCA", flow_order_r2="TACG")
+        assert res.astype(bool).tolist() == [True, False, False, True]
+        assert list(res.index) == [3, 4, 5, 6]
+
+    def test_r2_same_as_r1_is_single_flow(self):
+        df = _multi_call_motif_df()  # noqa: PD901
+        assert compute_is_cycle_skip_column(df, "TGCA", "TGCA").tolist() == compute_is_cycle_skip_column(df).tolist()
+
+    def test_combined_is_either_flow_order(self):
+        from ugbio_srsnv.srsnv_report import compute_is_cycle_skip_combined_column  # noqa: PLC0415
+
+        df = pd.concat(  # noqa: PD901
+            [
+                _multi_call_motif_df(),
+                # G[A>C]T: no cycle skip in either flow order? -> computed, must equal r1 OR r2
+                pd.DataFrame({"X_PREV1": ["T"], "REF": ["A"], "ALT": ["G"], "X_NEXT1": ["T"], "MATE": [1]}, index=[7]),
+                # indel row: motif unknown in both -> NaN
+                pd.DataFrame({"X_PREV1": ["A"], "REF": ["A"], "ALT": ["AC"], "X_NEXT1": ["G"], "MATE": [2]}, index=[8]),
+            ]
+        )
+        comb = compute_is_cycle_skip_combined_column(df, "TGCA", "TACG")
+        r1 = compute_is_cycle_skip_column(df.drop(columns=["MATE"]), "TGCA")
+        r2 = compute_is_cycle_skip_column(df.drop(columns=["MATE"]), "TACG")
+        assert comb.loc[[3, 4, 5, 6]].tolist() == [True, True, True, True]
+        assert comb.loc[7] == (bool(r1.loc[7]) or bool(r2.loc[7]))
+        assert pd.isna(comb.loc[8])
+        # no distinct R2 -> R1 cycle skip
+        assert compute_is_cycle_skip_combined_column(df, "TGCA", None).tolist()[:4] == [True, True, False, False]

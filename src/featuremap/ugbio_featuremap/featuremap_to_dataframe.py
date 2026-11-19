@@ -914,6 +914,120 @@ def _add_duplex_group_column(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.drop("_is_fwd", "_is_rev", "_is_consensus", "_ds_full")
 
 
+# Multi-call (ppmSeq+ dual flow) CRAMs: every molecule is called twice (R1 = flow order 1, R2 = flow order 2) and
+# stored as a mate pair sharing qname AND strand, so (RN, REV) is not unique. snvfind --emit-mate tags each read row
+# with MATE (0 unpaired / 1 R1 / 2 R2). Both calls of one candidate are the rows sharing CHROM/POS/RN/variant; the
+# training downsample keeps or drops them TOGETHER (see _mate_grouped_downsample). duplex_group is not used for
+# multi-call (no consensus families -> every read is a singleton; no duplex oversample priority).
+COL_MATE = FeatureMapFields.MATE.value
+COL_RN = "RN"
+_MOL_KEY_COL = "_mol_key"
+
+
+def _multi_call_molecule_key_cols(columns: list[str] | set[str]) -> list[str]:
+    """Columns keying one multi-call candidate molecule: locus + read name + variant descriptors (present ones)."""
+    columns = set(columns)
+    return [c for c in (COL_CHROM, COL_POS, COL_RN, "REF", "ALT", COL_X_IC, "X_IL", "X_INDEL_SEQ") if c in columns]
+
+
+def _is_multi_call_schema(columns: list[str] | set[str]) -> bool:
+    """True for a multi-call featuremap (MATE + RN present), whose downsample must group the two calls."""
+    columns = set(columns)
+    return COL_MATE in columns and COL_RN in columns
+
+
+def _with_molecule_key(frame: pl.DataFrame | pl.LazyFrame, key_cols: list[str]) -> pl.DataFrame | pl.LazyFrame:
+    """Add a null-safe u64 molecule key (struct hash of ``key_cols``; fixed seed -> stable across parts)."""
+    return frame.with_columns(pl.struct(key_cols).hash(seed=0).alias(_MOL_KEY_COL))
+
+
+def _sample_molecules(frame: pl.DataFrame, n_rows: int, seed: int | None) -> pl.DataFrame:
+    """Keep whole molecules (rows sharing ``_mol_key``) in random order until ``n_rows`` rows are reached.
+
+    Never splits a molecule; the realized size is <= ``n_rows`` (short by at most one molecule's rows).
+    """
+    if frame.height <= n_rows:
+        return frame
+    sizes = frame.group_by(_MOL_KEY_COL).len().sort(_MOL_KEY_COL)  # sort -> deterministic before the seeded shuffle
+    sizes = sizes.sample(fraction=1.0, shuffle=True, seed=seed)
+    keep = sizes.filter(pl.col("len").cum_sum() <= n_rows).select(_MOL_KEY_COL)
+    return frame.join(keep, on=_MOL_KEY_COL, how="semi", maintain_order="left")
+
+
+def _sample_molecule_pool_from_parts(  # noqa: PLR0913
+    parquet_files: list[str],
+    pool_pred: pl.Expr,
+    n_pool: int,
+    target: int,
+    downsample_seed: int | None,
+    key_cols: list[str],
+    *,
+    seed_offset: int,
+) -> pl.DataFrame:
+    """Molecule-grouped twin of :func:`_sample_pool_from_parts`: Bernoulli-sample molecule keys per part at a
+    slightly inflated fraction, keep all their rows, then exact-trim by whole molecules to ``target`` rows."""
+    if n_pool <= 0 or target <= 0:
+        empty = [_with_molecule_key(pl.scan_parquet(f).filter(pool_pred), key_cols) for f in parquet_files]
+        return pl.concat(empty, how="vertical").head(0).collect()
+    keep_frac = min(1.0, (target / n_pool) * 1.05 + 1000.0 / n_pool)
+    parts = []
+    for i, f in enumerate(parquet_files):
+        part = _with_molecule_key(pl.read_parquet(f).filter(pool_pred), key_cols)
+        keys = part.select(_MOL_KEY_COL).unique().sort(_MOL_KEY_COL)
+        keys = keys.sample(fraction=keep_frac, seed=_part_seed(downsample_seed, i + seed_offset))
+        parts.append(part.join(keys, on=_MOL_KEY_COL, how="semi", maintain_order="left"))
+    return _sample_molecules(pl.concat(parts, how="vertical"), target, downsample_seed)
+
+
+def _mate_grouped_downsample(
+    parquet_files: list[str],
+    output_path: str,
+    downsample_reads: int,
+    downsample_seed: int | None,
+    indel_snv_balance_fraction: float | None,
+) -> None:
+    """Downsample a multi-call featuremap to ~``downsample_reads`` rows keeping both calls of a molecule together.
+
+    Molecules are keyed by (CHROM, POS, RN, variant) -- the R1 and R2 calls of one candidate share all of these
+    (they differ only in MATE). Sampling is done on molecule keys, so a candidate is either kept with all its
+    rows or dropped. With ``indel_snv_balance_fraction`` the indel / SNV pools get their own row targets (same
+    targets as :func:`_stratified_downsample_by_variant_type`); both calls of a molecule carry the same variant,
+    hence the same pool. Memory-bounded per part, like the row-level samplers.
+    """
+    schema_names = pl.scan_parquet(parquet_files[0]).collect_schema().names()
+    key_cols = _multi_call_molecule_key_cols(schema_names)
+    n_total = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
+    target_total = min(downsample_reads, n_total)
+
+    pools: list[tuple[pl.Expr, int, int, int]] = []  # (predicate, pool rows, target rows, seed offset)
+    if indel_snv_balance_fraction is not None and COL_X_IC in schema_names:
+        pred = pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False)
+        n_indel = sum(pl.scan_parquet(f).filter(pred).select(pl.len()).collect().item() for f in parquet_files)
+        n_snv = n_total - n_indel
+        target_indel = min(round(indel_snv_balance_fraction * target_total), n_indel)
+        target_snv = min(target_total - target_indel, n_snv)
+        target_indel = min(n_indel, target_total - target_snv)  # refill if SNV-scarce
+        pools.append((pred, n_indel, target_indel, len(parquet_files)))
+        pools.append((~pred, n_snv, target_snv, 0))
+    else:
+        pools.append((pl.lit(value=True), n_total, target_total, 0))
+
+    log.info(
+        f"Multi-call (MATE) molecule-grouped downsample: {n_total} rows -> target {target_total} "
+        f"(pools rows/target: {[(n, t) for _, n, t, _ in pools]}; molecule key {key_cols})"
+    )
+    sampled = [
+        _sample_molecule_pool_from_parts(parquet_files, p, n, t, downsample_seed, key_cols, seed_offset=off)
+        for p, n, t, off in pools
+    ]
+    merged = pl.concat(sampled, how="vertical").drop(_MOL_KEY_COL)
+    merged = merged.sample(fraction=1.0, shuffle=True, seed=downsample_seed)
+    log.info(f"Multi-call molecule-grouped downsample realized: {merged.height} rows (target {target_total})")
+    merged.write_parquet(output_path)
+    for f in parquet_files:
+        Path(f).unlink(missing_ok=True)
+
+
 def _part_seed(seed: int | None, i: int) -> int | None:
     """Per-part-file sampling seed: ``seed + i``, or ``None`` (unseeded / random) when no seed was given."""
     return None if seed is None else seed + i
@@ -1334,7 +1448,10 @@ def _merge_parquet_files_lazy(  # noqa: PLR0913
         total_rows = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
         if total_rows > downsample_reads:
             schema_names = pl.scan_parquet(parquet_files[0]).collect_schema().names()
-            use_dg = bool(duplex_oversample_priority) and COL_CS in schema_names
+            # Multi-call (MATE) runs use the molecule-grouped sampler, which ignores duplex_group.
+            use_dg = (
+                bool(duplex_oversample_priority) and COL_CS in schema_names and not _is_multi_call_schema(schema_names)
+            )
             pre_counts = _annotate_sampling_strata(parquet_files, use_duplex_group=use_dg)
 
     _merge_parquet_files_dispatch(
@@ -1379,6 +1496,24 @@ def _merge_parquet_files_dispatch(  # noqa: PLR0912, PLR0915, C901
         instead of the default uniform downsample. No-op if unset, if the X_IC column is
         absent, if there are no indel rows, or if the dataset fits within downsample_reads.
     """
+    # Multi-call (ppmSeq+ dual flow, MATE column): sample whole molecules so the R1 and R2 calls of one candidate
+    # are kept or dropped together. Takes precedence over the duplex priority path (multi-call reads are not
+    # consensus families -> no duplex oversampling). Absent MATE -> the paths below, byte-identical.
+    if downsample_reads is not None and parquet_files:
+        try:
+            schema_names = pl.scan_parquet(parquet_files[0]).collect_schema().names()
+        except Exception:  # noqa: BLE001 - be conservative; fall back on any schema error
+            schema_names = []
+        if _is_multi_call_schema(schema_names):
+            total_rows = sum(pl.scan_parquet(f).select(pl.len()).collect().item() for f in parquet_files)
+            if total_rows > downsample_reads:
+                if duplex_oversample_priority:
+                    log.info("Multi-call featuremap (MATE): duplex_oversample_priority ignored")
+                _mate_grouped_downsample(
+                    parquet_files, output_path, downsample_reads, downsample_seed, indel_snv_balance_fraction
+                )
+                return
+
     # Duplex priority-preserve downsample: opt-in (duplex_oversample_priority set) and only when it can
     # change the result. Short-circuits to the paths below (byte-identical) when: no priority requested,
     # no downsample target, the CS molecule column is absent (non-duplex run), or the dataset already fits.

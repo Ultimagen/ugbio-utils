@@ -46,6 +46,7 @@ class FeatureMapFields(Enum):
     DP = "DP"  # depth
     BCSQ = "BCSQ"  # base calling quality
     REV = "REV"  # is reverse strand
+    MATE = "MATE"  # multi-call (ppmSeq+ dual flow) call id: 0 unpaired, 1 = R1 (flow order 1), 2 = R2 (flow order 2)
     FILT = "FILT"  # is reads in this position pass filters
     DUP = "DUP"  # is duplicate read
     ADJ_REF_DIFF = "ADJ_REF_DIFF"  # difference to reference base
