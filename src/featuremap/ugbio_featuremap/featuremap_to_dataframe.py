@@ -914,6 +914,93 @@ def _add_duplex_group_column(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.drop("_is_fwd", "_is_rev", "_is_consensus", "_ds_full")
 
 
+# Multi-ALT hmer FP enrichment (--hmer-multi-alt-min-share): an hmer-indel row whose CS molecule has >= 2 rows
+# carrying the same variant (several family reads agree on the error). The featuremap holds only ALT-carrying
+# reads, so this is "at least two family reads agree", not "all crossing reads agree" (that needs the CRAM).
+HMER_MULTI_ALT_COL = "_hmer_multi_alt"
+_ROW_ID_COL = "_row_id"
+
+
+def _molecule_variant_keys(columns: list[str]) -> list[str]:
+    """Molecule + variant key (CS + variant descriptors), as in :func:`_add_duplex_group_column`; [] without CS."""
+    if COL_CS not in columns:
+        return []
+    return [c for c in (COL_CHROM, COL_POS, "REF", "ALT", COL_X_IC, "X_IL", "X_INDEL_SEQ", COL_CS) if c in columns]
+
+
+def _is_hmer_indel_expr(columns: list[str]) -> pl.Expr:
+    """hmer-indel rows: X_IC in {ins, del} and X_INDEL_CLASS hmer (absent/null class -> indels count as hmer)."""
+    is_indel = (
+        pl.col(COL_X_IC).is_in(["ins", "del"]).fill_null(value=False) if COL_X_IC in columns else pl.lit(value=False)
+    )
+    if COL_X_INDEL_CLASS in columns:
+        cls = pl.col(COL_X_INDEL_CLASS).cast(pl.Utf8)
+        return is_indel & (cls.is_null() | (cls == "hmer"))
+    return is_indel
+
+
+def _add_hmer_multi_alt_column(frame: pl.DataFrame) -> pl.DataFrame:
+    """Flag hmer-indel rows whose CS molecule has >= 2 rows carrying the same variant (per part: molecules never
+    span regions). Without CS no molecule is known, so nothing is flagged."""
+    keys = _molecule_variant_keys(frame.columns)
+    is_hmer = _is_hmer_indel_expr(frame.columns)
+    flag = (is_hmer & (pl.len().over(keys) >= 2)) if keys else pl.lit(value=False)  # noqa: PLR2004
+    return frame.with_columns(flag.fill_null(value=False).alias(HMER_MULTI_ALT_COL))
+
+
+def _enrich_hmer_multi_alt(  # noqa: PLR0913
+    merged: pl.DataFrame,
+    annotated_files: list[str],
+    min_share: float,
+    seed: int,
+) -> pl.DataFrame:
+    """Raise the multi-ALT share of the selected hmer-indel rows to ``min_share`` (never lowers it).
+
+    The hmer-row count is unchanged: ``need`` randomly chosen single-ALT hmer rows are swapped for ``need``
+    not-yet-selected multi-ALT hmer rows from the pre-downsample pool (``annotated_files``, which carry
+    :data:`HMER_MULTI_ALT_COL` and :data:`_ROW_ID_COL`). Limited by the multi-ALT rows available.
+    """
+    is_hmer = _is_hmer_indel_expr(merged.columns)
+    k = merged.filter(is_hmer).height
+    have = merged.filter(pl.col(HMER_MULTI_ALT_COL)).height
+    target = min(round(min_share * k), k)
+    need = target - have
+    pool_n = sum(
+        pl.scan_parquet(f).filter(pl.col(HMER_MULTI_ALT_COL)).select(pl.len()).collect().item() for f in annotated_files
+    )
+    log.info(
+        f"hmer multi-ALT enrichment: pool multi-ALT hmer rows={pool_n}, selected hmer rows={k}, "
+        f"multi-ALT before={have} ({have / max(k, 1):.2%}), target share={min_share:.2%} ({target})"
+    )
+    if need <= 0 or k == 0:
+        return merged
+    chosen = set(merged.filter(pl.col(HMER_MULTI_ALT_COL))[_ROW_ID_COL].to_list())
+    avail = pool_n - len(chosen)
+    need = min(need, avail)
+    if need <= 0:
+        log.warning("hmer multi-ALT enrichment: no unselected multi-ALT hmer rows left in the pool")
+        return merged
+    frac = min(1.0, need / avail * 1.05 + 1000.0 / avail)
+    adds = []
+    for i, f in enumerate(annotated_files):
+        p = pl.read_parquet(f).filter(pl.col(HMER_MULTI_ALT_COL) & ~pl.col(_ROW_ID_COL).is_in(list(chosen)))
+        if p.height:
+            adds.append(p.sample(fraction=frac, seed=seed + 7919 + i))
+    add_df = pl.concat(adds, how="vertical") if adds else merged.head(0)
+    if add_df.height > need:
+        add_df = add_df.sample(n=need, seed=seed)
+    need = add_df.height
+    single = merged.filter(is_hmer & ~pl.col(HMER_MULTI_ALT_COL))
+    drop_ids = single.sample(n=min(need, single.height), seed=seed)[_ROW_ID_COL].to_list()
+    add_df = add_df.head(len(drop_ids))
+    out = pl.concat(
+        [merged.filter(~pl.col(_ROW_ID_COL).is_in(drop_ids)), add_df.select(merged.columns)], how="vertical"
+    )
+    after = out.filter(pl.col(HMER_MULTI_ALT_COL)).height
+    log.info(f"hmer multi-ALT enrichment: swapped {len(drop_ids)} rows; multi-ALT after={after} ({after / k:.2%})")
+    return out
+
+
 def _part_seed(seed: int | None, i: int) -> int | None:
     """Per-part-file sampling seed: ``seed + i``, or ``None`` (unseeded / random) when no seed was given."""
     return None if seed is None else seed + i
@@ -962,6 +1049,7 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
     duplex_oversample_priority: list[str],
     indel_snv_balance_fraction: float | None,
     min_group_fraction: float | None = None,
+    hmer_multi_alt_min_share: float | None = None,
 ) -> None:
     """Downsample to ``downsample_reads`` while preserving reads by ``duplex_group`` priority.
 
@@ -976,8 +1064,13 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
     This prevents a flooded high-priority tier (e.g. duplex_pe_full after dropping the dup filter) from
     starving lower tiers such as SSC. With ``min_group_fraction`` unset the behavior is byte-identical to the
     strict top-down fill (a single boundary group is subsampled; lower groups dropped).
+
+    ``hmer_multi_alt_min_share`` (0..1, optional): after the selection, raise the share of hmer-indel rows whose
+    CS molecule has >= 2 ALT-carrying rows to at least this value by swapping selected single-ALT hmer rows for
+    unselected multi-ALT ones (hmer-row count unchanged; see :func:`_enrich_hmer_multi_alt`).
     """
     seed = downsample_seed if downsample_seed is not None else 0
+    enrich = bool(hmer_multi_alt_min_share)
 
     # Pass 1: annotate each part with duplex_group (per-part is safe — molecules don't span regions) and
     # tally global per-group counts (and per-(group, indel/SNV) counts, used to pre-sample each stratum at its
@@ -988,6 +1081,12 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
     indel_counts: dict[str, int] = {}
     for f in parquet_files:
         part = _add_duplex_group_column(pl.read_parquet(f))
+        if enrich:
+            part = _add_hmer_multi_alt_column(part).with_columns(
+                pl.concat_str([pl.lit(f"{len(annotated_files)}:"), pl.int_range(pl.len()).cast(pl.Utf8)]).alias(
+                    _ROW_ID_COL
+                )
+            )
         tmp = f + ".dg.parquet"
         part.write_parquet(tmp)
         annotated_files.append(tmp)
@@ -1074,6 +1173,10 @@ def _priority_preserve_downsample(  # noqa: C901, PLR0912, PLR0913, PLR0917, PLR
         rest_df = merged.filter(pl.col(DUPLEX_GROUP_COL) != g)
         gdf = _balanced_sample(gdf, keep_n[g], indel_snv_balance_fraction, seed)
         merged = pl.concat([rest_df, gdf], how="vertical")
+
+    if enrich:
+        merged = _enrich_hmer_multi_alt(merged, annotated_files, float(hmer_multi_alt_min_share), seed)
+        merged = merged.drop(HMER_MULTI_ALT_COL, _ROW_ID_COL)
 
     # Drop the helper column, shuffle deterministically so groups interleave, write.
     merged = merged.drop(DUPLEX_GROUP_COL).sample(fraction=1.0, shuffle=True, seed=seed)
@@ -1249,7 +1352,9 @@ SAMPLE_WEIGHT_COL = "sample_weight"
 _STRATUM_COL = "_sampling_stratum"
 
 
-def _annotate_sampling_strata(parquet_files: list[str], *, use_duplex_group: bool) -> dict[str, int]:
+def _annotate_sampling_strata(
+    parquet_files: list[str], *, use_duplex_group: bool, use_hmer_multi_alt: bool = False
+) -> dict[str, int]:
     """Tag every pre-downsample row with its sampling stratum (in place) and return the stratum counts.
 
     The stratum is everything the downsampler conditions on: the recalibration cell (variant class + hmer
@@ -1265,9 +1370,14 @@ def _annotate_sampling_strata(parquet_files: list[str], *, use_duplex_group: boo
         if use_duplex_group:
             part = _add_duplex_group_column(part)
             parts.append(pl.col(DUPLEX_GROUP_COL))
+        if use_hmer_multi_alt:  # the enrichment changes this composition, so weights must condition on it
+            part = _add_hmer_multi_alt_column(part)
+            parts.append(pl.when(pl.col(HMER_MULTI_ALT_COL)).then(pl.lit("hma")).otherwise(pl.lit("")))
         part = part.with_columns(pl.concat_str(parts, separator="/").alias(_STRATUM_COL))
         if use_duplex_group:
             part = part.drop(DUPLEX_GROUP_COL)
+        if use_hmer_multi_alt:
+            part = part.drop(HMER_MULTI_ALT_COL)
         for key, n in part.group_by(_STRATUM_COL).len().iter_rows():
             counts[key] = counts.get(key, 0) + int(n)
         part.write_parquet(f)
@@ -1316,6 +1426,7 @@ def _merge_parquet_files_lazy(  # noqa: PLR0913
     duplex_oversample_priority: list[str] | None = None,
     duplex_group_min_fraction: float | None = None,
     per_class_counts_json: str | None = None,
+    hmer_multi_alt_min_share: float | None = None,
 ) -> None:
     """Merge part-files (optionally downsampling) and record what the downsample kept.
 
@@ -1335,7 +1446,9 @@ def _merge_parquet_files_lazy(  # noqa: PLR0913
         if total_rows > downsample_reads:
             schema_names = pl.scan_parquet(parquet_files[0]).collect_schema().names()
             use_dg = bool(duplex_oversample_priority) and COL_CS in schema_names
-            pre_counts = _annotate_sampling_strata(parquet_files, use_duplex_group=use_dg)
+            pre_counts = _annotate_sampling_strata(
+                parquet_files, use_duplex_group=use_dg, use_hmer_multi_alt=use_dg and bool(hmer_multi_alt_min_share)
+            )
 
     _merge_parquet_files_dispatch(
         parquet_files,
@@ -1345,6 +1458,7 @@ def _merge_parquet_files_lazy(  # noqa: PLR0913
         indel_snv_balance_fraction,
         duplex_oversample_priority,
         duplex_group_min_fraction,
+        hmer_multi_alt_min_share,
     )
     if pre_counts is not None:
         _attach_sample_weight(output_path, pre_counts)
@@ -1358,6 +1472,7 @@ def _merge_parquet_files_dispatch(  # noqa: PLR0912, PLR0915, C901
     indel_snv_balance_fraction: float | None = None,
     duplex_oversample_priority: list[str] | None = None,
     duplex_group_min_fraction: float | None = None,
+    hmer_multi_alt_min_share: float | None = None,
 ) -> None:
     """
     Merge multiple Parquet files using Polars lazy evaluation for memory efficiency (downsample dispatch).
@@ -1398,8 +1513,14 @@ def _merge_parquet_files_dispatch(  # noqa: PLR0912, PLR0915, C901
                     duplex_oversample_priority,
                     indel_snv_balance_fraction,
                     duplex_group_min_fraction,
+                    hmer_multi_alt_min_share,
                 )
                 return
+    if hmer_multi_alt_min_share:
+        log.warning(
+            "--hmer-multi-alt-min-share is only applied by the duplex priority-preserve downsample "
+            "(needs --duplex-oversample-priority, a CS column and a dataset larger than --downsample-reads); ignored"
+        )
 
     # Stratified (indel/SNV-balanced) downsample: opt-in and only when it can change the
     # result. Any of the following short-circuits back to the byte-identical uniform path:
@@ -1783,6 +1904,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
     duplex_oversample_priority: list[str] | None = None,
     duplex_group_min_fraction: float | None = None,
     per_class_counts_json: str | None = None,
+    hmer_multi_alt_min_share: float | None = None,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -2030,6 +2152,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913, PLR0917
                 duplex_oversample_priority,
                 duplex_group_min_fraction,
                 per_class_counts_json,
+                hmer_multi_alt_min_share,
             )
 
         final_row_count = pl.scan_parquet(out).select(pl.len()).collect().item()
@@ -2491,6 +2614,17 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
+        "--hmer-multi-alt-min-share",
+        type=float,
+        default=None,
+        help=(
+            "Enrich hmer-indel rows whose CS molecule has >= 2 rows carrying the same variant (several family "
+            "reads agree) to at least this share (0..1) of the selected hmer-indel rows, by swapping selected "
+            "single-ALT hmer rows for unselected multi-ALT ones (hmer-row count unchanged). Applied in the duplex "
+            "priority-preserve downsample only (needs --duplex-oversample-priority); sample weights condition on it."
+        ),
+    )
+    parser.add_argument(
         "--per-class-counts-json",
         default=None,
         help=(
@@ -2547,6 +2681,7 @@ def main(argv: list[str] | None = None) -> None:
         duplex_oversample_priority=duplex_oversample_priority,
         duplex_group_min_fraction=args.duplex_group_min_fraction,
         per_class_counts_json=args.per_class_counts_json,
+        hmer_multi_alt_min_share=args.hmer_multi_alt_min_share,
     )
 
 
