@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""Fake ``pypgx run-ngs-pipeline GENE OUTDIR ... --force`` for the pgx_ngs_pipeline tests.
+
+The gene name picks the behaviour: FAIL* exits 1, BARE* writes only results.zip,
+NODATA* writes a results.zip without data.tsv, EMPTY* writes an empty data.tsv, CORRUPT* a results.zip
+that is not a zip.
+FAKE_PYPGX_TRACE (a dir) receives each gene's start/end time; FAKE_PYPGX_SLEEP delays each gene.
+"""
+
+import os
+import sys
+import time
+import zipfile
+from pathlib import Path
+
+ZIP_KINDS = (
+    "alleles",
+    "cnv-calls",
+    "consolidated-variants",
+    "copy-number",
+    "genotypes",
+    "imported-variants",
+    "phased-variants",
+    "phenotypes",
+    "read-depth",
+)
+
+command, gene, out_dir = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+assert command == "run-ngs-pipeline", command
+start = time.time()
+print("argv:", " ".join(sys.argv[1:]))
+print(f"stderr of {gene}", file=sys.stderr)
+time.sleep(float(os.environ.get("FAKE_PYPGX_SLEEP", "0")))
+
+if gene.startswith("FAIL"):
+    sys.exit(1)
+
+out_dir.mkdir(parents=True, exist_ok="--force" in sys.argv)
+if not gene.startswith("BARE"):
+    for kind in ZIP_KINDS:
+        (out_dir / f"{kind}.zip").write_text(f"{kind} of {gene}")
+    for profile in ("copy-number-profile", "allele-fraction-profile"):
+        (out_dir / profile).mkdir()
+        for name in ("b.png", "a.png"):
+            (out_dir / profile / name).write_text(f"{profile}/{name} of {gene}")
+
+if gene.startswith("CORRUPT"):
+    (out_dir / "results.zip").write_text("truncated")
+    sys.exit(0)
+with zipfile.ZipFile(out_dir / "results.zip", "w") as archive:
+    if gene.startswith("EMPTY"):
+        archive.writestr("uuid/data.tsv", "\n")
+    elif not gene.startswith("NODATA"):
+        archive.writestr("uuid/data.tsv", f"\tGenotype\tPhenotype\nS1\tfirst-{gene}\tx\nS1\tlast-{gene}\ty\n\n")
+
+if trace := os.environ.get("FAKE_PYPGX_TRACE"):
+    Path(trace, gene).write_text(f"{start} {time.time()}")

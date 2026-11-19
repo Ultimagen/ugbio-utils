@@ -35,6 +35,10 @@ RUN wget -q -O /tmp/pypgx-bundle.tar.gz \
 COPY docker/install-gatk.sh /tmp/install-gatk.sh
 RUN bash /tmp/install-gatk.sh && rm /tmp/install-gatk.sh
 
+# ugbio_pypgx wheel (pgx_ngs_pipeline), stdlib only
+COPY ./src/pypgx ./src/pypgx
+RUN pip wheel --no-cache-dir --no-deps --wheel-dir /tmp/ugbio ./src/pypgx
+
 ##################################################################
 FROM python:3.11.17-slim-bookworm@sha256:f06d01d4ba3f8ad5af45a3ec87df19c1d317d8e8961edc0fabda61811af6f7cf
 
@@ -50,6 +54,9 @@ COPY --from=build /opt/pypgx-bundle /opt/pypgx-bundle
 COPY --from=build /opt/gatk /opt/gatk
 RUN ln -s /opt/gatk/gatk /usr/local/bin/gatk
 ENV PATH="/opt/venv/bin:$PATH"
+
+COPY --from=build /tmp/ugbio /tmp/ugbio
+RUN pip install --no-cache-dir --no-deps /tmp/ugbio/*.whl && rm -rf /tmp/ugbio
 
 # Set environment variables for pypgx bundle
 ENV PYPGX_BUNDLE=/opt/pypgx-bundle
