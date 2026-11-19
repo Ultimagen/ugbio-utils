@@ -125,22 +125,258 @@ def _count_bases_in_interval_list(path: str) -> int:
     FileNotFoundError
         If *path* does not exist.
     """
+    return sum(end - start + 1 for _chrom, start, end in _iter_intervals(path))
+
+
+def _iter_intervals(path: str):
+    """Yield ``(chrom, start, end)`` (1-based closed) for each interval in an interval_list/.bed file.
+
+    Accepts Picard ``.interval_list`` (1-based closed, header lines start with ``@``) and BED
+    (0-based half-open); BED is normalized to 1-based closed (start+1).
+    """
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
-
-    n_bases = 0
-    number_of_fields = 3  # chrom, start, end
+    number_of_fields = 3
+    is_bed = path.endswith((".bed", ".bed.gz"))
     opener = gzip.open if path.endswith(".gz") else open
     with opener(path, mode="rt", encoding="utf-8") as fh:
         for line in fh:
-            if line.startswith(("@", "#")) or not line.strip():
+            if line.startswith(("@", "#", "track", "browser")) or not line.strip():
                 continue
             fields = line.rstrip().split("\t")
             if len(fields) < number_of_fields:
                 continue
-            # interval_list is 1-based, closed: bases = end - start + 1
-            n_bases += int(fields[2]) - int(fields[1]) + 1
-    return n_bases
+            start = int(fields[1]) + 1 if is_bed else int(fields[1])  # normalize BED to 1-based
+            yield fields[0], start, int(fields[2])
+
+
+_ACGT_CODES = np.frombuffer(b"ACGT", dtype=np.uint8)
+_ACGT_SET = frozenset(int(c) for c in _ACGT_CODES)
+
+
+def _seq_codes(seq: str) -> np.ndarray:
+    """Uppercased sequence as a uint8 array (one byte per base)."""
+    return np.frombuffer(seq.upper().encode("ascii"), dtype=np.uint8)
+
+
+def _run_length_from(flags: np.ndarray) -> np.ndarray:
+    """For each position x, the number of consecutive True values in ``flags`` starting at x."""
+    m = flags.size
+    idx = np.arange(m, dtype=np.int64)
+    next_false = np.where(flags, m, idx)
+    next_false = np.minimum.accumulate(next_false[::-1])[::-1]
+    return next_false - idx
+
+
+def _homopolymer_runs(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(base code, length) of every maximal run of identical bytes in ``arr``."""
+    if arr.size == 0:
+        return arr[:0], np.zeros(0, dtype=np.int64)
+    starts = np.concatenate(([0], np.flatnonzero(arr[1:] != arr[:-1]) + 1))
+    lengths = np.diff(np.concatenate((starts, [arr.size])))
+    return arr[starts], lengths
+
+
+# Opportunity counters process each interval in fixed-size windows so peak memory is bounded by the window,
+# not the interval: whole-chromosome intervals (~250 Mb) otherwise need ~15 GB for the STR scan alone.
+_OPP_CHUNK_SIZE = 1 << 20
+_STR_LOOKAHEAD = 4096  # initial bases past the window end; doubled while a non-hmer repeat reaches the end
+
+
+def _interval_fetcher(fa, chrom: str, start: int, end: int):
+    """``(length, fetch)`` for a 1-based closed interval; ``fetch(s, e)`` returns codes of its bases [s, e)."""
+    begin = start - 1  # 0-based
+    length = max(min(end, fa.get_reference_length(chrom)) - begin, 0)
+
+    def fetch(s: int, e: int) -> np.ndarray:
+        return _seq_codes(fa.fetch(chrom, begin + s, begin + e))
+
+    return length, fetch
+
+
+def _homopolymer_hist_chunked(fetch, length: int, chunk_size: int = _OPP_CHUNK_SIZE) -> np.ndarray:
+    """``np.bincount`` of maximal ACGT homopolymer run lengths over ``fetch(0, length)``, one window at a time.
+
+    The last run of each window is carried into the next one (merged if it continues), so runs spanning a
+    window boundary are counted once with their full length.
+    """
+    counts = np.zeros(1, dtype=np.int64)
+    carry_base, carry_len = -1, 0
+
+    def add(lengths: np.ndarray) -> None:
+        nonlocal counts
+        if lengths.size:
+            per = np.bincount(lengths)
+            if per.size > counts.size:
+                counts = np.pad(counts, (0, per.size - counts.size))
+            counts[: per.size] += per
+
+    for c0 in range(0, length, chunk_size):
+        bases, lengths = _homopolymer_runs(fetch(c0, min(c0 + chunk_size, length)))
+        if bases.size == 0:
+            continue
+        if carry_len and int(bases[0]) == carry_base:
+            lengths[0] += carry_len
+        elif carry_len and carry_base in _ACGT_SET:
+            add(np.array([carry_len], dtype=np.int64))
+        carry_base, carry_len = int(bases[-1]), int(lengths[-1])
+        bases, lengths = bases[:-1], lengths[:-1]
+        add(lengths[np.isin(bases, _ACGT_CODES)])
+    if carry_len and carry_base in _ACGT_SET:
+        add(np.array([carry_len], dtype=np.int64))
+    return counts
+
+
+def homopolymer_run_length_histogram(path: str, ref_fasta: str, chunk_size: int = _OPP_CHUNK_SIZE) -> dict[int, int]:
+    """Histogram ``{run_length: n_runs}`` of maximal homopolymer runs (A/C/G/T) within the intervals.
+
+    A homopolymer-indel error opportunity occurs ~once per homopolymer run (not per base), so per-run-length
+    counts are the opportunity denominators of the per-run-length-bin hmer recalibration tables (bins are
+    defined on ``X_HMER_RUN``, the reference run length the indel changes). Runs are counted within each
+    interval independently (runs spanning interval boundaries are not merged). Vectorized with numpy
+    (run boundaries + bincount) over ``chunk_size`` windows, so memory stays bounded for whole-chromosome
+    intervals.
+    """
+    import pysam  # local import: pysam is heavy and only needed here
+
+    counts = np.zeros(1, dtype=np.int64)
+    with pysam.FastaFile(ref_fasta) as fa:
+        for chrom, start, end in _iter_intervals(path):
+            length, fetch = _interval_fetcher(fa, chrom, start, end)
+            per = _homopolymer_hist_chunked(fetch, length, chunk_size)
+            if per.size > counts.size:
+                counts = np.pad(counts, (0, per.size - counts.size))
+            counts[: per.size] += per
+    return {int(length): int(n) for length, n in enumerate(counts) if n}
+
+
+def count_homopolymer_runs_in_interval_list(path: str, ref_fasta: str, min_run: int = 2) -> int:
+    """Count maximal homopolymer runs of length >= ``min_run`` within the intervals (see the histogram)."""
+    return sum(n for length, n in homopolymer_run_length_histogram(path, ref_fasta).items() if length >= min_run)
+
+
+def _str_best_spans(
+    arr: np.ndarray, core: int, min_unit: int, max_unit: int, min_copies: int, *, at_end: bool
+) -> tuple[np.ndarray, bool]:
+    """Longest STR span starting at each of the first ``core`` positions of ``arr`` (0 = none).
+
+    ``arr`` is the window plus lookahead. Returns ``(best[:core], truncated)``; ``truncated`` is True when a
+    non-homopolymer period-u match run starting in the core reaches the end of ``arr`` while more sequence
+    follows (``at_end`` False), i.e. the lookahead was too short for an exact span.
+    """
+    n = arr.size
+    same_next = _run_length_from(arr[1:] == arr[:-1]) if n > 1 else np.zeros(0, dtype=np.int64)
+    same_next = same_next[:core]
+    best = np.zeros(core, dtype=np.int64)
+    idx = np.arange(core, dtype=np.int64)
+    truncated = False
+    for u in range(min_unit, max_unit + 1):
+        if n <= u:
+            continue
+        m = min(core, n - u)
+        run = _run_length_from(arr[u:] == arr[:-u])[:m]
+        copies = np.ones(core, dtype=np.int64)
+        copies[:m] += run // u
+        # a homopolymer unit (all u bases identical) is an hmer, not an STR: same_next[i] >= u-1
+        hmer_unit = np.zeros(core, dtype=bool)
+        hmer_unit[: same_next.size] = same_next >= u - 1
+        ok = (copies >= min_copies) & ~hmer_unit
+        if not at_end and np.any(~hmer_unit[:m] & (idx[:m] + run == n - u)):
+            truncated = True
+        np.maximum(best, np.where(ok, copies * u, 0), out=best)
+    return best, truncated
+
+
+def _count_str_loci_chunked(
+    fetch,
+    length: int,
+    min_unit: int,
+    max_unit: int,
+    min_copies: int,
+    chunk_size: int = _OPP_CHUNK_SIZE,
+    lookahead: int = _STR_LOOKAHEAD,
+) -> int:
+    """Greedy STR-locus count over ``fetch(0, length)`` in ``chunk_size`` windows (see _str_loci_in_sequence).
+
+    Each window is read with a lookahead (doubled until no repeat starting in the window is cut off), so
+    spans match the whole-sequence scan exactly; the greedy "next free position" is carried across windows.
+    """
+    lookahead = max(lookahead, max_unit + 1)
+    n_str = 0
+    next_free = 0
+    for c0 in range(0, length, chunk_size):
+        c1 = min(c0 + chunk_size, length)
+        la = lookahead
+        while True:
+            w_end = min(c1 + la, length)
+            best, truncated = _str_best_spans(
+                fetch(c0, w_end), c1 - c0, min_unit, max_unit, min_copies, at_end=w_end == length
+            )
+            if not truncated:
+                break
+            la *= 2
+        candidates = np.flatnonzero(best)
+        if candidates.size == 0:
+            continue
+        spans = best[candidates]
+        candidates += c0
+        # Greedy walk = follow "next candidate starting at/after this STR's end", starting at the first
+        # candidate at/after the previous window's last STR end. Pointers come from one searchsorted.
+        nxt = np.searchsorted(candidates, candidates + spans).tolist()
+        n_cand = candidates.size
+        j = int(np.searchsorted(candidates, next_free))
+        last = -1
+        while j < n_cand:
+            n_str += 1
+            last = j
+            j = nxt[j]
+        if last >= 0:
+            next_free = int(candidates[last] + spans[last])
+    return n_str
+
+
+def _str_loci_in_sequence(
+    arr: np.ndarray,
+    min_unit: int,
+    max_unit: int,
+    min_copies: int,
+    chunk_size: int = _OPP_CHUNK_SIZE,
+    lookahead: int = _STR_LOOKAHEAD,
+) -> int:
+    """Greedy count of maximal STR loci in one sequence (same semantics as the original per-base scan).
+
+    At each position i, take the longest tandem repeat over unit sizes ``min_unit..max_unit`` with at least
+    ``min_copies`` copies (units must not be homopolymers; ties keep the smaller unit), count it and jump past
+    it; otherwise advance by one base. Copy counts for every (position, unit) come from vectorized period-u
+    match runs (per window); only the greedy jump walk is a Python loop, over candidate positions.
+    """
+    return _count_str_loci_chunked(
+        lambda s, e: arr[s:e], arr.size, min_unit, max_unit, min_copies, chunk_size, lookahead
+    )
+
+
+def count_str_loci_in_interval_list(
+    path: str,
+    ref_fasta: str,
+    min_unit: int = 2,
+    max_unit: int = 6,
+    min_copies: int = 2,
+    chunk_size: int = _OPP_CHUNK_SIZE,
+) -> int:
+    """Count maximal short-tandem-repeat loci (unit 2..6 bp, >= ``min_copies`` copies) in the intervals.
+
+    Non-homopolymer-indel "opportunity" denominator analog of the homopolymer-run count. Non-overlapping
+    maximal STRs are counted once each (greedy, left to right, within each interval). Each interval is
+    fetched and scanned in ``chunk_size`` windows, so memory stays bounded for whole-chromosome intervals.
+    """
+    import pysam
+
+    n_str = 0
+    with pysam.FastaFile(ref_fasta) as fa:
+        for chrom, start, end in _iter_intervals(path):
+            length, fetch = _interval_fetcher(fa, chrom, start, end)
+            n_str += _count_str_loci_chunked(fetch, length, min_unit, max_unit, min_copies, chunk_size)
+    return n_str
 
 
 def _parse_model_params(mp: str | None) -> dict[str, Any]:
@@ -452,7 +688,7 @@ class SRSNVTrainer:
             return True
         except Exception as e:
             logger.warning(
-                "GPU support for XGBoost is not available or not working. " "Falling back to CPU. Error details: %s",
+                "GPU support for XGBoost is not available or not working. Falling back to CPU. Error details: %s",
                 str(e),
             )
             return False
@@ -1178,7 +1414,7 @@ def _cli() -> argparse.Namespace:
         "--quality-lut-size",
         type=int,
         default=1000,
-        help="Number of points in the MQUAL→SNVQ lookup table " "(default 1000)",
+        help="Number of points in the MQUAL→SNVQ lookup table (default 1000)",
     )
     ap.add_argument(
         "--metadata",

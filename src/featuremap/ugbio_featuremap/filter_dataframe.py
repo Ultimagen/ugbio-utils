@@ -28,6 +28,7 @@ KEY_DOWNSAMPLE = "downsample"
 KEY_SIZE = "size"
 KEY_METHOD = "method"
 KEY_SEED = "seed"
+KEY_PRESERVE_FIELD = "preserve_field"
 KEY_NULL_VALUE = "null_value"
 KEY_FIELDS = "fields"
 
@@ -35,6 +36,7 @@ KEY_FIELDS = "fields"
 OP_IS_NULL = "is_null"
 OP_IS_NOT_NULL = "is_not_null"
 OP_ANY_NOT_NULL = "any_not_null"
+OP_ANY_OF = "any_of"  # composite OR of sub-rules (each a standard rule dict under KEY_FILTERS)
 
 # Filter types
 TYPE_QUALITY = "quality"
@@ -95,22 +97,63 @@ _OPS = {
 }
 
 _UNARY_OPS = {OP_IS_NULL, OP_IS_NOT_NULL, OP_ANY_NOT_NULL}
+# Composite ops carry a nested KEY_FILTERS list of sub-rules instead of a scalar RHS.
+_COMPOSITE_OPS = {OP_ANY_OF}
 
 
 def _get_filter_name(rule: dict[str, Any]) -> str:
-    """Derive a filter name from a rule, falling back to field/op if no explicit name."""
-    return rule.get(KEY_NAME) or f"{rule.get(KEY_FIELD, '_'.join(rule.get(KEY_FIELDS, [])))}_{rule[KEY_OP]}"
+    """Derive a filter name from a rule, falling back to field/op if no explicit name.
+
+    An unnamed composite (``any_of``) rule has no ``field``; its fallback name is built from its sub-rules
+    (e.g. ``any_of(nf_gt|nr_gt)``) so two different unnamed composites do not collide on ``_any_of``.
+    """
+    if rule.get(KEY_NAME):
+        return rule[KEY_NAME]
+    if rule[KEY_OP] in _COMPOSITE_OPS and isinstance(rule.get(KEY_FILTERS), list):
+        subs = "|".join(_get_filter_name(sub) for sub in rule[KEY_FILTERS] if isinstance(sub, dict) and KEY_OP in sub)
+        return f"{rule[KEY_OP]}({subs})"
+    return f"{rule.get(KEY_FIELD, '_'.join(rule.get(KEY_FIELDS, [])))}_{rule[KEY_OP]}"
 
 
 def _validate_filter_op(rule: dict[str, Any], index: int) -> None:
     """Validate operator and its required value keys."""
     op = rule[KEY_OP]
-    all_ops = {*_OPS, *_UNARY_OPS}
+    all_ops = {*_OPS, *_UNARY_OPS, *_COMPOSITE_OPS}
     if op not in all_ops:
         raise ValueError(f"Filter {index} has unsupported operator: {op}")
-    if op not in _UNARY_OPS:
+    # Composite ops (e.g. any_of) carry a nested filters list, and unary ops need no RHS.
+    if op not in _UNARY_OPS and op not in _COMPOSITE_OPS:
         if KEY_VALUE not in rule and KEY_VALUES not in rule and KEY_VALUE_FIELD not in rule:
             raise ValueError(f"Filter {index} must have either '{KEY_VALUE}', '{KEY_VALUES}', or '{KEY_VALUE_FIELD}'")
+
+
+def _validate_any_of(rule: dict[str, Any], index: int) -> None:
+    """Validate an ``any_of`` composite rule and its ORed sub-rules.
+
+    Sub-rules need ``op`` + ``field``/``fields`` (validated by ``_validate_filter_op``) but not
+    their own ``type`` — the composite rule carries the ``type``.
+    """
+    sub_rules = rule.get(KEY_FILTERS)
+    if not isinstance(sub_rules, list) or len(sub_rules) == 0:
+        raise ValueError(f"Filter {index} with '{OP_ANY_OF}' op requires a non-empty '{KEY_FILTERS}' list")
+    for j, sub in enumerate(sub_rules):
+        if not isinstance(sub, dict):
+            raise ValueError(f"Filter {index} '{OP_ANY_OF}' sub-rule {j} must be a dictionary")
+        if KEY_OP not in sub:
+            raise ValueError(f"Filter {index} '{OP_ANY_OF}' sub-rule {j} missing required '{KEY_OP}' key")
+        if sub[KEY_OP] in _COMPOSITE_OPS:
+            # Nested composite (any_of inside any_of): it has no field; validate its own sub-rules recursively.
+            _validate_any_of(sub, index)
+            continue
+        if sub[KEY_OP] == OP_ANY_NOT_NULL:
+            if not isinstance(sub.get(KEY_FIELDS), list) or len(sub[KEY_FIELDS]) == 0:
+                raise ValueError(
+                    f"Filter {index} '{OP_ANY_OF}' sub-rule {j} with '{OP_ANY_NOT_NULL}' op requires a non-empty "
+                    f"'{KEY_FIELDS}' list"
+                )
+        elif KEY_FIELD not in sub:
+            raise ValueError(f"Filter {index} '{OP_ANY_OF}' sub-rule {j} missing required '{KEY_FIELD}' key")
+        _validate_filter_op(sub, index)
 
 
 def _validate_filter(rule: dict[str, Any], index: int) -> None:
@@ -126,7 +169,9 @@ def _validate_filter(rule: dict[str, Any], index: int) -> None:
     if rule[KEY_TYPE] not in valid_types:
         raise ValueError(f"Filter {index} has invalid type '{rule[KEY_TYPE]}'. Must be one of: {valid_types}")
 
-    if rule[KEY_OP] == OP_ANY_NOT_NULL:
+    if rule[KEY_OP] == OP_ANY_OF:
+        _validate_any_of(rule, index)
+    elif rule[KEY_OP] == OP_ANY_NOT_NULL:
         if KEY_FIELDS not in rule or not isinstance(rule[KEY_FIELDS], list) or len(rule[KEY_FIELDS]) == 0:
             raise ValueError(f"Filter {index} with '{OP_ANY_NOT_NULL}' op requires a non-empty '{KEY_FIELDS}' list")
     elif KEY_FIELD not in rule:
@@ -147,6 +192,10 @@ def _validate_downsample(ds: dict[str, Any]) -> None:
     method = ds.get(KEY_METHOD, METHOD_RANDOM)
     if method not in {METHOD_HEAD, METHOD_RANDOM}:
         raise ValueError(f"Invalid downsample method: {method}. Must be '{METHOD_HEAD}' or '{METHOD_RANDOM}'")
+
+    preserve_field = ds.get(KEY_PRESERVE_FIELD)
+    if preserve_field is not None and not isinstance(preserve_field, str):
+        raise ValueError(f"'{KEY_DOWNSAMPLE}.{KEY_PRESERVE_FIELD}' must be a string column name")
 
 
 def _try_to_convert_to_number_or_boolean(value: str) -> Any:
@@ -186,8 +235,7 @@ def _parse_cli_filter(filter_spec: str) -> dict[str, Any]:
     parts = filter_spec.split(":")
     if len(parts) < CLI_FILTER_MIN_PARTS:
         raise ValueError(
-            f"Filter specification must have at least {CLI_FILTER_MIN_PARTS} parts separated by ':'. "
-            f"Got: {filter_spec}"
+            f"Filter specification must have at least {CLI_FILTER_MIN_PARTS} parts separated by ':'. Got: {filter_spec}"
         )
 
     # Parse key=value pairs
@@ -319,6 +367,15 @@ def _mask_for_rule(rule: dict[str, Any]) -> pl.Expr:
     """Return a boolean expression for a single rule."""
     op = rule[KEY_OP]
 
+    if op == OP_ANY_OF:
+        # OR-combine the sub-rule masks. Recurses so any existing op works inside the OR.
+        # fill_null(False): a row null under every sub-rule does not pass (matches AND-mask semantics).
+        sub_rules = rule[KEY_FILTERS]
+        expr = _mask_for_rule(sub_rules[0])
+        for sub in sub_rules[1:]:
+            expr = expr | _mask_for_rule(sub)
+        return expr.fill_null(value=False)
+
     if op == OP_ANY_NOT_NULL:
         fields = rule[KEY_FIELDS]
         expr = pl.col(fields[0]).is_not_null()
@@ -361,12 +418,22 @@ def _create_filter_columns(
 ) -> tuple[pl.LazyFrame, list[str]]:
     """Create binary columns for each filter."""
     filter_cols = []
+    used_cols: set[str] = set()
 
     logger.debug(f"Creating binary columns for {len(filters)} filters")
 
-    for rule in filters:
+    for i, rule in enumerate(filters):
         name = _get_filter_name(rule)
-        col_name = f"{COL_PREFIX_FILTER}{name}"
+        base_col = f"{COL_PREFIX_FILTER}{name}"
+        col_name = base_col
+        # Two rules resolving to the same name (e.g. two unnamed rules with the same field+op) must not share
+        # a mask column: the second with_columns would overwrite the first and the final AND would drop it.
+        # Keep suffixing until unique: a generated suffix can itself match an explicit name (cut, cut__2, cut).
+        suffix = i
+        while col_name in used_cols:
+            col_name = f"{base_col}__{suffix}"
+            suffix += 1
+        used_cols.add(col_name)
         filter_cols.append(col_name)
 
         mask_expr = _mask_for_rule(rule)
@@ -391,11 +458,26 @@ def _create_downsample_column(
     # Create combined filter mask
     all_filters_mask = pl.all_horizontal(filter_cols)
 
-    # Build cumulative index for rows that pass all filters
-    row_idx_expr = (pl.when(all_filters_mask).then(1).otherwise(0)).cum_sum() - 1
+    # Stratified keep-all: rows passing all filters whose `preserve_field` is non-null bypass
+    # downsampling entirely (kept in full); the size budget applies only to the remaining rows.
+    # Used to retain rare classes (e.g. hmer-indel FPs, X_IC non-null) that a uniform random
+    # downsample would otherwise decimate at their pool fraction.
+    preserve_field = cfg[KEY_DOWNSAMPLE].get(KEY_PRESERVE_FIELD)
+    if preserve_field is not None and preserve_field in featuremap_dataframe.collect_schema().names():
+        preserved_mask = all_filters_mask & pl.col(preserve_field).is_not_null()
+        downsamplable_mask = all_filters_mask & pl.col(preserve_field).is_null()
+        logger.debug(f"Downsample preserve_field={preserve_field}: rows with non-null value bypass downsampling")
+    else:
+        if preserve_field is not None:
+            logger.warning(f"Downsample preserve_field '{preserve_field}' not in dataframe; ignoring stratification")
+        preserved_mask = pl.lit(value=False)
+        downsamplable_mask = all_filters_mask
+
+    # Build cumulative index over the rows subject to downsampling only
+    row_idx_expr = (pl.when(downsamplable_mask).then(1).otherwise(0)).cum_sum() - 1
 
     featuremap_dataframe = featuremap_dataframe.with_columns(
-        pl.when(all_filters_mask).then(row_idx_expr).otherwise(None).alias(COL_ROW_NUM_FILTERED)
+        pl.when(downsamplable_mask).then(row_idx_expr).otherwise(None).alias(COL_ROW_NUM_FILTERED)
     )
 
     # Create downsample mask
@@ -424,7 +506,12 @@ def _create_downsample_column(
 
     downsample_col = COL_FILTER_DOWNSAMPLE
     featuremap_dataframe = featuremap_dataframe.with_columns(
-        pl.when(all_filters_mask).then(downsample_expr).otherwise(None).alias(downsample_col)
+        pl.when(preserved_mask)
+        .then(pl.lit(value=True))
+        .when(downsamplable_mask)
+        .then(downsample_expr)
+        .otherwise(None)
+        .alias(downsample_col)
     ).drop(tmp_cols)
 
     logger.debug(f"Created downsample column: {downsample_col}")
@@ -449,6 +536,27 @@ def _create_final_filter_column(
     return featuremap_dataframe.with_columns(final_expr.alias(COL_FILTER_FINAL))
 
 
+def _downsample_final_count(
+    featuremap_dataframe: pl.LazyFrame,
+    filter_cols: list[str],
+    cfg: dict[str, Any],
+    filtered_count: int,
+) -> int:
+    """Post-downsample row count for the funnel, accounting for stratified `preserve_field`."""
+    downsample_size = cfg[KEY_DOWNSAMPLE][KEY_SIZE]
+    preserve_field = cfg[KEY_DOWNSAMPLE].get(KEY_PRESERVE_FIELD)
+    if preserve_field is not None and preserve_field in featuremap_dataframe.collect_schema().names():
+        # Preserved (non-null preserve_field) rows bypass downsampling; the size budget
+        # applies only to the remaining rows.
+        all_mask = pl.all_horizontal(filter_cols)
+        preserved_count = (
+            featuremap_dataframe.select((all_mask & pl.col(preserve_field).is_not_null()).sum()).collect().item()
+        )
+        downsamplable_count = filtered_count - preserved_count
+        return min(downsamplable_count, downsample_size) + preserved_count
+    return min(filtered_count, downsample_size)
+
+
 def _calculate_statistics(
     featuremap_dataframe: pl.LazyFrame,
     filter_cols: list[str],
@@ -460,29 +568,35 @@ def _calculate_statistics(
     """Calculate filter statistics using binary columns."""
     logger.debug("Calculating filter statistics")
 
-    # Funnel statistics
-    funnel = [(STAT_RAW, total_rows)]
+    # Per-filter stat names: the (de-duplicated) mask column name without its prefix. This equals
+    # _get_filter_name(rule) unless two rules share a name, in which case the later one carries the same
+    # "__<n>" suffix as its mask column, so its funnel entry and single_effect count are not merged with
+    # (or labelled as) the earlier rule's.
+    names = [
+        col.removeprefix(COL_PREFIX_FILTER) if col.startswith(COL_PREFIX_FILTER) else _get_filter_name(rule)
+        for col, rule in zip(filter_cols, filters, strict=False)
+    ]
+
+    # Funnel statistics: (name, rows, rule)
+    funnel: list[tuple[str, int, dict[str, Any] | None]] = [(STAT_RAW, total_rows, None)]
 
     # Calculate cumulative filter effects
     cumulative_mask = pl.lit(value=True)
-    for _i, (col, rule) in enumerate(zip(filter_cols, filters, strict=False)):
-        name = _get_filter_name(rule)
+    for col, name, rule in zip(filter_cols, names, filters, strict=False):
         cumulative_mask = cumulative_mask & pl.col(col)
         count = featuremap_dataframe.select(cumulative_mask.sum()).collect().item()
-        funnel.append((name, count))
+        funnel.append((name, count, rule))
 
     # Add downsample to funnel if present
     if KEY_DOWNSAMPLE in cfg:
         # Get the count after all filters
         filtered_count = funnel[-1][1]
-        downsample_size = cfg[KEY_DOWNSAMPLE][KEY_SIZE]
-        final_count = min(filtered_count, downsample_size)
-        funnel.append((STAT_DOWNSAMPLE, final_count))
+        final_count = _downsample_final_count(featuremap_dataframe, filter_cols, cfg, filtered_count)
+        funnel.append((STAT_DOWNSAMPLE, final_count, None))
 
     # Single effect statistics
     single_effect = {}
-    for col, rule in zip(filter_cols, filters, strict=False):
-        name = _get_filter_name(rule)
+    for col, name in zip(filter_cols, names, strict=False):
         count = featuremap_dataframe.select(pl.col(col).sum()).collect().item()
         single_effect[name] = count
 
@@ -519,10 +633,10 @@ def _calculate_statistics(
 
     # Add filter types to the statistics
     filters_with_types = []
-    for name, rows in funnel:
-        if name == STAT_RAW:
+    for name, rows, rule in funnel:
+        if rule is None and name == STAT_RAW:
             filters_with_types.append({KEY_NAME: name, STAT_ROWS: rows, KEY_TYPE: TYPE_RAW})
-        elif name == STAT_DOWNSAMPLE:
+        elif rule is None:  # downsample
             # include method / seed from the downsample section
             ds_cfg = cfg.get(KEY_DOWNSAMPLE, {})
             entry = {
@@ -535,10 +649,6 @@ def _calculate_statistics(
             entry = {k: v for k, v in entry.items() if v is not None}
             filters_with_types.append(entry)
         else:
-            rule = next(
-                (r for r in filters if _get_filter_name(r) == name),
-                {},
-            )
             entry = {
                 KEY_NAME: name,
                 STAT_ROWS: rows,
@@ -706,8 +816,7 @@ def _build_cli() -> argparse.ArgumentParser:
         action="append",
         dest="filters",
         help=(
-            "Filter specification: name=value:field=value:op=value:value=value:type=value "
-            "(can be used multiple times)"
+            "Filter specification: name=value:field=value:op=value:value=value:type=value (can be used multiple times)"
         ),
     )
     ap.add_argument("--downsample", help="Downsample specification: method:size:seed (optional seed for random method)")

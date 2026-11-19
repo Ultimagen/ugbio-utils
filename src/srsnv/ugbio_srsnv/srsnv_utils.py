@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib
 import warnings
+from enum import Enum
 from functools import partial
 from itertools import cycle
 from typing import TYPE_CHECKING
@@ -76,6 +77,157 @@ TM = "tm"  # Trimmer tags column
 ST_FILLNA = "st_fillna"  # start tag with NAs filled in
 ET_FILLNA = "et_fillna"  # end tag with NAs filled in
 
+FS = "fs"  # forward-strand read count (consensus data)
+RS = "rs"  # reverse-strand read count (consensus data)
+IS_CONSENSUS = "is_consensus"  # read is a consensus read (fs >= 1 and rs >= 1)
+DX = "dx"  # PE-duplex per-read tag: dx==1 marks a DUPLEX molecule (both strands present); absent otherwise.
+# Coverage-based (set by the consensus on every read of the molecule), so it marks a duplex molecule even when
+# only one strand flagged the variant here -- unlike "both strands appear in the featuremap", which misses ~90%.
+
+# PE-duplex per-row duplex flag, derived from dx (see add_pe_duplex_columns_to_featuremap_df).
+MATE_PRESENT = "mate_present"  # per-row flag: the read's molecule is duplex (dx == 1)
+
+# Ordered read-group column: reads are split into N ordered groups per mode (see
+# split_scheme.resolve_scheme_and_add_columns). The report iterates these groups instead of a binary split.
+READ_GROUP = "read_group"
+
+# Consensus groups, ordered by ascending strand support (single -> one strand -> duplex).
+CONSENSUS_GROUP_SINGLE = "single read"  # fs + rs <= 1
+CONSENSUS_GROUP_ONE_STRAND = "consensus, one strand"  # fs + rs >= 2 and (fs == 0) xor (rs == 0)
+CONSENSUS_GROUP_DUPLEX = "consensus, duplex"  # fs >= 1 and rs >= 1
+CONSENSUS_GROUPS = [CONSENSUS_GROUP_SINGLE, CONSENSUS_GROUP_ONE_STRAND, CONSENSUS_GROUP_DUPLEX]
+
+# Per-image CS-family stats (paired-end duplex), produced by the DNN tensorizer from each image's own
+# CS family + focus column and surfaced per row (see ugbio_deep_srsnv.constants.PRED_COL_CS_*).
+CS_FAMILY_SIZE = "cs_family_size"  # reads fetched for the CS (present slots), 1..4
+CS_N_CROSSING = "cs_n_crossing"  # family reads crossing the variant (focus != PAD; GAP counts)
+CS_N_SUPPORTING = "cs_n_supporting"  # crossing reads carrying the ALT at focus
+CS_N_PE_PAIRS = "cs_n_pe_pairs"  # complete (fwd,rev) pairs present, 0..2
+CS_N_CAND = "cs_n_cand"  # consensus candidates in the subject read's PE slot (multi-consensus; 1 if single)
+CS_SEC_SUPPORT = "cs_sec_support"  # support (nf+nr) of the top dropped consensus candidate (0=none)
+# PE-duplex display groups: simplex-SE / simplex-PE / duplex-SE / duplex-PE, driven by dx
+# (mate_present) + cs_n_crossing. Every molecule is displayed (a single-read family, cs_family_size==1,
+# is a valid simplex-SE observation). Ordered by ascending support (simplex/single-strand before
+# duplex; within each, one PE end before both). "simplex" = a single-strand consensus (no dx);
+# "duplex" = both strands (dx == 1).
+PE_DUPLEX_GROUP = "pe_duplex_group"
+PE_DUPLEX_GROUP_SIMPLEX_SE = "simplex SE"  # single strand (no dx), 1 read crosses (one PE end)
+PE_DUPLEX_GROUP_SIMPLEX_PE = "simplex PE"  # single strand (no dx), 2 reads cross (both PE ends)
+PE_DUPLEX_GROUP_SE = "duplex SE"  # duplex (dx==1), 2 reads cross the variant (one PE end)
+PE_DUPLEX_GROUP_PE = "duplex PE"  # duplex (dx==1), 4 reads cross the variant (both PE ends)
+PE_DUPLEX_GROUPS = [PE_DUPLEX_GROUP_SIMPLEX_SE, PE_DUPLEX_GROUP_SIMPLEX_PE, PE_DUPLEX_GROUP_SE, PE_DUPLEX_GROUP_PE]
+
+# Mixed groups (2), reproducing the historical binary ppmSeq labels/order.
+MIXED_GROUP_NON = "Non-mixed"
+MIXED_GROUP_POS = "Mixed"
+MIXED_GROUPS = [MIXED_GROUP_NON, MIXED_GROUP_POS]
+
+# None mode: a single "all reads" group.
+NONE_GROUP_ALL = "all reads"
+
+
+class ReportMode(Enum):
+    """How the SRSNV report splits reads into two groups.
+
+    The mode is detected automatically from the columns present in the featuremap
+    dataframe (see :func:`ugbio_srsnv.split_scheme.resolve_scheme`). Its ``.value`` is a plain string, so the
+    mode can be stored in the params dict / JSON and reconstructed via ``ReportMode(value)``.
+    """
+
+    MIXED = "mixed"  # ppmSeq data: split on mixed vs non-mixed reads (st/et tags)
+    CONSENSUS = "consensus"  # consensus data: split on consensus vs non-consensus (fs/rs)
+    # paired-end duplex (DNN per-image CS-family stats present): simplex / duplex-SE / duplex-PE
+    PE_DUPLEX = "pe_duplex"
+    NONE = "none"  # neither available: single "all reads" group
+
+
+def add_is_consensus_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
+    """Add the ``is_consensus`` column to a consensus featuremap dataframe.
+
+    A read is a consensus read iff it has at least one forward-strand read (``fs >= 1``)
+    and at least one reverse-strand read (``rs >= 1``).
+
+    Parameters
+    ----------
+    data_df : pd.DataFrame
+        The featuremap dataframe, expected to contain the ``fs`` and ``rs`` columns.
+
+    Returns
+    -------
+    pd.DataFrame
+        The same dataframe with the ``is_consensus`` boolean column added.
+    """
+    logger.info("Adding is_consensus column to featuremap")
+    data_df[IS_CONSENSUS] = (data_df[FS] >= 1) & (data_df[RS] >= 1)
+    return data_df
+
+
+def add_pe_duplex_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
+    """Add the PE-duplex per-row grouping columns (``mate_present`` and ``pe_duplex_group``).
+
+    A molecule is duplex (both strands present) iff ``dx == 1`` -- the coverage-based consensus tag. Because
+    it is coverage-based, dx marks a duplex molecule even when only ONE strand flagged the variant here (the
+    informative case), which a "both strands appear in the featuremap" heuristic misses (~90% of duplex
+    molecules). A read without dx is not duplex. ``pe_duplex_group`` is then assigned from ``mate_present``
+    and the DNN per-image CS-family stats (see :func:`_assign_pe_duplex_group`).
+
+    Parameters
+    ----------
+    data_df : pd.DataFrame
+        The featuremap dataframe, expected to contain ``dx`` and the ``cs_n_crossing`` CS-family stat.
+
+    Returns
+    -------
+    pd.DataFrame
+        The same dataframe with boolean ``mate_present`` and (when the CS stats are present)
+        ``pe_duplex_group`` columns.
+    """
+    logger.info("Adding PE-duplex columns to featuremap")
+    if DX in data_df.columns:
+        data_df[MATE_PRESENT] = pd.to_numeric(data_df[DX], errors="coerce").eq(1)
+    else:
+        logger.warning("PE-duplex featuremap has no dx tag; cannot identify duplex -> mate_present=False")
+        data_df[MATE_PRESENT] = False
+    _assign_pe_duplex_group(data_df)
+    return data_df
+
+
+def _assign_pe_duplex_group(data_df: pd.DataFrame) -> None:
+    """Assign the ``pe_duplex_group`` column (simplex SE / simplex PE / duplex SE / duplex PE) in
+    place, when the DNN per-image CS-family stats are present (paired-end duplex data). "simplex" is a
+    single-strand consensus (no dx); "duplex" has both strands (dx == 1).
+
+    Grouping (every molecule is displayed; a single-read family is a valid simplex-SE observation):
+
+    - not ``mate_present`` (no dx), ``cs_n_crossing <= 1`` -> simplex SE (single strand, one PE end;
+      includes ``cs_family_size == 1``, a single read crossing the variant).
+    - not ``mate_present`` (no dx), ``cs_n_crossing >= 2`` -> simplex PE (single strand, both PE ends).
+    - ``mate_present`` and ``cs_n_crossing <= 2``            -> duplex SE (both strands of one PE end).
+    - ``mate_present`` and ``cs_n_crossing >= 3``            -> duplex PE (both PE ends cover the variant).
+
+    The simplex split mirrors the duplex one halved: a single strand contributes one read per PE end
+    (so 1 crossing read = one end = SE, 2 = both ends = PE), whereas a full duplex contributes two
+    (both strands) per end. ``cs_n_pe_pairs`` can't distinguish simplex SE/PE (it is 0 for a single
+    strand, which has no fwd/rev mate), so the crossing count is the discriminator.
+
+    No-op when ``cs_n_crossing`` is absent (non-pe-duplex data). Only ``cs_n_crossing`` (+ ``dx``) is read, so
+    ``cs_family_size`` is not required -- the PE-duplex scheme is detected from ``cs_n_crossing`` alone.
+    """
+    if CS_N_CROSSING not in data_df.columns:
+        return
+    cross = pd.to_numeric(data_df[CS_N_CROSSING], errors="coerce").fillna(0)
+    mate = (
+        data_df[MATE_PRESENT].astype(bool)
+        if MATE_PRESENT in data_df.columns
+        else pd.Series(data=False, index=data_df.index)
+    )
+    g = pd.Series(PE_DUPLEX_GROUP_SIMPLEX_SE, index=data_df.index, dtype=object)  # single strand, one PE end
+    g[~mate & (cross >= 2)] = PE_DUPLEX_GROUP_SIMPLEX_PE  # noqa: PLR2004  (single strand, both PE ends)
+    g[mate & (cross <= 2)] = PE_DUPLEX_GROUP_SE  # noqa: PLR2004  (2 reads cross = one PE end)
+    g[mate & (cross >= 3)] = PE_DUPLEX_GROUP_PE  # noqa: PLR2004  (>=3 reads cross = both PE ends)
+    data_df[PE_DUPLEX_GROUP] = g
+
+
 FLOW_ORDER = ["T", "G", "C", "A"]
 
 MAX_PHRED = 100  # Default maximum Phred score for clipping
@@ -116,7 +268,26 @@ def _probability_rescaling(
     return p_rescaled_snvq
 
 
-def recalibrate_snvq(
+def weighted_survival(values: np.ndarray, weights: np.ndarray, x: np.ndarray) -> np.ndarray:
+    """Weighted survival ``S(x) = sum(w[v >= x]) / sum(w)`` evaluated on grid *x* (vectorized).
+
+    NaN values never survive a threshold but keep their weight in the denominator, matching the unweighted
+    ``(v >= x).mean()`` (NaN >= x is False) so unit weights reproduce the unweighted curve exactly.
+    """
+    values = np.asarray(values, dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    if values.size == 0:
+        return np.full(np.shape(x), np.nan)
+    total = weights.sum()
+    finite = ~np.isnan(values)
+    order = np.argsort(values[finite], kind="stable")
+    v = values[finite][order]
+    cw = np.concatenate([[0.0], np.cumsum(weights[finite][order])])
+    surviving = cw[-1] - cw[np.searchsorted(v, np.asarray(x, dtype=float), side="left")]
+    return surviving / total
+
+
+def recalibrate_snvq(  # noqa: PLR0915
     mqual: np.ndarray,
     labels: np.ndarray,
     **kwargs,
@@ -154,6 +325,10 @@ def recalibrate_snvq(
         Maximum Phred score for clipping.
     eps : float
         Small epsilon for numerical stability.
+    sample_weight : np.ndarray | None
+        Optional per-row importance weight (same length as *mqual*), e.g. the data-prep ``sample_weight`` that
+        undoes training-set oversampling. The TP/FP survival curves become weighted survival curves; the LUT
+        grid (FP MQUAL cutoff quantile) stays unweighted. *None* -> unweighted (unchanged behavior).
 
     Returns
     -------
@@ -165,11 +340,11 @@ def recalibrate_snvq(
         Corresponding SNVQ values of the lookup table.
     """
 
-    pos_stats = kwargs["pos_stats"]
-    neg_stats = kwargs["neg_stats"]
-    raw_stats = kwargs["raw_stats"]
-    mean_coverage = kwargs["mean_coverage"]
-    n_bases_in_region = kwargs["n_bases_in_region"]
+    # When ``snvq_prefactor_override`` is given (per-class recalibration), the absolute error scale is
+    # supplied directly and the stats-based prefactor computation is skipped (pos/neg/raw/coverage/n_bases
+    # become optional). Everything else — the survival curves and the LUT — is identical.
+    snvq_prefactor_override = kwargs.get("snvq_prefactor_override")
+    sample_weight = kwargs.get("sample_weight")
     lut_mask = kwargs.get("lut_mask")
     prior_train_error = kwargs.get("prior_train_error")
     fp_mqual_cutoff_quantile = kwargs.get("fp_mqual_cutoff_quantile", 1 - 1e-6)
@@ -178,41 +353,53 @@ def recalibrate_snvq(
 
     labels_bool = np.asarray(labels, dtype=bool)
 
-    # --- priors -----------------------------------------------------------
     def _last_non_downsample_rows(stats: dict) -> int:
         for f in reversed(stats["filters"]):
             if f.get("type") != "downsample":
                 return f.get(TYPE_FUNNEL, f.get(STAT_ROWS))
         raise ValueError("stats JSON has no non-downsample filter entry")
 
-    pos_after_filter = _last_non_downsample_rows(pos_stats)
-    neg_after_filter = _last_non_downsample_rows(neg_stats)
-    raw_after_filter = _last_non_downsample_rows(raw_stats)
+    if snvq_prefactor_override is not None:
+        snvq_prefactor = float(snvq_prefactor_override)
+    else:
+        pos_stats = kwargs["pos_stats"]
+        neg_stats = kwargs["neg_stats"]
+        raw_stats = kwargs["raw_stats"]
+        mean_coverage = kwargs["mean_coverage"]
+        n_bases_in_region = kwargs["n_bases_in_region"]
 
-    prior_real_error = max(eps, min(1.0 - eps, neg_after_filter / (neg_after_filter + pos_after_filter)))
+        # --- priors -------------------------------------------------------
+        pos_after_filter = _last_non_downsample_rows(pos_stats)
+        neg_after_filter = _last_non_downsample_rows(neg_stats)
+        raw_after_filter = _last_non_downsample_rows(raw_stats)
 
-    if prior_train_error is None:
-        n_neg = int((~labels_bool).sum())
-        prior_train_error = n_neg / len(labels_bool) if len(labels_bool) > 0 else 0.5
+        prior_real_error = max(eps, min(1.0 - eps, neg_after_filter / (neg_after_filter + pos_after_filter)))
 
-    # --- snvq_prefactor ---------------------------------------------------
-    filtering_ratio = get_filter_ratio(pos_stats["filters"], numerator_type="label", denominator_type="raw")
-    effective_bases_covered = mean_coverage * n_bases_in_region * filtering_ratio
-    snvq_prefactor = raw_after_filter / effective_bases_covered
+        if prior_train_error is None:
+            n_neg = int((~labels_bool).sum())
+            prior_train_error = n_neg / len(labels_bool) if len(labels_bool) > 0 else 0.5
 
-    logger.info(
-        "recalibrate_snvq: mean_coverage=%.1f, n_bases_in_region=%d, "
-        "filtering_ratio=%.6f, raw_after_filter=%d, effective_bases_covered=%.0f, "
-        "snvq_prefactor=%.6f, prior_train_error=%.6f, prior_real_error=%.6f",
-        mean_coverage,
-        n_bases_in_region,
-        filtering_ratio,
-        raw_after_filter,
-        effective_bases_covered,
-        snvq_prefactor,
-        prior_train_error,
-        prior_real_error,
-    )
+        # --- snvq_prefactor ----------------------------------------------
+        filtering_ratio = get_filter_ratio(pos_stats["filters"], numerator_type="label", denominator_type="raw")
+        effective_bases_covered = mean_coverage * n_bases_in_region * filtering_ratio
+        snvq_prefactor = raw_after_filter / effective_bases_covered
+
+    if snvq_prefactor_override is not None:
+        logger.info("recalibrate_snvq: snvq_prefactor=%.6g (override)", snvq_prefactor)
+    else:
+        logger.info(
+            "recalibrate_snvq: mean_coverage=%.1f, n_bases_in_region=%d, "
+            "filtering_ratio=%.6f, raw_after_filter=%d, effective_bases_covered=%.0f, "
+            "snvq_prefactor=%.6f, prior_train_error=%.6f, prior_real_error=%.6f",
+            mean_coverage,
+            n_bases_in_region,
+            filtering_ratio,
+            raw_after_filter,
+            effective_bases_covered,
+            snvq_prefactor,
+            prior_train_error,
+            prior_real_error,
+        )
 
     # --- counting-based lookup table (same logic as SRSNVTrainer) ---------
     mqual_clipped = np.clip(mqual, 0.0, max_qual)
@@ -238,8 +425,17 @@ def recalibrate_snvq(
     mqual_t = lut_df.loc[lut_df["label"], "MQUAL"]
     mqual_f = lut_df.loc[~lut_df["label"], "MQUAL"]
 
-    tpr = np.array([(mqual_t >= m_).mean() for m_ in x_lut])
-    fpr = np.array([(mqual_f >= m_).mean() for m_ in x_lut])
+    if sample_weight is None:
+        tpr = np.array([(mqual_t >= m_).mean() for m_ in x_lut])
+        fpr = np.array([(mqual_f >= m_).mean() for m_ in x_lut])
+    else:
+        w = np.asarray(sample_weight, dtype=float)
+        w = w[lut_mask] if lut_mask is not None else w
+        lab = lut_df["label"].to_numpy().astype(bool)
+        mq = lut_df["MQUAL"].to_numpy()
+        tpr = weighted_survival(mq[lab], w[lab], x_lut)
+        fpr = weighted_survival(mq[~lab], w[~lab], x_lut)
+        logger.info("recalibrate_snvq: weighted survival (sum w TP=%.4g, FP=%.4g)", w[lab].sum(), w[~lab].sum())
 
     y_lut = -10 * np.log10(np.clip(snvq_prefactor * (fpr / tpr), eps, 1))
 
@@ -254,6 +450,107 @@ def recalibrate_snvq(
     )
 
     return snvq, x_lut, y_lut
+
+
+def smooth_lut_monotone(
+    x_lut: np.ndarray, y_lut: np.ndarray, cap: float | None = None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Make an SNVQ LUT non-decreasing in MQUAL (cumulative max), optionally capped at ``cap``.
+
+    Robust for sparse high-MQUAL bins (e.g. long homopolymer indels) where the raw counting LUT can
+    wiggle; the cap holds a class's SNVQ below a ceiling until there is evidence to exceed it.
+    """
+    y = np.maximum.accumulate(np.asarray(y_lut, dtype=float))
+    if cap is not None:
+        y = np.minimum(y, float(cap))
+    return np.asarray(x_lut, dtype=float), y
+
+
+def recalibrate_snvq_per_class(
+    mqual: np.ndarray,
+    labels: np.ndarray,
+    class_labels: np.ndarray,
+    *,
+    prefactor_by_class: dict,
+    lut_mask: np.ndarray | None = None,
+    caps_by_class: dict | None = None,
+    smoothing: str = "counting",
+    min_lut_rows: int = 100,
+    sample_weight: np.ndarray | None = None,
+    **recal_kwargs,
+) -> tuple[np.ndarray, dict]:
+    """Build a separate MQUAL->SNVQ LUT per variant class and return per-row SNVQ + the LUT dict.
+
+    The survival curves (fpr/tpr) are computed from each class's own ``lut_mask`` rows and the absolute
+    scale comes from ``prefactor_by_class[class]`` (errors per opportunity). Rows whose class is absent
+    from ``prefactor_by_class`` are left as NaN so the caller can fall back to a global LUT.
+
+    Parameters
+    ----------
+    mqual, labels, class_labels : np.ndarray
+        Per-row MQUAL, boolean TP/FP label, and variant-class label (parallel arrays).
+    prefactor_by_class : dict
+        ``{class: snvq_prefactor}`` absolute error-per-opportunity per class.
+    lut_mask : np.ndarray | None
+        Boolean mask of rows eligible to build the LUT (e.g. out-of-fold validation rows).
+    caps_by_class : dict | None
+        Optional ``{class: SNVQ_ceiling}`` applied when ``smoothing="monotone"``.
+    smoothing : str
+        ``"counting"`` (raw) or ``"monotone"`` (cumulative-max + optional cap).
+    min_lut_rows : int
+        Minimum TP and minimum FP rows (within ``lut_mask``) a class needs to get its own LUT; sparser
+        classes are skipped (NaN -> caller's global fallback) rather than fitting a degenerate table. Counted
+        on unweighted rows with a finite MQUAL (support, not mass).
+    sample_weight : np.ndarray | None
+        Optional per-row importance weights (parallel to *mqual*); each class's survival curves are weighted
+        with its own slice (see :func:`recalibrate_snvq`).
+
+    Returns
+    -------
+    snvq : np.ndarray
+        Per-row recalibrated SNVQ (NaN where the class had no LUT).
+    luts : dict
+        ``{class: [x_lut, y_lut]}``.
+    """
+    mqual = np.asarray(mqual, dtype=float)
+    labels = np.asarray(labels, dtype=bool)
+    class_labels = np.asarray(class_labels)
+    max_qual = recal_kwargs.get("max_qual", MAX_PHRED)
+    snvq = np.full(mqual.shape, np.nan, dtype=float)
+    luts: dict = {}
+    for cls, pref in prefactor_by_class.items():
+        m = class_labels == cls
+        if not m.any():
+            continue
+        sub_lut_mask = (lut_mask & m)[m] if lut_mask is not None else None
+        sub_labels = labels[m][sub_lut_mask] if sub_lut_mask is not None else labels[m]
+        sub_mqual = mqual[m][sub_lut_mask] if sub_lut_mask is not None else mqual[m]
+        # Only rows with a finite MQUAL support the LUT: an all-NaN side would make recalibrate_snvq
+        # take a NaN quantile and raise, aborting every class instead of falling back for this one.
+        scored = np.isfinite(sub_mqual)
+        n_tp, n_fp = int((sub_labels & scored).sum()), int((~sub_labels & scored).sum())
+        if min(n_tp, n_fp) < min_lut_rows:
+            logger.warning(
+                "recalibrate_snvq_per_class: class %s has %d TP / %d FP LUT rows (< %d); using global LUT",
+                cls,
+                n_tp,
+                n_fp,
+                min_lut_rows,
+            )
+            continue
+        _snvq, x_lut, y_lut = recalibrate_snvq(
+            mqual[m],
+            labels[m],
+            snvq_prefactor_override=pref,
+            lut_mask=sub_lut_mask,
+            sample_weight=None if sample_weight is None else np.asarray(sample_weight, dtype=float)[m],
+            **recal_kwargs,
+        )
+        if smoothing == "monotone":
+            x_lut, y_lut = smooth_lut_monotone(x_lut, y_lut, cap=(caps_by_class or {}).get(cls))
+        snvq[m] = np.interp(np.clip(mqual[m], 0.0, max_qual), x_lut, y_lut)
+        luts[cls] = [np.asarray(x_lut).tolist(), np.asarray(y_lut).tolist()]
+    return snvq, luts
 
 
 def _compute_snvq_prefactor(
@@ -1056,6 +1353,10 @@ def construct_trinuc_context_with_alt(
 ) -> pd.Series:
     """Construct trinuc_context_with_alt column from prev1, ref, next1, alt columns.
 
+    The ``ALT`` column holds the read's actual substituted base in the report featuremap
+    (produced by prepare_dnn_report for the DNN path, or directly for XGBoost), so it is used
+    as-is.
+
     Args:
         df: DataFrame containing the required columns
         prev1: Name of the previous nucleotide column, default 'X_PREV1'
@@ -1238,6 +1539,12 @@ class HandlePPMSeqTagsInFeatureMapDataFrame:
             elif self._v5_tags_in_featuremap():
                 # ST, ET no in featermap_df, AS, AE, TS, TE are. Adds ST, ET to featuremap_df
                 self._add_ppmseq_tags_to_featuremap()
+                self._set_cram_tags()
+            elif ST in self.featuremap_df:
+                # Start-only ppmSeq (st, no et; BIOIN-3125): the end tag is missing on every read. Add an all-NaN
+                # ET so is_mixed_start keeps the start split and is_mixed_end / et_fillna follow the NaN rules.
+                self.log("Start-only ppmSeq tags (st, no et): treating the end tag as missing on all reads")
+                self.featuremap_df[ET] = np.nan
                 self._set_cram_tags()
             else:
                 self.start_tag_col = None

@@ -124,6 +124,41 @@ def plot_trinuc_hist(  # noqa: C901
     return ax, bars
 
 
+def _resolve_qual_group_specs(stats_df, group_specs=None, qual_colors=None):
+    """Resolve which quality group columns to plot, plus their labels and colors.
+
+    Returns a list of ``(col_prefix, display_label, color)``.
+
+    - If ``group_specs`` is provided (list of ``(col_prefix, display_label, color)``), it is used
+      directly for any prefix that has a ``<prefix> median_qual`` column present. This is how the
+      N-group (consensus) path drives an arbitrary ordered set of read groups.
+    - Otherwise the historical ppmSeq auto-detection is used: plot ``mixed=True``/``mixed=False``
+      if both present, else ``mixed=all``. Labels/colors match the original hardcoded values, so
+      mixed-mode output is unchanged. A caller-supplied ``qual_colors`` ``{prefix: color}`` overrides the
+      default colors exactly as before (prefixes missing from it are drawn black).
+    """
+    if group_specs is not None:
+        return [
+            (prefix, label, color)
+            for prefix, label, color in group_specs
+            if f"{prefix} median_qual" in stats_df.columns
+        ]
+
+    has_mixed_true = any("mixed=True median_qual" in col for col in stats_df.columns)
+    has_mixed_false = any("mixed=False median_qual" in col for col in stats_df.columns)
+    has_mixed_all = any("mixed=all median_qual" in col for col in stats_df.columns)
+    if has_mixed_true and has_mixed_false:
+        prefixes = ["mixed=True", "mixed=False"]
+    elif has_mixed_all:
+        prefixes = ["mixed=all"]
+    else:
+        prefixes = []
+    default_colors = {"mixed=all": "tab:blue", "mixed=True": "tab:green", "mixed=False": "tab:red"}
+    default_labels = {"mixed=all": "All reads", "mixed=True": "Mixed reads", "mixed=False": "Non-mixed reads"}
+    colors = default_colors if qual_colors is None else {p: qual_colors.get(p, "black") for p in prefixes}
+    return [(p, default_labels[p], colors[p]) for p in prefixes]
+
+
 def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
     stats_df,
     panel_num=0,
@@ -132,6 +167,7 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
     xtick_fontsize=10,
     order="symmetric",
     qual_colors=None,
+    group_specs=None,
     *,
     add_annotations=True,
 ):
@@ -140,7 +176,9 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
     Parameters
     ----------
     stats_df : pd.DataFrame
-        DataFrame with quality statistics in new format (mixed=all, mixed=True, mixed=False)
+        DataFrame with quality statistics. Group columns are named ``<prefix> median_qual`` etc.,
+        where ``<prefix>`` is ``mixed=all``/``mixed=True``/``mixed=False`` (ppmSeq) or
+        ``mixed=<read group>`` (consensus N-group).
     panel_num : int
         Panel number (0 or 1 for forward/reverse)
     ax : matplotlib.Axes, optional
@@ -152,7 +190,11 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
     order : str
         Trinucleotide ordering
     qual_colors : dict, optional
-        Colors for quality lines
+        ``{col_prefix: color}`` for the ppmSeq auto-detected groups (ignored when ``group_specs`` is given,
+        which carries its own colors).
+    group_specs : list, optional
+        Ordered list of ``(col_prefix, display_label, color)`` selecting which groups to plot and
+        how to label/color them. When None, ppmSeq auto-detection is used (unchanged behavior).
 
     Returns
     -------
@@ -163,8 +205,6 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
     """
     if x_values is None:
         x_values = X_VALUES
-    if qual_colors is None:
-        qual_colors = {"mixed=all": "tab:blue", "mixed=True": "tab:green", "mixed=False": "tab:red"}
 
     trinuc_symmetric_ref_alt, symmetric_index, snv_labels = _get_trinuc_with_alt_in_order(order=order)
     trinuc_is_cycle_skip = np.array([is_cycle_skip(tcwa, flow_order=FLOW_ORDER) for tcwa in trinuc_symmetric_ref_alt])
@@ -175,22 +215,9 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
     inds = np.array(x_values) + 96 * panel_num
     lines = {}
 
-    # Determine which mixed categories to plot
-    # Check if we have mixed=True and mixed=False columns
-    has_mixed_true = any("mixed=True median_qual" in col for col in stats_df.columns)
-    has_mixed_false = any("mixed=False median_qual" in col for col in stats_df.columns)
-    has_mixed_all = any("mixed=all median_qual" in col for col in stats_df.columns)
-
-    # Determine which categories to plot based on priority
-    if has_mixed_true and has_mixed_false:
-        # If we have both True and False, plot only these (not 'all')
-        mixed_categories = ["mixed=True", "mixed=False"]
-    elif has_mixed_all:
-        # If we only have 'all', plot only this
-        mixed_categories = ["mixed=all"]
-    else:
-        # No quality data available
-        mixed_categories = []
+    # Resolve which group columns to plot, with labels and colors (ppmSeq auto-detect or N-group).
+    resolved_specs = _resolve_qual_group_specs(stats_df, group_specs, qual_colors)
+    mixed_categories = [prefix for prefix, _, _ in resolved_specs]
 
     # Create extended x_values for step plotting (like in calc_and_plot_trinuc_plot)
     x_values_ext = (
@@ -198,15 +225,13 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
     )
     inds_ext = [inds[0]] + list(inds) + [inds[-1]]
 
-    # Plot quality lines and shaded areas for each mixed category
-    for mixed_cat in mixed_categories:
+    # Plot quality lines and shaded areas for each group
+    for mixed_cat, display_label, color in resolved_specs:
         median_col = f"{mixed_cat} median_qual"
         q1_col = f"{mixed_cat} q1_qual"
         q2_col = f"{mixed_cat} q2_qual"
 
         if median_col in stats_df.columns:
-            color = qual_colors.get(mixed_cat, "black")
-
             # Get data for this panel (extended for step plotting)
             median_data = stats_df[median_col].iloc[inds_ext]
             q1_data = stats_df[q1_col].iloc[inds_ext] if q1_col in stats_df.columns else median_data
@@ -222,12 +247,7 @@ def plot_trinuc_qual(  # noqa: C901, PLR0912, PLR0915
                 where="mid",
                 color=color,
                 alpha=0.7,
-                label=(
-                    mixed_cat.replace("mixed=", "")
-                    .replace("all", "All reads")
-                    .replace("True", "Mixed reads")
-                    .replace("False", "Non-mixed reads")
-                ),
+                label=display_label,
             )
             lines[mixed_cat] = line
 
@@ -374,7 +394,8 @@ def calc_trinuc_stats(  # noqa: C901, PLR0912, PLR0913, PLR0915
     trinuc_to_int = {trinuc: i for i, trinuc in enumerate(trinuc_symmetric_ref_alt)}
     working_df["trinuc_context_with_alt_int"] = working_df[trinuc_col].map(trinuc_to_int)
 
-    if labels is None:
+    all_reads = labels is None
+    if all_reads:
         working_df[label_col] = "all reads"
         labels = ["all reads"]
 
@@ -403,7 +424,8 @@ def calc_trinuc_stats(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
     # Calculate quality stats if requested
     if include_quality and qual_col in working_df.columns:
-        qual_cond = working_df[label_col]
+        # quality stats are over the positive (label True) reads; without labels, over all reads
+        qual_cond = pd.Series(data=True, index=working_df.index) if all_reads else working_df[label_col]
         required_qual_cols = [qual_col, "trinuc_context_with_alt_int"]
         if is_mixed_col in working_df.columns:
             required_qual_cols.append(is_mixed_col)
@@ -530,7 +552,7 @@ def reverse_engineer_hist_stats(hist_stats_df: pd.DataFrame):
     return labels, hist_stats, total_snvs_per_label
 
 
-def plot_trinuc_hist_and_qual_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915
+def plot_trinuc_hist_and_qual_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915, PLR0917
     stats_df,
     q1=0.1,
     q2=0.9,
@@ -545,6 +567,7 @@ def plot_trinuc_hist_and_qual_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915
     bottom_scale=1.0,
     hist_to_qual_height_ratio=2.0,
     motif_orientation="seq_dir",
+    group_specs=None,
 ):
     """Plot trinuc histogram and quality panels from stats_df DataFrame.
 
@@ -613,7 +636,13 @@ def plot_trinuc_hist_and_qual_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
         # Plot quality panel
         _, lines = plot_trinuc_qual(
-            stats_df, panel_num=panel_idx, ax=qual_ax, order=order, xtick_fontsize=xtick_fontsize, add_annotations=True
+            stats_df,
+            panel_num=panel_idx,
+            ax=qual_ax,
+            order=order,
+            xtick_fontsize=xtick_fontsize,
+            group_specs=group_specs,
+            add_annotations=True,
         )
         qual_ax.set_ylabel("SNVQ", fontsize=ylabel_fontsize)
         qual_ax.tick_params(axis="y", labelsize=ytick_fontsize)
@@ -657,14 +686,19 @@ def plot_trinuc_hist_and_qual_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 label_name = str(label)
             labels_hist.append(f"{label_name} ({total_snvs_per_label[label]})")
 
+    # Map each plotted group prefix to its display label (from group_specs when provided).
+    label_by_prefix = {prefix: label for prefix, label, _ in (group_specs or [])}
     for mixed_cat in lines_for_legend:
         handles_qual.append(lines_for_legend[mixed_cat])
-        clean_label = (
-            mixed_cat.replace("mixed=", "")
-            .replace("all", "All reads")
-            .replace("True", "Mixed reads")
-            .replace("False", "Non-mixed reads")
-        )
+        if mixed_cat in label_by_prefix:
+            clean_label = label_by_prefix[mixed_cat]
+        else:
+            clean_label = (
+                mixed_cat.replace("mixed=", "")
+                .replace("all", "All reads")
+                .replace("True", "Mixed reads")
+                .replace("False", "Non-mixed reads")
+            )
         labels_qual.append(clean_label)
 
     # Apply bottom_scale to layout
@@ -865,7 +899,7 @@ def plot_trinuc_hist_panels(  # noqa: C901, PLR0912, PLR0915
     return fig
 
 
-def calc_and_plot_trinuc_hist(  # noqa: PLR0913
+def calc_and_plot_trinuc_hist(  # noqa: PLR0913, PLR0917
     plot_df,
     trinuc_col,
     label_col="label",
@@ -881,10 +915,12 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
     q1: float = 0.1,
     q2: float = 0.9,
     motif_orientation: str = "seq_dir",
+    split_col: str = "is_mixed",
+    group_specs=None,
     *,
     collapsed=False,
     include_quality: bool = False,
-    is_mixed_col: str = "is_mixed",
+    is_mixed_col: str | None = None,
 ):
     """Calculate and plot trinuc histogram, optionally with quality panels.
 
@@ -916,9 +952,14 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
         "fwd_only": using only forward-strand reads.
     include_quality : bool
         Whether to include quality panels
-    is_mixed_col : str
-        Column used to split the quality panels into mixed/non-mixed reads
-        (e.g. "is_mixed" for both-ends mixed, or "is_mixed_start" for start-tag mixed).
+    split_col : str
+        Column used to split the quality panels into groups (default "is_mixed"; the report passes the
+        display variant's trinuc split column, e.g. "is_mixed_start", or the N-group read_group column).
+    group_specs : list, optional
+        Explicit (stats column prefix, label, color) group specs for N-group splits.
+    is_mixed_col : str, optional
+        Backward-compatible alias of ``split_col`` (e.g. "is_mixed_start" for start-tag mixed on start-only
+        ppmSeq). Overrides ``split_col`` when given.
 
     Returns
     -------
@@ -934,6 +975,7 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
         label_col=label_col,
         is_forward_col=is_forward_col,
         qual_col=qual_col,
+        is_mixed_col=is_mixed_col if is_mixed_col is not None else split_col,
         order=order,
         labels=labels,
         q1=q1,
@@ -941,7 +983,6 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
         collapsed=collapsed,
         motif_orientation=motif_orientation,
         include_quality=include_quality,
-        is_mixed_col=is_mixed_col,
     )
 
     if collapsed and (order != "reverse"):
@@ -967,6 +1008,7 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
             hspace=hspace,
             hist_to_qual_height_ratio=hist_to_qual_height_ratio,
             bottom_scale=bottom_scale,
+            group_specs=group_specs,
         )
     else:
         # Extract only histogram columns for backward compatibility

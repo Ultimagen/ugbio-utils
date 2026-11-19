@@ -1,0 +1,117 @@
+"""Unit tests for the paired-end-duplex split scheme (simplex SE / simplex PE / duplex SE / duplex PE).
+
+Covers the pe-duplex grouping driven by the DNN per-image CS-family stats (``cs_n_crossing`` +
+``dx``): scheme detection, the simplex-SE / simplex-PE / duplex-SE / duplex-PE assignment (a
+single-read family is simplex SE), and the fallback when the CS stats are absent.
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+from ugbio_srsnv.split_scheme import (
+    MIXED_SCHEME,
+    NONE_SCHEME,
+    PE_DUPLEX_SCHEME,
+    resolve_scheme,
+    resolve_scheme_and_add_columns,
+)
+from ugbio_srsnv.srsnv_utils import (
+    CS_FAMILY_SIZE,
+    CS_N_CROSSING,
+    DX,
+    PE_DUPLEX_GROUP_PE,
+    PE_DUPLEX_GROUP_SE,
+    PE_DUPLEX_GROUP_SIMPLEX_PE,
+    PE_DUPLEX_GROUP_SIMPLEX_SE,
+    PE_DUPLEX_GROUPS,
+    READ_GROUP,
+    ReportMode,
+)
+
+
+def _pe_duplex_df() -> pd.DataFrame:
+    """One row per outcome: simplex SE (no dx, both PE ends on the single strand so fam==2 but only one
+    crosses -> cross==1), simplex PE (no dx & cross==2), duplex SE (dx==1 & cross==2), duplex PE
+    (dx==1 & cross==4), and a single-read family (cs_family_size==1) which is also a simplex-SE
+    observation (one strand, one PE end crossing)."""
+    return pd.DataFrame(
+        {
+            "CHROM": ["chr1"] * 5,
+            "POS": [10, 15, 20, 30, 40],
+            "RN": ["r_simplex_se", "r_simplex_pe", "r_se", "r_pe", "r_fam1"],
+            "nf": [2, 2, 2, 2, 1],
+            "nr": [0, 0, 2, 2, 0],
+            DX: [None, None, 1, 1, None],
+            "CS": ["c_simplex_se", "c_simplex_pe", "c_se", "c_pe", "c_fam1"],
+            CS_FAMILY_SIZE: [2, 2, 2, 4, 1],
+            CS_N_CROSSING: [1, 2, 2, 4, 1],
+        }
+    )
+
+
+def test_pe_duplex_scheme_detected_and_wins_over_mixed():
+    frame = _pe_duplex_df().assign(st="MIXED", et="MIXED")
+    # cs_n_crossing present -> pe-duplex scheme, even though st/et also match the ppmSeq MIXED scheme.
+    assert resolve_scheme(frame) is PE_DUPLEX_SCHEME
+    assert PE_DUPLEX_SCHEME.mode is ReportMode.PE_DUPLEX
+
+
+def test_pe_duplex_scheme_not_detected_without_cs_stats():
+    frame = _pe_duplex_df().drop(columns=[CS_FAMILY_SIZE, CS_N_CROSSING])
+    # no CS stats -> no duplex split (single-end duplex is not supported); nf/nr alone select nothing.
+    assert resolve_scheme(frame) is NONE_SCHEME
+    assert resolve_scheme(frame.assign(st="MIXED", et="MIXED")) is MIXED_SCHEME
+
+
+def test_pe_duplex_grouping_four_groups_and_fam1_is_simplex_se():
+    frame = _pe_duplex_df()
+    out, scheme = resolve_scheme_and_add_columns(frame.copy())
+    assert scheme is PE_DUPLEX_SCHEME
+    rg = list(out[READ_GROUP])
+    # simplex SE / simplex PE / duplex SE / duplex PE; the single-read family (fam==1) is simplex SE too.
+    assert rg[0] == PE_DUPLEX_GROUP_SIMPLEX_SE
+    assert rg[1] == PE_DUPLEX_GROUP_SIMPLEX_PE
+    assert rg[2] == PE_DUPLEX_GROUP_SE
+    assert rg[3] == PE_DUPLEX_GROUP_PE
+    assert rg[4] == PE_DUPLEX_GROUP_SIMPLEX_SE  # cs_family_size == 1 -> simplex SE (not dropped)
+    # group_masks emit all four display groups; nothing is dropped, so simplex SE now has two rows.
+    masks = scheme.display_variant.group_masks(out)
+    assert set(masks) == set(PE_DUPLEX_GROUPS)
+    assert {k: int(v.sum()) for k, v in masks.items()} == {
+        PE_DUPLEX_GROUP_SIMPLEX_SE: 2,
+        PE_DUPLEX_GROUP_SIMPLEX_PE: 1,
+        PE_DUPLEX_GROUP_SE: 1,
+        PE_DUPLEX_GROUP_PE: 1,
+    }
+
+
+def test_duplex_se_boundary_three_crossing_is_pe():
+    # cs_n_crossing >= 3 is duplex PE (both PE ends); exactly 2 is duplex SE.
+    frame = _pe_duplex_df()
+    frame.loc[2, CS_N_CROSSING] = 3  # the duplex SE row (dx==1)
+    out, _ = resolve_scheme_and_add_columns(frame.copy())
+    assert out[READ_GROUP].iloc[2] == PE_DUPLEX_GROUP_PE
+
+
+def test_simplex_boundary_two_crossing_is_simplex_pe():
+    # single strand (no dx): 1 crossing read -> simplex SE, 2 -> simplex PE.
+    frame = _pe_duplex_df()
+    frame.loc[0, CS_N_CROSSING] = 2  # the simplex SE row -> now both ends cross
+    out, _ = resolve_scheme_and_add_columns(frame.copy())
+    assert out[READ_GROUP].iloc[0] == PE_DUPLEX_GROUP_SIMPLEX_PE
+
+
+def test_pe_duplex_grouping_does_not_need_cs_family_size():
+    # Paired-end (pair-dx) data model: dx = duplex flag, cs_n_crossing = family reads crossing the variant. The
+    # scheme is detected from cs_n_crossing alone, so grouping must not require the unused cs_family_size column
+    # (previously: no pe_duplex_group was assigned and read_group construction raised KeyError).
+    frame = _pe_duplex_df().drop(columns=[CS_FAMILY_SIZE])
+    out, scheme = resolve_scheme_and_add_columns(frame)
+    assert scheme is PE_DUPLEX_SCHEME
+    assert list(out[READ_GROUP]) == [
+        PE_DUPLEX_GROUP_SIMPLEX_SE,
+        PE_DUPLEX_GROUP_SIMPLEX_PE,
+        PE_DUPLEX_GROUP_SE,
+        PE_DUPLEX_GROUP_PE,
+        PE_DUPLEX_GROUP_SIMPLEX_SE,
+    ]

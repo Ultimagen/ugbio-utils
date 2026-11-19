@@ -176,6 +176,64 @@ class TestMaskForRule:
         result = lf.select(expr).collect().to_series()
         assert result.to_list() == [False, False, False]
 
+    def test_any_of_or_semantics(self):
+        """any_of ORs its sub-rules. Singleton-exclusion example: keep nf>0 OR nr>0.
+
+        Rows (nf, nr): singleton(0,0), ssc-fwd(2,0), ssc-rev(0,3), duplex(2,2), singleton(0,0).
+        Keeps every consensus read (ssc + duplex), drops only nf==0 & nr==0.
+        """
+        lf = pl.DataFrame({"nf": [0, 2, 0, 2, 0], "nr": [0, 0, 3, 2, 0]}).lazy()
+        rule = {
+            fd.KEY_OP: fd.OP_ANY_OF,
+            fd.KEY_TYPE: fd.TYPE_QUALITY,
+            fd.KEY_NAME: "exclude_singletons",
+            fd.KEY_FILTERS: [
+                {fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+                {fd.KEY_FIELD: "nr", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+            ],
+        }
+        expr = fd._mask_for_rule(rule)
+        result = lf.select(expr).collect().to_series()
+        assert result.to_list() == [False, True, True, True, False]
+
+    def test_any_of_differs_from_and_of_subrules(self):
+        """OR (any_of) keeps ssc reads that AND-ing the two sub-rules would drop."""
+        lf = pl.DataFrame({"nf": [2, 0, 2], "nr": [0, 3, 2]}).lazy()
+        or_rule = {
+            fd.KEY_OP: fd.OP_ANY_OF,
+            fd.KEY_TYPE: fd.TYPE_QUALITY,
+            fd.KEY_FILTERS: [
+                {fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+                {fd.KEY_FIELD: "nr", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+            ],
+        }
+        or_mask = lf.select(fd._mask_for_rule(or_rule)).collect().to_series().to_list()
+        and_mask = (
+            lf.select(
+                fd._mask_for_rule({fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: 0})
+                & fd._mask_for_rule({fd.KEY_FIELD: "nr", fd.KEY_OP: "gt", fd.KEY_VALUE: 0})
+            )
+            .collect()
+            .to_series()
+            .to_list()
+        )
+        assert or_mask == [True, True, True]  # all consensus kept
+        assert and_mask == [False, False, True]  # AND drops both ssc reads
+
+    def test_any_of_fill_null_all_null_dropped(self):
+        """A row null under every sub-rule field does not pass (fill_null False)."""
+        lf = pl.DataFrame({"nf": [None, 2], "nr": [None, 0]}).lazy()
+        rule = {
+            fd.KEY_OP: fd.OP_ANY_OF,
+            fd.KEY_TYPE: fd.TYPE_QUALITY,
+            fd.KEY_FILTERS: [
+                {fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+                {fd.KEY_FIELD: "nr", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+            ],
+        }
+        result = lf.select(fd._mask_for_rule(rule)).collect().to_series()
+        assert result.to_list() == [False, True]
+
     def test_value_field_comparison(self, sample_lf):
         """Compare two columns using value_field."""
         rule = {fd.KEY_FIELD: "ref", fd.KEY_OP: "eq", fd.KEY_VALUE_FIELD: "alt"}
@@ -236,6 +294,21 @@ class TestCreateFilterColumns:
         result_df = result_lf.collect()
         assert result_df[filter_cols[0]].to_list() == [False, False, True, True, True]
         assert result_df[filter_cols[1]].to_list() == [True, False, True, False, False]
+
+    def test_generated_suffix_does_not_collide_with_explicit_name(self):
+        """Names cut, cut__2, cut: the third rule's suffixed column must not overwrite cut__2's mask."""
+        frame = pl.DataFrame({"x": [1, 2, 3, 4, 5]})
+        filters = [
+            {fd.KEY_NAME: "cut", fd.KEY_FIELD: "x", fd.KEY_OP: "ge", fd.KEY_VALUE: 2, fd.KEY_TYPE: fd.TYPE_QUALITY},
+            {fd.KEY_NAME: "cut__2", fd.KEY_FIELD: "x", fd.KEY_OP: "le", fd.KEY_VALUE: 4, fd.KEY_TYPE: fd.TYPE_QUALITY},
+            {fd.KEY_NAME: "cut", fd.KEY_FIELD: "x", fd.KEY_OP: "ge", fd.KEY_VALUE: 1, fd.KEY_TYPE: fd.TYPE_QUALITY},
+        ]
+        result_lf, filter_cols = fd._create_filter_columns(frame.lazy(), filters)
+        assert len(set(filter_cols)) == 3
+        result_df = result_lf.collect()
+        assert result_df[filter_cols[1]].to_list() == [True, True, True, True, False]
+        kept = result_df.filter(pl.all_horizontal(filter_cols))["x"].to_list()
+        assert kept == [2, 3, 4]
 
     def test_empty_filters(self):
         lf = pl.DataFrame({"x": [1, 2, 3]}).lazy()
@@ -464,6 +537,56 @@ class TestValidateFilterConfig:
         with pytest.raises(ValueError, match="requires a non-empty 'fields' list"):
             fd.validate_filter_config(
                 {fd.KEY_FILTERS: [{fd.KEY_OP: fd.OP_ANY_NOT_NULL, fd.KEY_FIELDS: [], fd.KEY_TYPE: fd.TYPE_REGION}]}
+            )
+
+    def test_valid_any_of(self):
+        cfg = {
+            fd.KEY_FILTERS: [
+                {
+                    fd.KEY_OP: fd.OP_ANY_OF,
+                    fd.KEY_TYPE: fd.TYPE_QUALITY,
+                    fd.KEY_NAME: "exclude_singletons",
+                    fd.KEY_FILTERS: [
+                        {fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+                        {fd.KEY_FIELD: "nr", fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+                    ],
+                }
+            ]
+        }
+        fd.validate_filter_config(cfg)  # Should not raise (sub-rules need no 'type')
+
+    def test_any_of_empty_filters_raises(self):
+        with pytest.raises(ValueError, match="requires a non-empty 'filters' list"):
+            fd.validate_filter_config(
+                {fd.KEY_FILTERS: [{fd.KEY_OP: fd.OP_ANY_OF, fd.KEY_TYPE: fd.TYPE_QUALITY, fd.KEY_FILTERS: []}]}
+            )
+
+    def test_any_of_subrule_missing_op_raises(self):
+        with pytest.raises(ValueError, match="sub-rule 0 missing required 'op' key"):
+            fd.validate_filter_config(
+                {
+                    fd.KEY_FILTERS: [
+                        {
+                            fd.KEY_OP: fd.OP_ANY_OF,
+                            fd.KEY_TYPE: fd.TYPE_QUALITY,
+                            fd.KEY_FILTERS: [{fd.KEY_FIELD: "nf", fd.KEY_VALUE: 0}],
+                        }
+                    ]
+                }
+            )
+
+    def test_any_of_subrule_bad_op_raises(self):
+        with pytest.raises(ValueError, match="unsupported operator"):
+            fd.validate_filter_config(
+                {
+                    fd.KEY_FILTERS: [
+                        {
+                            fd.KEY_OP: fd.OP_ANY_OF,
+                            fd.KEY_TYPE: fd.TYPE_QUALITY,
+                            fd.KEY_FILTERS: [{fd.KEY_FIELD: "nf", fd.KEY_OP: "bad_op", fd.KEY_VALUE: 0}],
+                        }
+                    ]
+                }
             )
 
     def test_valid_downsample(self):
@@ -718,6 +841,73 @@ class TestCreateDownsampleColumn:
         assert sum(v is True for v in ds_values) == 3
         # First 5 rows don't pass the filter, so their ds value is None
         assert all(v is None for v in ds_values[:5])
+
+    def test_stratified_preserve_field_keeps_all_minority(self):
+        """preserve_field: rows with a non-null value bypass downsampling entirely.
+
+        Mirrors the hmer-indel FP use case (X_IC non-null = indel), which a uniform
+        random downsample would otherwise decimate at its pool fraction.
+        """
+        # 20 SNV rows (X_IC null) + 3 indel rows (X_IC non-null), all pass the filter
+        lf = pl.DataFrame(
+            {
+                "score": list(range(23)),
+                "X_IC": [None] * 20 + ["ins", "del", "ins"],
+            }
+        ).lazy()
+        filters = [
+            {
+                fd.KEY_NAME: "pass_all",
+                fd.KEY_FIELD: "score",
+                fd.KEY_OP: "ge",
+                fd.KEY_VALUE: 0,
+                fd.KEY_TYPE: fd.TYPE_QUALITY,
+            },
+        ]
+        lf, filter_cols = fd._create_filter_columns(lf, filters)
+        cfg = {
+            fd.KEY_FILTERS: filters,
+            fd.KEY_DOWNSAMPLE: {
+                fd.KEY_SIZE: 5,
+                fd.KEY_METHOD: fd.METHOD_RANDOM,
+                fd.KEY_SEED: 0,
+                fd.KEY_PRESERVE_FIELD: "X_IC",
+            },
+        }
+
+        result_lf, ds_col = fd._create_downsample_column(lf, filter_cols, cfg)
+        result_lf = fd._create_final_filter_column(result_lf, filter_cols, ds_col)
+        kept = result_lf.filter(pl.col(fd.COL_FILTER_FINAL)).collect()
+        # All 3 indels kept + exactly 5 downsampled SNVs
+        assert kept.filter(pl.col("X_IC").is_not_null()).height == 3
+        assert kept.filter(pl.col("X_IC").is_null()).height == 5
+        assert kept.height == 8
+
+    def test_missing_preserve_field_falls_back_to_uniform(self):
+        """A preserve_field absent from the dataframe is ignored (uniform downsample)."""
+        lf = pl.DataFrame({"score": list(range(20))}).lazy()
+        filters = [
+            {
+                fd.KEY_NAME: "pass_all",
+                fd.KEY_FIELD: "score",
+                fd.KEY_OP: "ge",
+                fd.KEY_VALUE: 0,
+                fd.KEY_TYPE: fd.TYPE_QUALITY,
+            },
+        ]
+        lf, filter_cols = fd._create_filter_columns(lf, filters)
+        cfg = {
+            fd.KEY_FILTERS: filters,
+            fd.KEY_DOWNSAMPLE: {
+                fd.KEY_SIZE: 10,
+                fd.KEY_METHOD: fd.METHOD_RANDOM,
+                fd.KEY_SEED: 42,
+                fd.KEY_PRESERVE_FIELD: "X_IC",  # not present
+            },
+        }
+        result_lf, ds_col = fd._create_downsample_column(lf, filter_cols, cfg)
+        ds_values = result_lf.collect()[ds_col].to_list()
+        assert sum(v is True for v in ds_values) == 10
 
 
 # ────────────────────────────────────────────────────────
@@ -1320,3 +1510,98 @@ class TestValidateStatsDictAdditional:
             "combinations": {"111": 500, "110": 200, "100": 100, "000": 100, "101": 50, "010": 30, "011": 20},
         }
         fd._validate_stats_dict(data, where="")  # Should not raise
+
+
+class TestAnyOfCompositeEdgeCases:
+    """Nested any_of composites and collisions between unnamed composite rules."""
+
+    @staticmethod
+    def _or(field_a, field_b, **extra):
+        return {
+            fd.KEY_OP: fd.OP_ANY_OF,
+            fd.KEY_TYPE: fd.TYPE_QUALITY,
+            fd.KEY_FILTERS: [
+                {fd.KEY_FIELD: field_a, fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+                {fd.KEY_FIELD: field_b, fd.KEY_OP: "gt", fd.KEY_VALUE: 0},
+            ],
+            **extra,
+        }
+
+    def test_nested_any_of_validates_and_masks(self):
+        inner = self._or("nf", "nr")
+        inner.pop(fd.KEY_TYPE)  # sub-rules carry no type
+        outer = {
+            fd.KEY_OP: fd.OP_ANY_OF,
+            fd.KEY_TYPE: fd.TYPE_QUALITY,
+            fd.KEY_FILTERS: [inner, {fd.KEY_FIELD: "dx", fd.KEY_OP: "eq", fd.KEY_VALUE: 1}],
+        }
+        fd.validate_filter_config({fd.KEY_FILTERS: [outer]})  # must not raise "missing required 'field'"
+        lf = pl.DataFrame({"nf": [0, 2, 0, 0], "nr": [0, 0, 0, 0], "dx": [0, 0, 1, None]}).lazy()
+        assert lf.select(fd._mask_for_rule(outer)).collect().to_series().to_list() == [False, True, True, False]
+
+    def test_nested_any_of_subrule_errors_still_raised(self):
+        bad_inner = {fd.KEY_OP: fd.OP_ANY_OF, fd.KEY_FILTERS: [{fd.KEY_OP: "gt", fd.KEY_VALUE: 0}]}
+        outer = {fd.KEY_OP: fd.OP_ANY_OF, fd.KEY_TYPE: fd.TYPE_QUALITY, fd.KEY_FILTERS: [bad_inner]}
+        with pytest.raises(ValueError, match="missing required 'field'"):
+            fd.validate_filter_config({fd.KEY_FILTERS: [outer]})
+
+    def test_unnamed_any_of_rules_get_distinct_names(self):
+        assert fd._get_filter_name(self._or("nf", "nr")) != fd._get_filter_name(self._or("a", "b"))
+
+    def test_two_unnamed_rules_both_applied(self):
+        # Two rules resolving to the same name must not share (and overwrite) one mask column.
+        lf = pl.DataFrame({"nf": [1, 1, 0], "nr": [0, 0, 0], "a": [1, 0, 1], "b": [0, 0, 0]}).lazy()
+        same_a = {fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: 0, fd.KEY_TYPE: fd.TYPE_QUALITY}
+        same_b = {fd.KEY_FIELD: "nf", fd.KEY_OP: "gt", fd.KEY_VALUE: -1, fd.KEY_TYPE: fd.TYPE_QUALITY}
+        for filters in ([self._or("nf", "nr"), self._or("a", "b")], [same_a, same_b]):
+            out, cols = fd._create_filter_columns(lf, filters)
+            assert len(set(cols)) == len(cols)
+            mask = out.select(pl.all_horizontal(cols)).collect().to_series().to_list()
+            expected = [True, False, False] if filters[0][fd.KEY_OP] == fd.OP_ANY_OF else [True, True, False]
+            assert mask == expected
+
+
+def test_stats_keep_rules_with_duplicate_names_apart(tmp_path):
+    """Two unnamed rules with the same field+op (fallback name ``score_gt``) must each get their own funnel
+    entry (with their OWN value) and single_effect count. Previously the 2nd funnel entry was labelled with the
+    1st rule's value and single_effect kept only one of the two counts."""
+    pl.DataFrame({"score": list(range(10))}).write_parquet(tmp_path / "in.parquet")
+    cfg = {
+        "filters": [
+            {"field": "score", "op": "gt", "value": 2, "type": "quality"},
+            {"field": "score", "op": "gt", "value": 5, "type": "quality"},
+        ]
+    }
+    (tmp_path / "cfg.json").write_text(json.dumps(cfg))
+    fd.filter_parquet(
+        str(tmp_path / "in.parquet"),
+        str(tmp_path / "out.parquet"),
+        None,
+        str(tmp_path / "cfg.json"),
+        str(tmp_path / "stats.json"),
+    )
+    stats = fd.read_filtering_stats_json(tmp_path / "stats.json")
+    funnel = stats["filters"]
+    assert [(f["name"], f["rows"], f.get("value")) for f in funnel] == [
+        ("raw", 10, None),
+        ("score_gt", 7, 2),
+        ("score_gt__1", 4, 5),
+    ]
+    assert stats["single_effect"] == {"score_gt": 7, "score_gt__1": 4}
+    assert pl.read_parquet(tmp_path / "out.parquet")["score"].to_list() == [6, 7, 8, 9]
+
+
+def test_stats_rule_named_like_a_reserved_stat_keeps_its_type(tmp_path):
+    """A user rule named "downsample" is a filter entry (type/field/op/value), not the downsample stat."""
+    pl.DataFrame({"score": list(range(10))}).write_parquet(tmp_path / "in.parquet")
+    cfg = {"filters": [{"name": "downsample", "field": "score", "op": "ge", "value": 4, "type": "quality"}]}
+    (tmp_path / "cfg.json").write_text(json.dumps(cfg))
+    fd.filter_parquet(
+        str(tmp_path / "in.parquet"),
+        str(tmp_path / "out.parquet"),
+        None,
+        str(tmp_path / "cfg.json"),
+        str(tmp_path / "stats.json"),
+    )
+    entry = fd.read_filtering_stats_json(tmp_path / "stats.json")["filters"][1]
+    assert entry == {"name": "downsample", "rows": 6, "type": "quality", "field": "score", "op": "ge", "value": 4}

@@ -15,11 +15,16 @@ from ugbio_featuremap import featuremap_to_dataframe
 from ugbio_featuremap.featuremap_to_dataframe import (
     ALT,
     CHROM,
+    CHUNK_BP_DEFAULT,
+    MIN_WINDOW_BP,
     POS,
     REF,
+    SAMPLE_WEIGHT_COL,
+    TARGET_RECORDS_PER_WINDOW,
     X_ALT,
     _build_explicit_schema,
     _cast_expr,
+    _choose_window_bp,
     _get_awk_script_path,
     _resolve_bcftools_command,
     header_meta,
@@ -61,6 +66,28 @@ def _assert_df_equal(
                     assert abs(a - e) < rtol, f"{col}[{i}]: expected {e}, got {a}"
         else:
             assert actual_vals == expected_vals, f"{col}: expected {expected_vals}, got {actual_vals}"
+
+
+def _write_indexed_single_locus_vcf(tmp_path: Path) -> tuple[Path, Path]:
+    """Write a minimal single-locus bgzipped+indexed VCF and return (vcf_gz, plain)."""
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000000>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        '##FORMAT=<ID=RN,Number=.,Type=String,Description="Read name">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n"
+        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:RN\t0/1:r1\n"
+    )
+    plain = tmp_path / "single_locus.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "single_locus.vcf.gz"
+    # Plain --write-index (writes .csi) for compatibility with older bcftools; both
+    # _assert_vcf_index_exists and 'bcftools index -n' accept .csi.
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index"],
+        check=True,
+    )
+    return vcf_gz, plain
 
 
 # --- fixtures --------------------------------------------------------------
@@ -159,42 +186,23 @@ def test_roundtrip(tmp_path: Path, input_featuremap: Path):
     assert featuremap_dataframe.height == rn_len
 
 
-# ------------- REF/ALT default categories ---------------------------------
+# ------------- REF/ALT string alleles -------------------------------------
 def test_ref_alt_defaults(tmp_path: Path, input_featuremap: Path):
+    """String allele columns must preserve the alleles from the input VCF."""
     out = tmp_path / "def.parquet"
     featuremap_to_dataframe.vcf_to_parquet(
         str(input_featuremap), str(out), drop_info=set(), drop_format={"GT", "AD"}, jobs=1
     )
     featuremap_dataframe = pl.read_parquet(out)
 
-    # REF includes IUPAC ambiguity codes
-    assert set(featuremap_dataframe["REF"].dtype.categories) == {
-        "",
-        "A",
-        "C",
-        "G",
-        "T",
-        "R",
-        "Y",
-        "K",
-        "M",
-        "S",
-        "W",
-        "B",
-        "D",
-        "H",
-        "V",
-        "N",
-    }
-
-    # ALT includes just the four bases (+"")
-    assert set(featuremap_dataframe["ALT"].dtype.categories) == {
-        "",
-        "A",
-        "C",
-        "G",
-        "T",
-    }
+    assert featuremap_dataframe["REF"].dtype == pl.String
+    assert featuremap_dataframe["ALT"].dtype == pl.String
+    alleles = subprocess.check_output(
+        ["bcftools", "query", "-f", "%REF\t%ALT\n", str(input_featuremap)],
+        text=True,
+    )
+    expected = {tuple(line.split("\t")) for line in alleles.splitlines()}
+    assert set(featuremap_dataframe.select("REF", "ALT").iter_rows()) == expected
 
 
 # ------------- tiny unit tests per helper ---------------------------------
@@ -230,9 +238,8 @@ def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
     # Check specific column types
     assert featuremap_dataframe["CHROM"].dtype == pl.Utf8
     assert featuremap_dataframe["POS"].dtype == pl.Int64
-    # REF and ALT are Enum types
-    assert isinstance(featuremap_dataframe["REF"].dtype, pl.Enum)
-    assert isinstance(featuremap_dataframe["ALT"].dtype, pl.Enum)
+    assert featuremap_dataframe["REF"].dtype == pl.String
+    assert featuremap_dataframe["ALT"].dtype == pl.String
     assert featuremap_dataframe["VAF"].dtype == pl.Float64
     assert featuremap_dataframe["RN"].dtype == pl.Utf8
 
@@ -1167,7 +1174,10 @@ def test_downsampling_basic(tmp_path: Path, input_featuremap: Path) -> None:
 
     assert downsampled_df.height == downsample_count, f"Expected {downsample_count} rows, got {downsampled_df.height}"
     assert downsampled_df.height < full_row_count, "Downsampled dataset should be smaller than full dataset"
-    assert set(downsampled_df.columns) == set(full_df.columns), "Downsampling should preserve all columns"
+    assert SAMPLE_WEIGHT_COL not in full_df.columns
+    assert set(downsampled_df.columns) == set(full_df.columns) | {SAMPLE_WEIGHT_COL}
+    assert downsampled_df[SAMPLE_WEIGHT_COL].dtype == pl.Float32
+    np.testing.assert_allclose(downsampled_df[SAMPLE_WEIGHT_COL].to_numpy(), full_row_count / downsample_count)
 
 
 def test_downsampling_seed_reproducibility(tmp_path: Path, input_featuremap: Path) -> None:
@@ -1378,7 +1388,10 @@ def test_multi_sample_with_downsampling(tmp_path: Path) -> None:
     df_ds = pl.read_parquet(out_ds)
 
     assert df_ds.height == downsample_n, f"Expected {downsample_n} rows, got {df_ds.height}"
-    assert set(df_ds.columns) == set(df_full.columns), "Downsampling should preserve all columns"
+    assert SAMPLE_WEIGHT_COL not in df_full.columns
+    assert set(df_ds.columns) == set(df_full.columns) | {SAMPLE_WEIGHT_COL}
+    assert df_ds[SAMPLE_WEIGHT_COL].dtype == pl.Float32
+    np.testing.assert_allclose(df_ds[SAMPLE_WEIGHT_COL].to_numpy(), df_full.height / downsample_n)
     # Seed reproducibility
     out_ds2 = tmp_path / "downsampled2.parquet"
     featuremap_to_dataframe.vcf_to_parquet(
@@ -1489,3 +1502,126 @@ def test_expand_columns_with_read_filters(tmp_path: Path) -> None:
     # RL should be aggregated (not expanded)
     assert "RL_mean" in expand_filtered_df.columns, "Should have RL_mean column (aggregated)"
     assert "RL_count" in expand_filtered_df.columns, "Should have RL_count column (aggregated)"
+
+
+# --- adaptive genome-window sizing ----------------------------------------
+# These test the density-adaptive window helper (_choose_window_bp) directly with injected
+# record counts / genome lengths so no real bcftools is needed.
+
+# A representative human genome length (~3.1 Gbp over the primary contigs).
+_HG_GENOME_BP = 3_100_000_000
+
+
+def test_window_dense_featuremap_lands_in_2_to_3_mbp_band() -> None:
+    """A dense whole-genome featuremap (~349M records) should get ~2-3 Mbp windows."""
+    window = _choose_window_bp(total_records=349_000_000, genome_bp=_HG_GENOME_BP)
+    # 3.1e9 * 300_000 / 3.49e8 ≈ 2.66e6
+    assert 2_000_000 <= window <= 3_000_000, f"dense window {window} not in 2-3 Mbp band"
+    assert MIN_WINDOW_BP <= window <= CHUNK_BP_DEFAULT
+
+
+def test_window_sparse_featuremap_clamped_to_default_cap() -> None:
+    """A small/sparse featuremap should stay clamped at the 10 Mbp cap (unchanged behavior)."""
+    window = _choose_window_bp(total_records=10_000, genome_bp=_HG_GENOME_BP)
+    assert window == CHUNK_BP_DEFAULT
+
+
+def test_window_extremely_dense_clamped_to_min() -> None:
+    """An extremely dense featuremap should never go below MIN_WINDOW_BP."""
+    window = _choose_window_bp(total_records=10_000_000_000, genome_bp=_HG_GENOME_BP)
+    assert window == MIN_WINDOW_BP
+
+
+def test_window_monotonic_decreasing_in_records() -> None:
+    """More records must yield a smaller-or-equal window (monotonic)."""
+    counts = [1, 10_000, 1_000_000, 50_000_000, 200_000_000, 500_000_000, 5_000_000_000]
+    windows = [_choose_window_bp(total_records=c, genome_bp=_HG_GENOME_BP) for c in counts]
+    for prev, cur in zip(windows, windows[1:]):
+        assert cur <= prev, f"window not monotonic: {windows}"
+
+
+def test_window_boundary_cap_threshold() -> None:
+    """At the record count where the formula equals the cap, the window equals the cap."""
+    # total_records = genome_bp * target / cap  → raw == cap
+    threshold = round(_HG_GENOME_BP * TARGET_RECORDS_PER_WINDOW / CHUNK_BP_DEFAULT)
+    assert _choose_window_bp(total_records=threshold, genome_bp=_HG_GENOME_BP) == CHUNK_BP_DEFAULT
+    # Slightly more records than the threshold → below the cap
+    assert _choose_window_bp(total_records=threshold * 2, genome_bp=_HG_GENOME_BP) < CHUNK_BP_DEFAULT
+
+
+def test_window_zero_or_negative_genome_falls_back_to_cap() -> None:
+    """A non-positive genome length should not blow up; fall back to the cap."""
+    assert _choose_window_bp(total_records=1_000_000, genome_bp=0) == CHUNK_BP_DEFAULT
+    assert _choose_window_bp(total_records=1_000_000, genome_bp=-5) == CHUNK_BP_DEFAULT
+
+
+def test_window_explicit_override_used_verbatim(monkeypatch, tmp_path: Path) -> None:
+    """An explicit chunk_bp disables adaptive sizing and is passed through verbatim."""
+    captured: dict[str, int] = {}
+
+    def _fake_generate_regions(vcf_path, jobs, bcftools_path, bedtools_path, window_size):  # noqa: ARG001
+        captured["window_size"] = window_size
+        return ["chr1:1-1000"]
+
+    def _fail_count(*_args, **_kwargs):
+        raise AssertionError("record count must not be consulted when chunk_bp is explicit")
+
+    # Stop the pipeline right after region generation so we only exercise window selection.
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("stop-after-regions")
+
+    monkeypatch.setattr(featuremap_to_dataframe, "_generate_genomic_regions", _fake_generate_regions)
+    monkeypatch.setattr(featuremap_to_dataframe, "_count_vcf_records", _fail_count)
+    monkeypatch.setattr(featuremap_to_dataframe, "_run_region_jobs", _boom)
+    monkeypatch.setattr(featuremap_to_dataframe, "_resolve_bedtools_command", lambda: "/usr/bin/bedtools")
+
+    vcf_gz, _ = _write_indexed_single_locus_vcf(tmp_path)
+    with pytest.raises(RuntimeError, match="stop-after-regions"):
+        featuremap_to_dataframe.vcf_to_parquet(str(vcf_gz), str(tmp_path / "out.parquet"), jobs=1, chunk_bp=12345)
+    assert captured["window_size"] == 12345
+
+
+def test_window_adaptive_default_consults_record_count(monkeypatch, tmp_path: Path) -> None:
+    """With chunk_bp unset, the window is computed from the (injected) record count + genome."""
+    captured: dict[str, int] = {}
+
+    def _fake_generate_regions(vcf_path, jobs, bcftools_path, bedtools_path, window_size):  # noqa: ARG001
+        captured["window_size"] = window_size
+        return ["chr1:1-1000"]
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("stop-after-regions")
+
+    monkeypatch.setattr(featuremap_to_dataframe, "_generate_genomic_regions", _fake_generate_regions)
+    monkeypatch.setattr(featuremap_to_dataframe, "_count_vcf_records", lambda *_a, **_k: 349_000_000)
+    monkeypatch.setattr(featuremap_to_dataframe, "_parse_vcf_contigs", lambda *_a, **_k: [("chr1", _HG_GENOME_BP)])
+    monkeypatch.setattr(featuremap_to_dataframe, "_run_region_jobs", _boom)
+    monkeypatch.setattr(featuremap_to_dataframe, "_resolve_bedtools_command", lambda: "/usr/bin/bedtools")
+
+    vcf_gz, _ = _write_indexed_single_locus_vcf(tmp_path)
+    with pytest.raises(RuntimeError, match="stop-after-regions"):
+        featuremap_to_dataframe.vcf_to_parquet(str(vcf_gz), str(tmp_path / "out.parquet"), jobs=1)
+    assert captured["window_size"] == _choose_window_bp(349_000_000, _HG_GENOME_BP)
+    assert 2_000_000 <= captured["window_size"] <= 3_000_000
+
+
+def test_window_adaptive_fallback_when_count_unavailable(monkeypatch, tmp_path: Path) -> None:
+    """If the record count can't be determined, fall back to the fixed default window."""
+    captured: dict[str, int] = {}
+
+    def _fake_generate_regions(vcf_path, jobs, bcftools_path, bedtools_path, window_size):  # noqa: ARG001
+        captured["window_size"] = window_size
+        return ["chr1:1-1000"]
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("stop-after-regions")
+
+    monkeypatch.setattr(featuremap_to_dataframe, "_generate_genomic_regions", _fake_generate_regions)
+    monkeypatch.setattr(featuremap_to_dataframe, "_count_vcf_records", lambda *_a, **_k: None)
+    monkeypatch.setattr(featuremap_to_dataframe, "_run_region_jobs", _boom)
+    monkeypatch.setattr(featuremap_to_dataframe, "_resolve_bedtools_command", lambda: "/usr/bin/bedtools")
+
+    vcf_gz, _ = _write_indexed_single_locus_vcf(tmp_path)
+    with pytest.raises(RuntimeError, match="stop-after-regions"):
+        featuremap_to_dataframe.vcf_to_parquet(str(vcf_gz), str(tmp_path / "out.parquet"), jobs=1)
+    assert captured["window_size"] == CHUNK_BP_DEFAULT

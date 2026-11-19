@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -159,9 +160,9 @@ def test_prepare_report_with_existing_resources(tmpdir, resources_dir):
     try:
         # Just test function signature and basic setup without running full pipeline
         # which is too resource intensive for unit tests
-        import inspect
+        import inspect  # noqa: PLC0415
 
-        from ugbio_srsnv.srsnv_report import prepare_report
+        from ugbio_srsnv.srsnv_report import prepare_report  # noqa: PLC0415
 
         sig = inspect.signature(prepare_report)
         assert "featuremap_df" in sig.parameters
@@ -169,14 +170,12 @@ def test_prepare_report_with_existing_resources(tmpdir, resources_dir):
         assert "report_path" in sig.parameters
 
         # Verify the files have the expected structure
-        import pandas as pd
+        import pandas as pd  # noqa: PLC0415
 
         df = pd.read_parquet(featuremap_path)  # noqa: PD901
         assert "prob_fold_0" in df.columns, "Generated test data should have prob_fold_0 column"
 
         with open(metadata_path) as f:
-            import json
-
             metadata = json.load(f)
         assert "model_paths" in metadata, "Generated metadata should have model_paths"
         assert "filtering_stats" in metadata, "Generated metadata should have filtering_stats"
@@ -514,3 +513,704 @@ def test_plot_logit_histograms_writes_legacy_and_mixed_start_keys(
             assert (
                 "/logit_histogram_mixed_start" in store.keys()
             ), "new logit_histogram_mixed_start key should be written for display"
+
+
+# ──────────────────────── consensus mode (fs/rs) tests ──────────────────────
+
+
+@pytest.fixture
+def consensus_resources(test_resources_calc_run_info):
+    """Build a consensus-mode featuremap from the real ppmSeq resources.
+
+    Drops the ppmSeq st/et tags and adds fs/rs read counts so the report auto-detects
+    CONSENSUS mode. Returns (featuremap_df, metadata).
+    """
+    featuremap_df, metadata, _ = test_resources_calc_run_info
+    consensus_df = featuremap_df.copy()  # noqa: PD901
+    consensus_df = consensus_df.drop(columns=[c for c in ("st", "et") if c in consensus_df.columns])
+    rng = np.random.default_rng(7)
+    consensus_df["fs"] = rng.integers(0, 6, len(consensus_df))
+    consensus_df["rs"] = rng.integers(0, 6, len(consensus_df))
+    # Ensure both consensus and non-consensus reads are present
+    consensus_df.loc[consensus_df.index[:50], ["fs", "rs"]] = 2
+    consensus_df.loc[consensus_df.index[50:100], "fs"] = 0
+    # Drop st/et from the metadata categorical features so params don't reference them
+    metadata = json.loads(json.dumps(metadata))
+    metadata["features"] = [f for f in metadata["features"] if f["name"] not in ("st", "et")]
+    return consensus_df, metadata
+
+
+def _make_consensus_report(df, metadata, temp_output_dir, models):
+    """Helper: build an SRSNVReport in consensus mode from a consensus dataframe."""
+    temp_metadata_file = os.path.join(temp_output_dir, "test_metadata.json")
+    with open(temp_metadata_file, "w") as f:
+        json.dump(metadata, f)
+    categorical_features = [f for f in metadata["features"] if f["type"] == "c"]
+    numerical_features = [f for f in metadata["features"] if f["type"] != "c"]
+    params = {
+        "workdir": temp_output_dir,
+        "data_name": "test_run",
+        "categorical_features_names": [f["name"] for f in categorical_features],
+        "categorical_features_dict": {f["name"]: list(f["values"].keys()) for f in categorical_features},
+        "numerical_features": [f["name"] for f in numerical_features],
+        "fp_regions_bed_file": 1,
+        "num_CV_folds": len(models),
+        "report_mode": "consensus",
+    }
+    return SRSNVReport(
+        models=models,
+        data_df=df.copy(),
+        params=params,
+        out_path=temp_output_dir,
+        srsnv_metadata=temp_metadata_file,
+        base_name="test_",
+        raise_exceptions=True,
+    )
+
+
+def test_consensus_mode_auto_detected(consensus_resources, real_models_calc_run_info):
+    """SRSNVReport auto-detects consensus mode, adds is_consensus and the 3-group read_group."""
+    df, metadata = consensus_resources
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        assert report.report_mode.value == "consensus"
+        assert list(report.scheme.display_variant.groups) == [
+            "single read",
+            "consensus, one strand",
+            "consensus, duplex",
+        ]
+        assert "is_consensus" in report.data_df.columns
+        assert "read_group" in report.data_df.columns
+        # duplex group == the is_consensus boolean
+        expected = ((df["fs"] >= 1) & (df["rs"] >= 1)).to_numpy()
+        np.testing.assert_array_equal(report.data_df["is_consensus"].to_numpy(), expected)
+        np.testing.assert_array_equal((report.data_df["read_group"] == "consensus, duplex").to_numpy(), expected)
+
+
+def test_consensus_mode_roc_auc_table_keys_and_labels(consensus_resources, real_models_calc_run_info):
+    """ROC AUC table keeps stable h5 keys and uses the 3 consensus read-group labels."""
+    df, metadata = consensus_resources
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        report.calc_roc_auc_table()
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        with pd.HDFStore(h5_file, "r") as store:
+            # consensus writes the scheme-suffixed key + the bare base alias (for h5->json)
+            assert "/roc_auc_table" in store.keys()
+            assert "/roc_auc_table_strand_support" in store.keys()
+        table = pd.read_hdf(h5_file, key="roc_auc_table_strand_support")
+        # Index after .T stores the group labels
+        labels = list(table.columns) + list(table.index)
+        assert "single read only" in labels
+        assert "consensus, one strand only" in labels
+        assert "consensus, duplex only" in labels
+
+
+CONSENSUS_GROUP_LABELS = ["single read", "consensus, one strand", "consensus, duplex"]
+
+
+def test_consensus_mode_run_quality_table_labels(consensus_resources, real_models_calc_run_info):
+    """Run quality display table carries the 3 consensus read-group labels; keys stable."""
+    df, metadata = consensus_resources
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        report.plot_fq_recall(only_calculate=True)
+        report.calc_run_quality_table()
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        with pd.HDFStore(h5_file, "r") as store:
+            assert "/run_quality_table" in store.keys()
+            assert "/run_quality_table_strand_support" in store.keys()
+            assert "/run_quality_table_display" in store.keys()
+        display = pd.read_hdf(h5_file, key="run_quality_table_display")
+        third_level = set(display.columns.get_level_values(2))
+        for label in CONSENSUS_GROUP_LABELS:
+            assert label in third_level
+
+
+def test_consensus_mode_run_info_table_label(consensus_resources, real_models_calc_run_info):
+    """Run info table labels one row group per consensus read group."""
+    df, metadata = consensus_resources
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        report.plot_fq_recall(only_calculate=True)
+        report.calc_run_info_table()
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        run_info = pd.read_hdf(h5_file, key="run_info_table_strand_support")
+        level0 = set(run_info.index.get_level_values(0))
+        for label in CONSENSUS_GROUP_LABELS:
+            assert f"{label} training reads" in level0
+
+
+def test_consensus_mode_quality_per_tags_table(consensus_resources, real_models_calc_run_info):
+    """quality_per_ppmseq_tags produces a per-read-group (3-row) table under stable keys."""
+    df, metadata = consensus_resources
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        out_png = os.path.join(temp_output_dir, "qual_vs_tags")
+        report.quality_per_ppmseq_tags(output_filename=out_png)
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        with pd.HDFStore(h5_file, "r") as store:
+            assert "/ppmseq_category_quality_table_strand_support" in store.keys()
+            # bare base keys still written so downstream h5->json conversion doesn't KeyError
+            assert "/ppmseq_category_quality_table" in store.keys()
+            assert "/ppmseq_category_quantity_table" in store.keys()
+        summary = pd.read_hdf(h5_file, key="ppmseq_category_quality_table_strand_support")
+        assert list(summary.index) == CONSENSUS_GROUP_LABELS
+        assert os.path.exists(out_png + ".png")
+
+
+def test_consensus_mode_histograms_run(consensus_resources, real_models_calc_run_info):
+    """Quality + logit histograms run in consensus mode and keep stable h5 keys."""
+    df, metadata = consensus_resources
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        report.plot_quality_histogram(output_filename=os.path.join(temp_output_dir, "qual_hist"))
+        report.plot_logit_histograms(output_filename=os.path.join(temp_output_dir, "logit_hist"))
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        with pd.HDFStore(h5_file, "r") as store:
+            keys = store.keys()
+        for k in (
+            "/quality_histogram",
+            "/quality_histogram_strand_support",
+            "/logit_histogram",
+            "/logit_histogram_strand_support",
+        ):
+            assert k in keys, f"missing {k}"
+
+
+def _make_pe_duplex_report(df, metadata, temp_output_dir, models):
+    """Helper: build an SRSNVReport in paired-end-duplex mode (df must carry the CS-family stats)."""
+    temp_metadata_file = os.path.join(temp_output_dir, "test_metadata.json")
+    with open(temp_metadata_file, "w") as f:
+        json.dump(metadata, f)
+    categorical_features = [f for f in metadata["features"] if f["type"] == "c"]
+    numerical_features = [f for f in metadata["features"] if f["type"] != "c"]
+    params = {
+        "workdir": temp_output_dir,
+        "data_name": "test_run",
+        "categorical_features_names": [f["name"] for f in categorical_features],
+        "categorical_features_dict": {f["name"]: list(f["values"].keys()) for f in categorical_features},
+        "numerical_features": [f["name"] for f in numerical_features],
+        "fp_regions_bed_file": 1,
+        "num_CV_folds": len(models),
+        "report_mode": "pe_duplex",
+    }
+    return SRSNVReport(
+        models=models,
+        data_df=df.copy(),
+        params=params,
+        out_path=temp_output_dir,
+        srsnv_metadata=temp_metadata_file,
+        base_name="test_",
+        raise_exceptions=True,
+    )
+
+
+def test_pe_duplex_logit_histograms_run(consensus_resources, real_models_calc_run_info):
+    """Regression: the pe-duplex logit histogram must not raise and must produce the figure.
+
+    The pe-duplex group_fn reads the pre-assigned ``pe_duplex_group`` column (not recomputed from raw
+    inputs), so it must be carried into the logit-histogram column slice via ``_logit_extra_cols``;
+    otherwise the figure throws ``KeyError: 'pe_duplex_group'`` and the PNG is never written.
+    """
+    base_df, metadata = consensus_resources
+    pe_df = base_df.copy()
+    rng = np.random.default_rng(5)
+    pe_df["dx"] = rng.choice([np.nan, 1.0], len(pe_df))  # 1 == duplex; else single-strand (simplex)
+    pe_df["cs_family_size"] = rng.integers(2, 5, len(pe_df))  # >=2 so none drop out as singletons
+    pe_df["cs_n_crossing"] = rng.integers(1, 5, len(pe_df))
+    pe_df["cs_n_supporting"] = rng.integers(0, 3, len(pe_df))
+    pe_df["cs_n_pe_pairs"] = rng.integers(0, 3, len(pe_df))
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_pe_duplex_report(pe_df, metadata, temp_output_dir, real_models_calc_run_info)
+        assert report.report_mode.value == "pe_duplex"
+        assert "pe_duplex_group" in report.data_df.columns
+        assert "pe_duplex_group" in report._logit_extra_cols()
+        out = os.path.join(temp_output_dir, "logit_hist")
+        report.plot_logit_histograms(output_filename=out, plot_by_fold=False)
+        assert os.path.exists(out + ".png")
+
+
+def test_none_mode_graceful(test_resources_calc_run_info, real_models_calc_run_info):
+    """With neither ppmSeq tags nor fs/rs, the report runs as a single group (NONE mode)."""
+    featuremap_df, metadata, _ = test_resources_calc_run_info
+    none_df = featuremap_df.copy().drop(columns=[c for c in ("st", "et") if c in featuremap_df.columns])
+    metadata = json.loads(json.dumps(metadata))
+    metadata["features"] = [f for f in metadata["features"] if f["name"] not in ("st", "et")]
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        temp_metadata_file = os.path.join(temp_output_dir, "test_metadata.json")
+        with open(temp_metadata_file, "w") as f:
+            json.dump(metadata, f)
+        categorical_features = [f for f in metadata["features"] if f["type"] == "c"]
+        numerical_features = [f for f in metadata["features"] if f["type"] != "c"]
+        params = {
+            "workdir": temp_output_dir,
+            "data_name": "test_run",
+            "categorical_features_names": [f["name"] for f in categorical_features],
+            "categorical_features_dict": {f["name"]: list(f["values"].keys()) for f in categorical_features},
+            "numerical_features": [f["name"] for f in numerical_features],
+            "fp_regions_bed_file": 1,
+            "num_CV_folds": len(real_models_calc_run_info),
+        }
+        report = SRSNVReport(
+            models=real_models_calc_run_info,
+            data_df=none_df.copy(),
+            params=params,
+            out_path=temp_output_dir,
+            srsnv_metadata=temp_metadata_file,
+            base_name="test_",
+            raise_exceptions=True,
+        )
+        assert report.report_mode.value == "none"
+        assert not report.data_df["is_consensus"].any()
+        report.plot_fq_recall(only_calculate=True)
+        report.calc_roc_auc_table()  # should not raise
+
+
+# The exact historical mixed (ppmSeq) h5 key surface produced by the full prepare_report path.
+# The recipe refactor MUST keep the ppmSeq report byte-identical, and the key set is the first
+# line of defense: any dropped / renamed / added key for mixed data breaks backward compatibility
+# (the notebook reads *_mixed_start; h5->json conversion reads the bare base keys).
+MIXED_EXPECTED_H5_KEYS = {
+    "/FQ_recall_LoD",
+    "/FQ_recall_LoD_mixed_start",
+    "/keys_to_convert",
+    "/logit_histogram",
+    "/logit_histogram_mixed_start",
+    "/mean_abs_SHAP_scores",
+    "/ppmseq_category_quality_table",
+    "/ppmseq_category_quality_table_mixed_start",
+    "/ppmseq_category_quantity_table",
+    "/quality_histogram",
+    "/quality_histogram_mixed_start",
+    "/roc_auc_table",
+    "/roc_auc_table_mixed_start",
+    "/run_info_table",
+    "/run_info_table_mixed_start",
+    "/run_quality_summary_table",
+    "/run_quality_summary_table_mixed_start",
+    "/run_quality_table",
+    "/run_quality_table_display",
+    "/run_quality_table_mixed_start",
+    "/training_info_table",
+    "/training_progress",
+    "/trinuc_stats",
+}
+
+
+def test_mixed_report_h5_key_surface_is_stable(resources_dir):
+    """Full ppmSeq report via prepare_report writes exactly the historical mixed h5 key set.
+
+    Locks the byte-identical contract at the key level (mixed keeps the base + *_mixed_start dual
+    keys; consensus/none use their own suffixes, tested separately)."""
+    featuremap_df = str(resources_dir / "402572-CL10377.featuremap_df.parquet")
+    srsnv_metadata = str(resources_dir / "402572-CL10377.srsnv_metadata.json")
+    with tempfile.TemporaryDirectory() as td:
+        # prepare_report resolves model paths relative to CWD basename fallback; copy models in.
+        for mf in resources_dir.glob("402572-CL10377.model_fold_*.json"):
+            shutil.copy(mf, td)
+        cwd = os.getcwd()
+        os.chdir(td)
+        try:
+            prepare_report(
+                featuremap_df=featuremap_df,
+                srsnv_metadata=srsnv_metadata,
+                report_path=td,
+                basename="bl",
+                random_seed=0,
+            )
+        finally:
+            os.chdir(cwd)
+        h5 = next(Path(td).glob("*single_read_snv.applicationQC.h5"))
+        with pd.HDFStore(str(h5), "r") as store:
+            keys = set(store.keys())
+        assert keys == MIXED_EXPECTED_H5_KEYS, (
+            f"mixed h5 key surface drifted:\n  missing={MIXED_EXPECTED_H5_KEYS - keys}\n"
+            f"  unexpected={keys - MIXED_EXPECTED_H5_KEYS}"
+        )
+
+
+# ──────────────────── hmer-indel SNVQ section (read-type x indel-class) ────────────────────
+
+
+def _add_hmer_variant_columns(df, n_indel=300, seed=5):
+    """Set an explicit ins/del split (rest = snv) + variant_type, so the hmer section is exercised."""
+    df = df.copy()  # noqa: PD901
+    rng = np.random.default_rng(seed)
+    if "X_HMER_REF" not in df.columns:
+        df["X_HMER_REF"] = rng.integers(0, 13, len(df))
+    n_indel = min(n_indel, len(df) // 2)
+    xic = np.array([None] * len(df), dtype=object)
+    xic[: n_indel // 2] = "ins"
+    xic[n_indel // 2 : n_indel] = "del"
+    df["X_IC"] = xic
+    df["variant_type"] = np.where(pd.Series(xic).isin(["ins", "del"]).to_numpy(), "hmer_indel", "snv")
+    # snvfind context fields consumed by the hmer-indel context figure (geometry-correct set)
+    df["X_HMER_RUN"] = rng.integers(1, 10, len(df))  # affected reference run length
+    df["X_HMER_BASE"] = rng.choice(list("ACGT"), len(df))  # repeated base of the run
+    df["X_HMER_PRE"] = rng.choice(list("ACGT"), len(df))  # base 5' of the run
+    df["X_HMER_POST"] = rng.choice(list("ACGT"), len(df))  # base 3' of the run
+    return df
+
+
+def test_hmer_indel_snvq_summary_and_plots(consensus_resources, real_models_calc_run_info):
+    """SNVQ hmer-indel section: cross-product summary table (read-type x indel-class) + by-class figure.
+    Validates h5 keys, table structure/margins, and figure creation."""
+    df, metadata = consensus_resources
+    df = _add_hmer_variant_columns(df)  # noqa: PD901
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        assert report._has_hmer_indel_rows()
+        report.calc_hmer_indel_run_info_table()
+        by_class = os.path.join(temp_output_dir, "hmer_by_class")
+        report.plot_hmer_indel_by_class(output_filename=by_class)
+
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        with pd.HDFStore(h5_file, "r") as store:
+            assert "/run_quality_summary_table_hmer_indel" in store.keys()
+            assert "/hmer_indel_class_stats" in store.keys()
+
+        table = pd.read_hdf(h5_file, key="run_quality_summary_table_hmer_indel")
+        # base hmer rows + the homopolymer run-length bins (added when X_HMER_RUN is present)
+        assert set(table["indel_class"]) == {
+            "snv (baseline)",
+            "all indel",
+            "ins",
+            "del",
+            "hmer run 1-3",
+            "hmer run 4-6",
+            "hmer run 7-9",
+            "hmer run 10-12",
+            "hmer run 13+",
+        }
+        assert "All reads" in set(table["read_type"])
+        assert {"single read", "consensus, one strand", "consensus, duplex"} <= set(table["read_type"])
+        for col in ["Median SNVQ", "Recall at SNVQ=50", "Recall at SNVQ=60", "Recall at SNVQ=70", "ROC AUC (Phred)"]:
+            assert col in table.columns
+        # no Recall at SNVQ=80/90 columns (thresholds are 50/60/70 for every mode)
+        assert "Recall at SNVQ=80" not in table.columns
+        # per read_type: ins + del n_TP == all-indel n_TP (every indel is ins or del)
+        for rt in table["read_type"].unique():
+            n_tp = table[table["read_type"] == rt].set_index("indel_class")["n_TP"]
+            assert n_tp["ins"] + n_tp["del"] == n_tp["all indel"]
+        # by-class figure uses SNVQ (median_snvq column, not median_mqual)
+        class_stats = pd.read_hdf(h5_file, key="hmer_indel_class_stats")
+        assert "median_snvq" in class_stats.columns
+        assert os.path.exists(by_class + ".png")
+
+
+def test_snvq_thresholds_no_snvq80(consensus_resources, real_models_calc_run_info):
+    """_snvq_thresholds() is [50,60,70] for every split mode (SNVQ80/90 omitted -- the recalibrated SNVQ
+    ceiling is ~84, so the high thresholds would be structurally ~0)."""
+    df, metadata = consensus_resources
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        assert report._snvq_thresholds() == [50, 60, 70]
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        pe_df = _add_pe_duplex_columns(df)
+        report = _make_pe_duplex_report(pe_df, metadata, temp_output_dir, real_models_calc_run_info)
+        assert report._snvq_thresholds() == [50, 60, 70]
+
+
+def test_by_class_hmer_indel_stats(consensus_resources, real_models_calc_run_info):
+    """plot_hmer_indel_by_class writes the hmer_indel_class_stats h5 (with a median_snvq column);
+    lines split by the active read-split groups (e.g. simplex SE / duplex PE) in addition to ins/del,
+    when a multi-group read_group is present."""
+    df, metadata = consensus_resources
+    dfd = _add_pe_duplex_columns(_add_hmer_variant_columns(df))  # noqa: PD901
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_pe_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
+        by_class = os.path.join(temp_output_dir, "by_class")
+        report.plot_hmer_indel_by_class(output_filename=by_class)
+        stats = pd.read_hdf(
+            os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5"), key="hmer_indel_class_stats"
+        )
+        assert "median_snvq" in stats.columns
+        rg = set(stats["read_group"])
+        # pe-duplex data has >1 read group -> lines are split by group (not the single "all" fallback)
+        assert rg and rg != {"all"}
+        assert rg.issubset(set(report._display_variant.groups))
+        assert os.path.exists(by_class + ".png")
+
+
+def test_removed_hmer_methods_absent():
+    """The removed figures are gone (SNV-vs-hmer metrics, SNVQ reliability, SNVQ histogram)."""
+    for name in ("plot_hmer_indel_metrics", "plot_hmer_indel_snvq_reliability", "plot_hmer_indel_snvq_histograms"):
+        assert not hasattr(SRSNVReport, name)
+
+
+def _add_non_hmer_variant_columns(df, n_indel=300, seed=11):
+    """Set non-hmer indel rows (variant_type=non_hmer_indel) with X_IC/X_IL + tandem-repeat tags
+    (RU/RPA/STR), so the non-hmer sections are exercised. ~half the indels sit in a tandem repeat."""
+    df = df.copy()  # noqa: PD901
+    rng = np.random.default_rng(seed)
+    n_indel = min(n_indel, len(df) // 2)
+    is_indel = np.zeros(len(df), dtype=bool)
+    is_indel[:n_indel] = True
+    xic = np.array([None] * len(df), dtype=object)
+    xic[: n_indel // 2] = "ins"
+    xic[n_indel // 2 : n_indel] = "del"
+    df["X_IC"] = xic
+    df["variant_type"] = np.where(is_indel, "non_hmer_indel", "snv")
+    df["X_IL"] = np.where(is_indel, rng.integers(1, 10, len(df)), np.nan)
+    motifs = ["AC", "AG", "AT", "CA", "ATG", "CAG", "TAGC", "AAAT"]
+    ru = np.array(["."] * len(df), dtype=object)
+    for i in range(0, n_indel, 2):  # ~half the indels are STR (carry a repeat unit)
+        ru[i] = rng.choice(motifs)
+    df["RU"] = ru
+    df["RPA"] = np.where(ru != ".", rng.integers(1, 7, len(df)), np.nan)
+    df["STR"] = np.where(ru != ".", 1, np.nan)
+    return df
+
+
+def test_non_hmer_indel_sections(consensus_resources, real_models_calc_run_info):
+    """The three non-hmer figures render and write their h5 stats; read-group split is exercised via a
+    pe-duplex report (multi-group). Mirrors the hmer by-class/context tests."""
+    df, metadata = consensus_resources
+    dfd = _add_pe_duplex_columns(_add_non_hmer_variant_columns(df))  # noqa: PD901
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_pe_duplex_report(dfd, metadata, temp_output_dir, real_models_calc_run_info)
+        assert report._has_non_hmer_indel_rows()
+        h5 = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+
+        by_class = os.path.join(temp_output_dir, "nh_by_class")
+        report.plot_non_hmer_indel_by_class(output_filename=by_class)
+        assert os.path.exists(by_class + ".png")
+        stats = pd.read_hdf(h5, key="non_hmer_indel_class_stats")
+        assert {"median_snvq", "indel_length", "indel_class", "read_group"}.issubset(stats.columns)
+        assert set(stats["read_group"]) and set(stats["read_group"]) != {"all"}
+
+        str_fig = os.path.join(temp_output_dir, "nh_str")
+        report.plot_non_hmer_indel_str(output_filename=str_fig)
+        assert os.path.exists(str_fig + ".png")
+        str_stats = pd.read_hdf(h5, key="non_hmer_indel_str_stats")
+        assert set(str_stats["axis"]) == {"period", "copies"}
+
+        ctx = os.path.join(temp_output_dir, "nh_ctx")
+        report.calc_and_plot_non_hmer_str_context_plot(output_filename=ctx)
+        assert os.path.exists(ctx + ".png")
+        ctx_stats = pd.read_hdf(h5, key="non_hmer_indel_str_context_stats")
+        assert {"period", "motif", "ins_del", "read_group", "n_TP", "n_FP"}.issubset(ctx_stats.columns)
+        assert set(ctx_stats["period"]).issubset({2, 3, 4})
+
+
+def test_non_hmer_indel_sections_skip_snv_only(consensus_resources, real_models_calc_run_info):
+    """SNV-only run (no indel columns): all three non-hmer methods self-skip cleanly (no raise under
+    raise_exceptions=True, no PNG written)."""
+    df, metadata = consensus_resources
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        for method, stem in (
+            (report.plot_non_hmer_indel_by_class, "a"),
+            (report.plot_non_hmer_indel_str, "b"),
+            (report.calc_and_plot_non_hmer_str_context_plot, "c"),
+        ):
+            out = os.path.join(temp_output_dir, stem)
+            method(output_filename=out)
+            assert not os.path.exists(out + ".png")
+
+
+def test_canonical_repeat_unit():
+    """Phase/strand variants of a repeat collapse to one canonical motif."""
+    f = SRSNVReport._canonical_repeat_unit
+    assert f("AC") == f("CA") == f("GT") == f("TG")  # dinucleotide: rotations + revcomp
+    assert f("AAT") == f("ATA") == f("TAA")  # trinucleotide rotations
+    assert f("N") == "" and f("") == ""  # non-ACGT -> empty
+
+
+def test_logit_histograms_split_hmer_indel(consensus_resources, real_models_calc_run_info):
+    """The logit histogram splits into an SNV figure and a separate hmer-indel figure when hmer rows
+    are present; an SNV-only run produces only the SNV figure."""
+    df, metadata = consensus_resources
+    dfh = _add_hmer_variant_columns(df.copy())  # noqa: PD901
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(dfh, metadata, temp_output_dir, real_models_calc_run_info)
+        snv = os.path.join(temp_output_dir, "logit_snv")
+        hmer = os.path.join(temp_output_dir, "logit_hmer")
+        report.plot_logit_histograms(output_filename=snv, output_filename_hmer_indel=hmer, plot_by_fold=False)
+        assert os.path.exists(snv + ".png")
+        assert os.path.exists(hmer + ".png")
+    # SNV-only run: hmer-indel figure not produced
+    df_snv, metadata2 = consensus_resources
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df_snv.copy(), metadata2, temp_output_dir, real_models_calc_run_info)
+        snv = os.path.join(temp_output_dir, "logit_snv")
+        hmer = os.path.join(temp_output_dir, "logit_hmer")
+        report.plot_logit_histograms(output_filename=snv, output_filename_hmer_indel=hmer, plot_by_fold=False)
+        assert os.path.exists(snv + ".png")
+        assert not os.path.exists(hmer + ".png")
+
+
+def test_hmer_indel_context_plot(consensus_resources, real_models_calc_run_info):
+    """Hmer-indel context figure: tidy per-context h5 table + PNG. Validates dimensions and counts."""
+    df, metadata = consensus_resources
+    df = _add_hmer_variant_columns(df)  # noqa: PD901
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        ctx = os.path.join(temp_output_dir, "hmer_context")
+        report.calc_and_plot_hmer_indel_context_plot(output_filename=ctx)
+
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        table = pd.read_hdf(h5_file, key="hmer_indel_context_stats")
+        assert set(table["ins_del"]) <= {"ins", "del"}
+        assert set(table["hmer_base"]) <= set("ACGT")
+        assert table["hmer_len"].max() <= 10  # clipped to the >=10 bucket  # noqa: PLR2004
+        assert "read_group" in table.columns
+        assert (table["n_TP"] >= 0).all() and (table["n_FP"] >= 0).all()
+        assert os.path.exists(ctx + ".png")
+
+
+def test_hmer_indel_section_skipped_for_snv_only(consensus_resources, real_models_calc_run_info):
+    """SNV-only run (no hmer indels): the hmer summary self-skips (no h5 key, no error)."""
+    df, metadata = consensus_resources
+    df = df.copy()  # noqa: PD901
+    df["variant_type"] = "snv"
+    df["X_IC"] = None
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
+        assert not report._has_hmer_indel_rows()
+        report.calc_hmer_indel_run_info_table()  # no-op
+        h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
+        if os.path.exists(h5_file):
+            with pd.HDFStore(h5_file, "r") as store:
+                assert "/run_quality_summary_table_hmer_indel" not in store.keys()
+
+
+def _add_pe_duplex_columns(df, seed=11):
+    """Add the DNN per-image CS-family stats (+ nf/nr/dx/CS) so the report detects the pe-duplex scheme."""
+    rng = np.random.default_rng(seed)
+    n = len(df)
+    df = df.copy()  # noqa: PD901
+    df["nf"] = rng.integers(0, 4, n)
+    df["nr"] = rng.integers(0, 4, n)
+    df["dx"] = rng.choice([np.nan, 1.0], n)
+    df["CS"] = [f"cs{i}" for i in range(n)]
+    df["cs_family_size"] = rng.integers(1, 5, n)
+    df["cs_n_crossing"] = rng.integers(1, 5, n)
+    df["cs_n_supporting"] = rng.integers(0, 3, n)
+    df["cs_n_pe_pairs"] = rng.integers(0, 3, n)
+    return df
+
+
+def test_run_info_table_has_cs_family_stats(consensus_resources, real_models_calc_run_info):
+    """Paired-end-duplex run: the per-group run-quality summary gains median CS-family stat rows
+    (family size / crossing / supporting / PE pairs) alongside the SSC / duplex-SE / duplex-PE groups."""
+    df, metadata = consensus_resources
+    dfp = _add_pe_duplex_columns(df)
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        temp_metadata_file = os.path.join(temp_output_dir, "test_metadata.json")
+        with open(temp_metadata_file, "w") as f:
+            json.dump(metadata, f)
+        categorical_features = [feat for feat in metadata["features"] if feat["type"] == "c"]
+        numerical_features = [feat for feat in metadata["features"] if feat["type"] != "c"]
+        params = {
+            "workdir": temp_output_dir,
+            "data_name": "test_run",
+            "categorical_features_names": [feat["name"] for feat in categorical_features],
+            "categorical_features_dict": {f["name"]: list(f["values"].keys()) for f in categorical_features},
+            "numerical_features": [feat["name"] for feat in numerical_features],
+            "fp_regions_bed_file": 1,
+            "num_CV_folds": len(real_models_calc_run_info),
+        }  # no report_mode -> scheme is auto-detected from the columns (pe-duplex via cs_n_crossing)
+        report = SRSNVReport(
+            models=real_models_calc_run_info,
+            data_df=dfp,
+            params=params,
+            out_path=temp_output_dir,
+            srsnv_metadata=temp_metadata_file,
+            base_name="test_",
+            raise_exceptions=True,
+        )
+        assert report.scheme.mode.value == "pe_duplex"
+        report.plot_fq_recall(only_calculate=True)
+        report.calc_run_info_table()
+        summary = pd.read_hdf(
+            os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5"),
+            key="run_quality_summary_table",
+        )
+        row_labels = {idx[0] for idx in summary.index}
+        for expected in (
+            "Median CS family size",
+            "Median reads crossing / CS",
+            "Median reads supporting / CS",
+            "Median PE pairs / CS",
+        ):
+            assert expected in row_labels
+
+
+def _augment_pe_indel_df(base_df):
+    """Add variant_type + indel/CS columns to a base featuremap for the hmer-run / concordance tests.
+
+    All rows are made duplex-PE (dx==1, cs_n_crossing>=3) so they fall in the PE groups; concordance is
+    set per row (cs_n_supporting == cs_n_crossing -> concordant, else non-concordant). variant_type is
+    cycled snv / hmer_indel / non_hmer_indel, hmer rows spread across the X_HMER_RUN bins.
+    """
+    df = base_df.copy()  # noqa: PD901
+    n = len(df)
+    vt_cycle = ["snv", "hmer_indel", "non_hmer_indel"]
+    df["variant_type"] = [vt_cycle[i % 3] for i in range(n)]
+    runs = [2, 5, 8, 11, 15]  # one per run-length bin (1-3,4-6,7-9,10-12,13+)
+    df["X_HMER_RUN"] = [runs[i % len(runs)] for i in range(n)]
+    df["X_IC"] = [("ins" if i % 2 else "del") for i in range(n)]
+    _xic_map = {"hmer_indel": "hmer", "non_hmer_indel": "non_hmer"}
+    df["X_INDEL_CLASS"] = [_xic_map.get(vt, ".") for vt in df["variant_type"]]
+    df["dx"] = 1  # duplex
+    df["cs_family_size"] = 4
+    df["cs_n_crossing"] = 4  # >=3 -> duplex PE
+    df["cs_n_supporting"] = [4 if i % 2 == 0 else 2 for i in range(n)]  # ==4 concordant, ==2 non-concordant
+    df["cs_n_pe_pairs"] = 2
+    df["cs_n_cand"] = [1 if i % 3 else 2 for i in range(n)]
+    df["cs_sec_support"] = [0 if i % 3 else 3 for i in range(n)]
+    df["label"] = [i % 2 for i in range(n)]  # both TP and FP present in each group
+    return df
+
+
+def test_hmer_indel_class_conditions_has_run_length_bins(consensus_resources, real_models_calc_run_info):
+    """_hmer_indel_class_conditions adds the hmer run-length bins (true-hmer only) when X_HMER_RUN present."""
+    base_df, metadata = consensus_resources
+    pe_df = _augment_pe_indel_df(base_df)
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_pe_duplex_report(pe_df, metadata, temp_output_dir, real_models_calc_run_info)
+        conds = report._hmer_indel_class_conditions()
+        assert conds is not None
+        for k in ("hmer run 1-3", "hmer run 4-6", "hmer run 7-9", "hmer run 10-12", "hmer run 13+"):
+            assert k in conds, f"missing run-length key {k}"
+        # run-length bins are restricted to true hmer rows (X_INDEL_CLASS == 'hmer')
+        is_hmer = (report.data_df["variant_type"] == "hmer_indel").to_numpy()
+        assert bool((conds["hmer run 1-3"] & ~is_hmer).any()) is False
+
+
+def test_calc_pe_concordance_summary_table(consensus_resources, real_models_calc_run_info):
+    """calc_pe_concordance_summary_table writes concordant/non-concordant rows with TP+FP columns."""
+    base_df, metadata = consensus_resources
+    pe_df = _augment_pe_indel_df(base_df)
+    with tempfile.TemporaryDirectory() as temp_output_dir:
+        report = _make_pe_duplex_report(pe_df, metadata, temp_output_dir, real_models_calc_run_info)
+        report.calc_pe_concordance_summary_table()
+        table = pd.read_hdf(report.output_h5_filename, key="run_quality_summary_table_pe_concordance")
+        conc_vals = set(table["concordance"].unique())
+        assert "concordant" in conc_vals
+        assert "non-concordant" in conc_vals
+        for col in ("n_TP", "n_FP", "Median SNVQ (TP)", "Median SNVQ (FP)", "TP%>=60", "FP%>=60", "ROC AUC (Phred)"):
+            assert col in table.columns, f"missing column {col}"
+        # non-empty: at least one concordant cell has reads
+        conc = table[table["concordance"] == "concordant"]
+        assert (conc["n_TP"].to_numpy() + conc["n_FP"].to_numpy()).sum() > 0
+
+
+def test_trinuc_plot_input_is_snv_only():
+    """The SNV trinuc-context plot must not see indel rows: a reverse-strand indel context (e.g. A+CC+T+C) is
+    truncated to 4 characters by the seq-direction helper and becomes a valid-looking SNV trinuc (GGTA)."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from ugbio_srsnv.srsnv_utils import get_trinuc_context_with_alt_fwd_vectorized  # noqa: PLC0415
+
+    # the contamination mechanism this guards against
+    assert get_trinuc_context_with_alt_fwd_vectorized(pd.Series(["ACCTC"]), pd.Series([False]))[0] == "GGTA"
+
+    data_df = pd.DataFrame({"variant_type": ["snv", "hmer_indel", "non_hmer_indel", "snv"], "x": [1, 2, 3, 4]})
+    snv = SRSNVReport._snv_rows(SimpleNamespace(data_df=data_df))
+    assert snv["x"].tolist() == [1, 4]
+    # SNV-only runs (no variant_type column) are passed through unchanged
+    no_vt = data_df.drop(columns=["variant_type"])
+    assert SRSNVReport._snv_rows(SimpleNamespace(data_df=no_vt)) is no_vt
