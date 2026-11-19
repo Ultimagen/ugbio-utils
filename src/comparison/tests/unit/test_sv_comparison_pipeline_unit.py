@@ -58,6 +58,28 @@ def test_run_truvari_ignore_filter(mocker):
     )
 
 
+def test_run_truvari_overlap_options(mocker):
+    """pctovl, refdist, chunksize and dup_to_ins are added only when set"""
+    sv_comparison = SVComparison(simple_pipeline=mocker.Mock(), logger=mocker.Mock())
+    mock_execute = mocker.patch.object(sv_comparison, "_SVComparison__execute")
+    sv_comparison.run_truvari(
+        calls="calls.vcf",
+        gt="ground_truth.vcf",
+        outdir="output_dir",
+        maxsize=-1,
+        ignore_filter=True,
+        ignore_type=False,
+        pctovl=0.5,
+        refdist=100000,
+        chunksize=100000,
+        dup_to_ins=True,
+    )
+    mock_execute.assert_called_once_with(
+        "truvari bench -b ground_truth.vcf -c calls.vcf -o output_dir --pctseq 0.0 --pctsize 0.0 --sizemax -1"
+        " --pctovl 0.5 --refdist 100000 --chunksize 100000 --dup-to-ins"
+    )
+
+
 def test_truvari_to_dataframes(mocker):
     mock_vcftools = mocker.patch("ugbio_core.vcfbed.vcftools.get_vcf_df")  # Adjusted import path
 

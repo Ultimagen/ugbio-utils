@@ -36,28 +36,24 @@ import tempfile
 
 import pandas as pd
 import pysam
-from ugbio_core.exec_utils import print_and_execute
+from ugbio_comparison.sv_comparison_pipeline import SVComparison
 from ugbio_core.logger import logger
+from ugbio_core.vcf_utils import VcfUtils
 from ugbio_core.vcfbed import vcftools
 
 from ugbio_filtering import transformers
 from ugbio_filtering.tprep_constants import VcfType
 
-TRUVARI_OPTIONS = [
-    "--pctseq",
-    "0",
-    "--sizemax",
-    "-1",
-    "--pctovl",
-    "0.5",
-    "--pctsize",
-    "0.5",
-    "--refdist",
-    "100000",
-    "--chunksize",
-    "100000",
-    "--dup-to-ins",
-]
+# a call matches a truth event of its type with 50% reciprocal overlap and size within 2x
+TRUVARI_OPTIONS = {
+    "pctseq": 0.0,
+    "maxsize": -1,
+    "pctovl": 0.5,
+    "pctsize": 0.5,
+    "refdist": 100000,
+    "chunksize": 100000,
+    "dup_to_ins": True,  # T2T-Q100 writes duplications as insertions
+}
 KEY_COLUMNS = ["chrom", "pos", "id"]  # calls may share a start (e.g. two pair DUP candidates); IDs are unique
 
 
@@ -94,17 +90,13 @@ def label_calls(call_vcf: str, truth_vcf: str, benchmark_bed: str, workdir: str,
         chrom, pos and label (1 matched, 0 unmatched).
     """
     selected = os.path.join(workdir, "calls.selected.vcf.gz")
-    allpass = os.path.join(workdir, "calls.allpass.vcf.gz")  # all calls PASS, so truvari scores every one
-    print_and_execute(
-        f"bcftools view -i 'abs(INFO/SVLEN)>={min_len}' -Oz -o {selected} {call_vcf}", module_name=__name__
-    )
-    print_and_execute(f"bcftools annotate -x FILTER -Oz -o {allpass} {selected}", module_name=__name__)
-    pysam.tabix_index(allpass, preset="vcf", force=True)
+    allpass = os.path.join(workdir, "calls.allpass.vcf.gz")  # no FILTER, so truvari scores every call
+    vcf_utils = VcfUtils()
+    vcf_utils.view_vcf(call_vcf, selected, extra_args=f"-i 'abs(INFO/SVLEN)>={min_len}'")
+    vcf_utils.remove_filter_annotations(selected, allpass)
     bench = os.path.join(workdir, "truvari")
-    options = " ".join(TRUVARI_OPTIONS)
-    print_and_execute(
-        f"truvari bench -b {truth_vcf} -c {allpass} -o {bench} --includebed {benchmark_bed} {options}",
-        module_name=__name__,
+    SVComparison().run_truvari(
+        allpass, truth_vcf, bench, bed=benchmark_bed, ignore_filter=True, ignore_type=False, **TRUVARI_OPTIONS
     )
     rows = []
     for name, label in (("tp-comp", 1), ("fp", 0)):
