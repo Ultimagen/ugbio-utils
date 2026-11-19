@@ -248,6 +248,16 @@ gh run view <run-id>
 - **AWS ECR** (internal): `337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_<module>:<tag>`
 - **Docker Hub** (public): `ultimagenomics/ugbio_<module>:<tag>`
 
+### Adding a New Module (Docker)
+
+1. Create `src/<module>/` with `pyproject.toml` (name `ugbio_<module>`, version equal to the root `pyproject.toml`,
+   `run_tests = "pytest:main"` entry point), `Dockerfile` (copy `src/freec/Dockerfile`; set `MODULE_DIR`),
+   `README.<module>.md`, `ugbio_<module>/__init__.py` and `tests/unit/`. The uv workspace picks up `src/*` automatically.
+2. Add `"<module>"` to the `member` options in `.github/workflows/build-ugbio-member-docker.yml`.
+3. Update this file (workspace tree, available modules, module description).
+4. Push the branch and run `gh workflow run build-ugbio-member-docker.yml --ref <branch> -f member=<module>`;
+   the image tag is `test_<short-sha>` unless `image-tag` is given.
+
 ## Coding Conventions
 **Purpose:** Provides VCF processing, utilities, and infrastructure for all other modules.
 
