@@ -200,6 +200,21 @@ class TestCalling:
         assert len(calls) == 1
         assert calls.iloc[0].direction == "DUP"
 
+    def test_merged_call_fractions_cover_all_its_segments(self):
+        # a gain of two segments (3 and 4 copies), the first in segdup: the merged call is about half segdup
+        rng = np.random.default_rng(3)
+        cn = noisy_cn(20000, rng)
+        cn[8000:8300] = noisy_cn(300, rng, level=3.0)
+        cn[8300:8600] = noisy_cn(300, rng, level=4.0)
+        bins = make_bins({"chr1": cn})
+        bins.loc[8000:8299, "segdup"] = np.float32(1.0)
+        p = dc.Params()
+        nb = dc.normalize(bins, set(), p)
+        calls = dc.merge_calls(dc.segment(dc.make_units(nb, p), p), nb, p)
+        assert len(calls) == 1 and calls.iloc[0].n_merged > 1
+        assert 0.3 < calls.iloc[0].segdup < 0.7  # not the first segment's 1.0
+        assert calls.iloc[0].uniq_frac == pytest.approx(1.0)
+
     def test_short_stretch_between_gaps_is_not_joined_across_them(self):
         # a 3-unit island between two assembly gaps is its own segment, not part of a segment across a gap
         rng = np.random.default_rng(8)

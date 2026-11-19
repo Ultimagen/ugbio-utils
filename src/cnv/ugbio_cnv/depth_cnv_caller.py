@@ -488,6 +488,10 @@ class NormalIndex:
         return int(np.clip(np.minimum(e, end) - np.maximum(s, start), 0, None).sum())
 
 
+# per-segment unit fractions, averaged over the units of a merged call
+SEGMENT_FRACTIONS = ("difficult_frac", "lowmap", "segdup", "uniq_frac")
+
+
 def merge_calls(segs: pd.DataFrame, bins: pd.DataFrame, p: Params) -> pd.DataFrame:
     """Repeat the merge pass over its own output until the number of calls stops changing."""
     cidx, nidx = CallableIndex(bins), NormalIndex(segs, p.difficult_frac)
@@ -525,6 +529,9 @@ def _merge_pass(  # noqa: C901, PLR0912
                 c = dict(
                     c, n_merged=1, cn_sum=c["cn_mean"] * c["n_units"], conf_units=c["n_units"] if c["confident"] else 0
                 )
+                for f in SEGMENT_FRACTIONS:  # uniq_frac is NaN in a segment without reads
+                    known = not np.isnan(c[f])
+                    c[f"{f}_sum"], c[f"{f}_units"] = (c[f] * c["n_units"], c["n_units"]) if known else (0.0, 0)
             # earliest same-direction call within reach for which the gap rule holds
             target = None
             for j in range(len(merged) - 1, -1, -1):
@@ -551,6 +558,9 @@ def _merge_pass(  # noqa: C901, PLR0912
                         prev["n_units"] += b["n_units"]
                         prev["cn_sum"] += b["cn_sum"]
                         prev["conf_units"] += b["conf_units"]
+                        for f in SEGMENT_FRACTIONS:
+                            prev[f"{f}_sum"] += b[f"{f}_sum"]
+                            prev[f"{f}_units"] += b[f"{f}_units"]
                         prev["n_merged"] += b["n_merged"]
                         prev["z"] = max(prev["z"], b["z"], key=abs)
                     elif b["conf_units"] >= 0.5 * b["n_units"] and (b["end"] - b["start"]) >= p.blip_max_bp:
@@ -562,6 +572,8 @@ def _merge_pass(  # noqa: C901, PLR0912
     calls = pd.DataFrame(out)
     if len(calls):
         calls["cn_mean"] = calls["cn_sum"] / calls["n_units"]
+        for f in SEGMENT_FRACTIONS:  # over all merged units, not the first segment's
+            calls[f] = calls[f"{f}_sum"] / calls[f"{f}_units"].replace(0, np.nan)
     return calls.reset_index(drop=True)
 
 
@@ -730,7 +742,16 @@ def call_depth_cnvs(  # noqa: PLR0913
         bins.loc[idx, "baseline"] = setup.baseline(chrom, bins.loc[idx, "start"].to_numpy())
     segs = segment(make_units(bins, p), p)
     # no segment called (a small region or a clean sample): no calls, and a VCF without records
-    calls = pd.DataFrame(columns=[*segs.columns, "n_merged", "cn_sum", "conf_units", "low_conf"])
+    calls = pd.DataFrame(
+        columns=[
+            *segs.columns,
+            "n_merged",
+            "cn_sum",
+            "conf_units",
+            "low_conf",
+            *(f"{f}_{k}" for f in SEGMENT_FRACTIONS for k in ("sum", "units")),
+        ]
+    )
     if (segs["direction"] != "").any():
         calls = refine_edges(merge_calls(segs, bins, p), bins, p)
         calls = calls[(calls["end"] - calls["start"]) >= p.min_len_refined].reset_index(drop=True)
