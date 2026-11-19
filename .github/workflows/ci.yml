@@ -16,10 +16,10 @@ env:
   AWS_ACCOUNT: 337532070941
   # Base image used for building and testing workspace members.
   # If you update this version, also update DEFAULT_BASE_IMAGE in build-workspace-docker.yml.
-  UGBIO_BASE_IMAGE_NAME: ugbio_base:1.8.6
+  UGBIO_BASE_IMAGE_NAME: ugbio_base:1.8.7
   # Builder-stage base image (compiler/dev-tools) used for building workspace members.
   # If you update this version, also update DEFAULT_BASE_BUILD_IMAGE in build-workspace-docker.yml.
-  UGBIO_BASE_BUILD_IMAGE_NAME: ugbio_base_build:1.8.6
+  UGBIO_BASE_BUILD_IMAGE_NAME: ugbio_base_build:1.8.7
   UGBIO_UTILS_REPO_PATH: ./ugbio-utils
   INSTALL_BIO_PATH: ./install-bio
   INSTALL_BIO_REF: main
@@ -32,7 +32,7 @@ jobs:
     outputs:
       matrix: ${{steps.list_members.outputs.members}}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/get-members
         id: list_members
 #        with:
@@ -41,7 +41,7 @@ jobs:
   run-pre-commit:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         lfs: true
 
@@ -56,24 +56,10 @@ jobs:
         uv run pre-commit install
         uv run pre-commit run --all-files
 
-  Trivy-docker-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run Trivy to scan Dockerfile
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          scan-type: 'config'
-          scan-ref: './'
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
-
   Trivy-fs-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           lfs: true
 
@@ -84,14 +70,14 @@ jobs:
         run: uv lock
 
       - name: Run Trivy to scan fs
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
-          scanners: 'vuln,secret'
+          scanners: 'vuln,secret,misconfig'
           version: ${{ env.TRIVY_VERSION }}
 
   ugbio-utils-CI:
@@ -102,7 +88,7 @@ jobs:
       matrix:
         module: ${{fromJson(needs.get-members.outputs.matrix)}}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         lfs: true
 
@@ -124,13 +110,13 @@ jobs:
       max-parallel: 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           lfs: true
           path: ${{ env.UGBIO_UTILS_REPO_PATH }}
 
       - name: Checkout install-bio repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Ultimagen/install-bio
           ref: ${{ env.INSTALL_BIO_REF }}
