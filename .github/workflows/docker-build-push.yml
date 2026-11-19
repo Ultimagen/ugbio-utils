@@ -240,7 +240,7 @@ jobs:
 
       - name: Trivy image scan
         id: trivy-gate
-        uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@main
+        uses: Ultimagen/ugbio-utils/.github/actions/trivy-image-scan@BIOIN-3223-ppmseq-plus-multi-call
         with:
           image-ref: ${{ env.SCAN_REF }}
           image-name: "${{ steps.ecr-login.outputs.registry }}/${{ inputs.docker-image }}"
