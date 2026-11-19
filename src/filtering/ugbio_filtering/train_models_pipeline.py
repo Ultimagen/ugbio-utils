@@ -64,7 +64,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     ap_var.add_argument(
         "--vcf_type",
-        help='VCF type - "single_sample"(GATK), "deep_variant" or "cnv_depth" (depth CNV caller)',
+        help='VCF type - "single_sample"(GATK), "deep_variant" or "cnv" (depth CNV caller)',
         type=VcfType,
         choices=list(VcfType),
         default=VcfType.SINGLE_SAMPLE,
@@ -80,7 +80,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     ap_var.add_argument(
         "--decision_threshold",
-        help="cnv_depth only: FilterVCF decision threshold to store with the model "
+        help="cnv only: FilterVCF decision threshold to store with the model "
         "(default: the out-of-bag probability with the best F1, as a phred-like score)",
         type=int,
         default=None,
@@ -118,9 +118,9 @@ def run(argv: list[str]):
         model, transformer = train_model(train_df, args)
         logger.info("Model training: done")
         extra = {}
-        if args.decision_threshold is not None and args.vcf_type != VcfType.CNV_DEPTH:
-            logger.warning(f"--decision_threshold is used only with cnv_depth models, ignored for {args.vcf_type}")
-        if args.vcf_type == VcfType.CNV_DEPTH:
+        if args.decision_threshold is not None and args.vcf_type != VcfType.CNV:
+            logger.warning(f"--decision_threshold is used only with cnv models, ignored for {args.vcf_type}")
+        if args.vcf_type == VcfType.CNV:
             if args.decision_threshold is not None:
                 extra["decision_threshold"] = args.decision_threshold
                 logger.info(f"FilterVCF decision threshold (given): {extra['decision_threshold']}")

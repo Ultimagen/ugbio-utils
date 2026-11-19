@@ -66,7 +66,7 @@ def train_model(
     x_train_df = pd.DataFrame(transformer.fit_transform(df_train))
     _validate_data(x_train_df)
     logger.info("Transform: done")
-    if vtype == VcfType.CNV_DEPTH:
+    if vtype == VcfType.CNV:
         # out-of-bag scores choose the decision threshold (cnv_depth_decision_threshold)
         clf = RandomForestClassifier(
             n_estimators=500,
@@ -94,7 +94,7 @@ def train_model(
 
 def cnv_depth_decision_threshold(model: RandomForestClassifier, labels: np.ndarray) -> int:
     """
-    FilterVCF decision threshold for a CNV_DEPTH forest: the out-of-bag probability with the best F1 on the training
+    FilterVCF decision threshold for a CNV forest: the out-of-bag probability with the best F1 on the training
     rows (0.20 - 0.88 in steps of 0.02), as the phred-like score FilterVCF compares it to, 30 + 10 log10(p / (1 - p)),
     rounded to an integer (a call passes when its score is above the threshold).
 
@@ -237,7 +237,7 @@ def eval_model(
 
     df = df.loc[select]  # noqa PD901
 
-    if vtype == VcfType.CNV_DEPTH:  # CNV calls have no indel / hmer groups: report per SV type
+    if vtype == VcfType.CNV:  # CNV calls have no indel / hmer groups: report per SV type
         df["group_testing"] = df["svtype"]
         result = evaluate_results(df, pd.Series(list(labels), index=df.index), add_testing_group_column=False)
     else:

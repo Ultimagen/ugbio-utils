@@ -122,7 +122,7 @@ class TestDepthCnvModel:
     def test_transformer_train_and_apply(self):
         calls = depth_cnv_df(40)
         calls["label"] = [1, 0] * 20
-        model, fitted = train_model(calls, GtType.APPROXIMATE, VcfType.CNV_DEPTH)  # returns (model, transformer)
+        model, fitted = train_model(calls, GtType.APPROXIMATE, VcfType.CNV)  # returns (model, transformer)
         assert model.n_estimators == 500
         assert model.max_depth == 5
         x = fitted.transform(calls)
@@ -132,9 +132,7 @@ class TestDepthCnvModel:
         assert probabilities.shape == (40, 2)
 
     def test_needed_features_are_the_info_columns(self):
-        assert transformers.get_needed_features(VcfType.CNV_DEPTH) == [
-            f.lower() for f in transformers.DEPTH_CNV_INFO_FIELDS
-        ]
+        assert transformers.get_needed_features(VcfType.CNV) == [f.lower() for f in transformers.DEPTH_CNV_INFO_FIELDS]
 
 
 class TestDecisionThreshold:

@@ -83,7 +83,7 @@ def resolve_decision_threshold(given: float | None, model_pickle: dict | None) -
     The decision threshold to filter with.
 
     A threshold given on the command line wins; otherwise the one train_models_pipeline stored with the model
-    (cnv_depth models), else DEFAULT_DECISION_THRESHOLD.
+    (cnv models), else DEFAULT_DECISION_THRESHOLD.
     """
     if given is not None:
         return float(given)

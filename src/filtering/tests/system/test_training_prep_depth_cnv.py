@@ -128,7 +128,7 @@ def test_labels_split_and_train(inputs, tmp_path):
     out = str(tmp_path / "model")
     train_models_pipeline.run(
         ["train_models_pipeline", "--train_dfs", f"{prefix}.train.h5", "--test_dfs", f"{prefix}.test.h5",
-         "--output_file_prefix", out, "--vcf_type", "cnv_depth", "--gt_type", "approximate"]
+         "--output_file_prefix", out, "--vcf_type", "cnv", "--gt_type", "approximate"]
     )  # fmt: skip
     with open(f"{out}.pkl", "rb") as f:
         model = pickle.load(f)
@@ -155,7 +155,7 @@ def test_known_event_positives(inputs, tmp_path):
     out26 = str(tmp_path / "model26")
     train_models_pipeline.run(
         ["train_models_pipeline", "--train_dfs", f"{prefix}.train.h5", "--test_dfs", f"{prefix}.test.h5",
-         "--output_file_prefix", out26, "--vcf_type", "cnv_depth", "--gt_type", "approximate",
+         "--output_file_prefix", out26, "--vcf_type", "cnv", "--gt_type", "approximate",
          "--decision_threshold", "26"]
     )  # fmt: skip
     with open(f"{out26}.pkl", "rb") as f:

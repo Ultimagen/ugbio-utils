@@ -13,7 +13,7 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 # DESCRIPTION
-#    Prepare training data for the depth CNV filtering model (VcfType.CNV_DEPTH)
+#    Prepare training data for the depth CNV filtering model (VcfType.CNV)
 """
 Prepare training data for the depth CNV filtering model.
 
@@ -23,7 +23,7 @@ samples with known events (e.g. cell lines) can be added as positives: calls of 
 their length inside an event. Writes <prefix>.train.h5 and <prefix>.test.h5, split by chromosome, with the INFO
 columns the filter reads and "label": the input of
 
-    train_models_pipeline --vcf_type cnv_depth --gt_type approximate --train_dfs <prefix>.train.h5 --test_dfs ...
+    train_models_pipeline --vcf_type cnv --gt_type approximate --train_dfs <prefix>.train.h5 --test_dfs ...
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ def training_prep_depth_cnv(
     min_len: int = 500,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Write <output_prefix>.train.h5 and <output_prefix>.test.h5 for train_models_pipeline (vcf_type cnv_depth).
+    Write <output_prefix>.train.h5 and <output_prefix>.test.h5 for train_models_pipeline (vcf_type cnv).
 
     Parameters
     ----------
@@ -181,7 +181,7 @@ def training_prep_depth_cnv(
     tuple[pd.DataFrame, pd.DataFrame]
         The training and test sets.
     """
-    columns = [*transformers.get_needed_features(VcfType.CNV_DEPTH), "label", *KEY_COLUMNS]
+    columns = [*transformers.get_needed_features(VcfType.CNV), "label", *KEY_COLUMNS]
     with tempfile.TemporaryDirectory(dir=os.path.dirname(os.path.abspath(output_prefix))) as workdir:
         labels = label_calls(call_vcf, truth_vcf, benchmark_bed, workdir, min_len)
     labelled = read_calls(call_vcf).merge(labels, on=KEY_COLUMNS, how="inner")

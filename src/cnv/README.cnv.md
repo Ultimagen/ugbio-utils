@@ -158,7 +158,7 @@ filter_nested_cnv_candidates --input-vcf sample.refined.vcf.gz --output-vcf samp
 Sex chromosomes are inferred from the depth (or set with `--sex male|female`). For a male sample, pass
 `--par-bed` (the `par_regions` genome resource); otherwise the chrX pseudoautosomal regions look like gains.
 
-Filter the calls with `filter_variants_pipeline` and a `cnv_depth` model. Pass the fields in
+Filter the calls with `filter_variants_pipeline` and a `cnv` model. Pass the fields in
 `ugbio_filtering.transformers.DEPTH_CNV_INFO_FIELDS` as `--custom_annotations`, and use `--overwrite_qual_tag` and the
 model's threshold (`--decision_threshold 28` for `cnv_filtering_model_v2.0.0.pkl`; the default is 30).
 

@@ -392,7 +392,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
         features = [x[0] for x in transform_list]
     elif vtype == VcfType.JOINT:
         pass
-    elif vtype == VcfType.CNV_DEPTH:
+    elif vtype == VcfType.CNV:
         columns = [f.lower() for f in DEPTH_CNV_INFO_FIELDS]
         transform_list = [
             (

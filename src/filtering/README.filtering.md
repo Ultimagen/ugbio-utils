@@ -86,7 +86,7 @@ train_models_pipeline \
   --test_dfs test1.h5 test2.h5 \
   --output_file_prefix model_output \
   [--gt_type exact|approximate] \
-  [--vcf_type single_sample|deep_variant|cnv_depth] \
+  [--vcf_type single_sample|deep_variant|cnv] \
   [--custom_annotations ANNOTATION1 ANNOTATION2] \
   [--verbosity INFO]
 ```
@@ -96,7 +96,7 @@ train_models_pipeline \
 - `--test_dfs`: Test HDF5 files for model evaluation
 - `--output_file_prefix`: Prefix for output .pkl (model) and .h5 (results) files
 - `--gt_type`: Ground truth type - "exact" or "approximate" (default: exact)
-- `--vcf_type`: VCF type - "single_sample", "deep_variant", or "cnv_depth" (depth CNV caller; default: single_sample)
+- `--vcf_type`: VCF type - "single_sample", "deep_variant", or "cnv" (depth CNV caller; default: single_sample)
 - `--custom_annotations`: Additional INFO annotations to include in training
 
 #### `training_prep_pipeline`
@@ -136,7 +136,7 @@ training_prep_pipeline \
 
 #### `training_prep_depth_cnv_pipeline`
 
-Prepares training data for the depth CNV caller's filter (`--vcf_type cnv_depth`): labels the calls of a sample with
+Prepares training data for the depth CNV caller's filter (`--vcf_type cnv`): labels the calls of a sample with
 truth (e.g. HG002) and writes train / test HDF5 files, split by chromosome.
 
 ```bash
@@ -164,7 +164,7 @@ training_prep_depth_cnv_pipeline \
 
 # the threshold is stored in the pickle; without --decision_threshold it is chosen by the best F1
 train_models_pipeline --train_dfs hg002_depth_cnv.train.h5 --test_dfs hg002_depth_cnv.test.h5 \
-  --output_file_prefix cnv_filtering_model --vcf_type cnv_depth --gt_type approximate --decision_threshold 28
+  --output_file_prefix cnv_filtering_model --vcf_type cnv --gt_type approximate --decision_threshold 28
 ```
 
 `cnv_filtering_model_v2.0.0.pkl` was trained this way on HG002 613168 and the YLC444 (chr21 DUP) and GSM704
