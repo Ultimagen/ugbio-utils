@@ -4,7 +4,10 @@ import numpy as np
 import pandas as pd
 import pysam
 import pytest
+from ugbio_cnv import cnv_candidate_utils as cu
+from ugbio_cnv import collapse_cnv_calls
 from ugbio_cnv import split_read_candidates as src
+from ugbio_cnv.cnv_vcf_consts import CNV_SOURCE_CNMOPS, CNV_SOURCE_PAIR
 from ugbio_cnv.depth_cnv_caller import SexChromosomes, write_depth_calls
 
 
@@ -67,7 +70,7 @@ class TestClustering:
             ],
             columns=["chrom", "start", "end", "svtype"],
         )
-        c = src.cluster_junctions(j, src.CandidateParams()).sort_values("svtype")
+        c = src.cluster_junctions(j, cu.CandidateParams()).sort_values("svtype")
         assert list(map(tuple, c.to_numpy())) == [("chr1", 1000, 3000, "DEL", 3), ("chr1", 1002, 3000, "DUP", 2)]
 
     def test_dedup_keeps_best_supported(self):
@@ -75,7 +78,7 @@ class TestClustering:
             [("chr1", 1000, 5000, "DEL", 3), ("chr1", 1200, 5100, "DEL", 8), ("chr1", 20000, 25000, "DEL", 2)],
             columns=["chrom", "start", "end", "svtype", "n_reads"],
         )
-        out = src.dedup_clusters(c, src.CandidateParams())
+        out = cu.dedup_clusters(c, cu.CandidateParams())
         assert sorted(out["n_reads"]) == [2, 8]
 
 
@@ -87,7 +90,7 @@ class TestMergeWithDepthCalls:
             [("chr1", 10200, 19900, "DEL", 5), ("chr1", 50000, 51500, "DEL", 4), ("chr1", 10200, 19900, "DUP", 3)]
         )
         out = str(tmp_path / "cand.vcf.gz")
-        assert src.add_candidates_to_calls(dvcf, cand, out, src.CandidateParams()) == 2
+        assert cu.add_candidates_to_calls(dvcf, cand, out, cu.CandidateParams()) == 2
         with pysam.VariantFile(out) as v:
             recs = [(r.start, r.stop, r.info["SVTYPE"], r.info["CNV_SOURCE"], r.info.get("CLUSTER_SUPPORT")) for r in v]
             gts = [r.samples["S1"]["GT"] for r in pysam.VariantFile(out)]
@@ -112,8 +115,8 @@ class TestNestedFilter:
             ]
         )
         cvcf, out = str(tmp_path / "cand.vcf.gz"), str(tmp_path / "filtered.vcf.gz")
-        src.add_candidates_to_calls(dvcf, cand, cvcf, src.CandidateParams())
-        dropped = src.filter_nested_cnv_candidates(cvcf, out)
+        cu.add_candidates_to_calls(dvcf, cand, cvcf, cu.CandidateParams())
+        dropped = collapse_cnv_calls.filter_nested_cnv_candidates(cvcf, out)
         assert dropped == {"nested": 1, "short": 1, "duplicate": 0}
         with pysam.VariantFile(out) as v:
             kept = [(r.start, r.info["SVTYPE"]) for r in v]
@@ -122,18 +125,16 @@ class TestNestedFilter:
     def test_cnmops_candidates_are_kept_after_pair_candidates(self, tmp_path, fasta_index):
         dvcf = str(tmp_path / "depth.vcf.gz")
         write_depth_calls(depth_calls([("chr1", 10_000, 12_000, "DEL")]), dvcf, "S1", fasta_index)
-        p = src.CandidateParams(min_overlap=1.1)  # add all of them
+        p = cu.CandidateParams(min_overlap=1.1)  # add all of them
         cm = str(tmp_path / "cnmops.vcf.gz")
         cnmops = candidates([("chr1", 300_000, 320_000, "DEL", 0), ("chr1", 400_000, 420_000, "DUP", 0)])
-        src.add_candidates_to_calls(
-            dvcf, cnmops, cm, p, source=src.CNV_SOURCE_CNMOPS, id_prefix="CNMOPS", count_tag=None
-        )
+        cu.add_candidates_to_calls(dvcf, cnmops, cm, p, source=CNV_SOURCE_CNMOPS, id_prefix="CNMOPS", count_tag=None)
         cvcf, out = str(tmp_path / "cand.vcf.gz"), str(tmp_path / "filtered.vcf.gz")
         pairs = candidates([("chr1", 300_500, 320_500, "DEL", 3)])  # same event as the cn.mops DEL
-        src.add_candidates_to_calls(
-            cm, pairs, cvcf, p, source=src.CNV_SOURCE_PAIR, id_prefix="PAIR", count_tag="CLUSTER_SUPPORT"
+        cu.add_candidates_to_calls(
+            cm, pairs, cvcf, p, source=CNV_SOURCE_PAIR, id_prefix="PAIR", count_tag="CLUSTER_SUPPORT"
         )
-        assert src.filter_nested_cnv_candidates(cvcf, out) == {"nested": 0, "short": 0, "duplicate": 1}
+        assert collapse_cnv_calls.filter_nested_cnv_candidates(cvcf, out) == {"nested": 0, "short": 0, "duplicate": 1}
         with pysam.VariantFile(out) as v:
             kept = [(r.start, r.info["SVTYPE"], r.info["CNV_SOURCE"]) for r in v]
         assert kept == [(10_000, "DEL", ("depth",)), (300_500, "DEL", ("pair",)), (400_000, "DUP", ("cn.mops",))]
@@ -143,7 +144,7 @@ class TestNestedFilter:
         dvcf = str(tmp_path / "depth.vcf.gz")
         write_depth_calls(depth_calls([("chr1", 10_000, 12_000, "DEL")]), dvcf, "S1", fasta_index)
         sr = str(tmp_path / "sr.vcf.gz")
-        src.add_candidates_to_calls(dvcf, candidates([("chr1", 200_000, 210_000, "DEL", 2)]), sr, src.CandidateParams())
+        cu.add_candidates_to_calls(dvcf, candidates([("chr1", 200_000, 210_000, "DEL", 2)]), sr, cu.CandidateParams())
         pairs = candidates(
             [
                 ("chr1", 200_100, 210_050, "DEL", 9),  # same event as the split-read candidate: dropped
@@ -154,11 +155,11 @@ class TestNestedFilter:
             ]
         )
         cvcf, out = str(tmp_path / "cand.vcf.gz"), str(tmp_path / "filtered.vcf.gz")
-        p = src.CandidateParams(min_overlap=1.1)  # add all of them (the "already called" check is not tested here)
-        src.add_candidates_to_calls(
-            sr, pairs, cvcf, p, source=src.CNV_SOURCE_PAIR, id_prefix="PAIR", count_tag="CLUSTER_SUPPORT"
+        p = cu.CandidateParams(min_overlap=1.1)  # add all of them (the "already called" check is not tested here)
+        cu.add_candidates_to_calls(
+            sr, pairs, cvcf, p, source=CNV_SOURCE_PAIR, id_prefix="PAIR", count_tag="CLUSTER_SUPPORT"
         )
-        dropped = src.filter_nested_cnv_candidates(cvcf, out)
+        dropped = collapse_cnv_calls.filter_nested_cnv_candidates(cvcf, out)
         assert dropped == {"nested": 0, "short": 0, "duplicate": 2}
         with pysam.VariantFile(out) as v:
             kept = [(r.start, r.info["SVTYPE"], r.info["CNV_SOURCE"]) for r in v]
@@ -192,8 +193,8 @@ class TestScoreWithDepth:
     def score(self, tmp_path, sex, *, require_change=True):
         depth_file, ann = self.files(tmp_path)
         cand = pd.DataFrame([{"chrom": "chrX", "start": 34_000, "end": 90_000, "svtype": "DUP", "n_reads": 5}])
-        return src.score_with_depth(
-            cand, depth_file, depth_file, ann, sex, src.CandidateParams(), require_change=require_change
+        return cu.score_with_depth(
+            cand, depth_file, depth_file, ann, sex, cu.CandidateParams(), require_change=require_change
         )
 
     def test_candidate_across_a_par_edge_is_not_a_gain(self, tmp_path):
@@ -210,7 +211,7 @@ class TestScoreWithDepth:
         a[a.start < 30_000].to_parquet(ann)
         cand = pd.DataFrame([{"chrom": "chrX", "start": 50_000, "end": 60_000, "svtype": "DEL", "n_reads": 5}])
         sex = SexChromosomes({"chrX"}, set(), "XY")
-        out = src.score_with_depth(cand, depth_file, depth_file, ann, sex, src.CandidateParams(), require_change=False)
+        out = cu.score_with_depth(cand, depth_file, depth_file, ann, sex, cu.CandidateParams(), require_change=False)
         assert out.empty
 
     def test_without_the_par_the_edge_looks_like_a_gain(self, tmp_path):

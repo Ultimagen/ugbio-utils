@@ -16,6 +16,13 @@ Calls that are not PASS are not merged. One that lies at least filtered_inside_f
 either type, is dropped (the PASS call reports the region); the others are written unchanged. Each one is compared
 with the PASS calls directly, never through a chain of overlaps, so every dropped call is covered by a call that
 stays.
+
+filter_nested_cnv_candidates (before filtering, after breakpoint refinement):
+  Drop split-read, pair and cn.mops candidates that are shorter than 500 bp, >= 50% inside a same-type depth call (a
+  second call on an event that is already called), or with >= 50% reciprocal overlap with a same-type candidate kept
+  before them (refinement often moves several candidates of one deletion to the same breakpoints). Split-read
+  candidates are kept first, then pair candidates, each by the most reads in their cluster (CLUSTER_SUPPORT), then
+  cn.mops candidates.
 """
 
 import argparse
@@ -26,7 +33,13 @@ from collections import defaultdict
 
 import numpy as np
 import pysam
-from ugbio_cnv.cnv_vcf_consts import INFO_TAG_REGISTRY
+from ugbio_cnv.cnv_vcf_consts import (
+    CNV_SOURCE_CNMOPS,
+    CNV_SOURCE_DEPTH,
+    CNV_SOURCE_PAIR,
+    CNV_SOURCE_SPLIT_READ,
+    INFO_TAG_REGISTRY,
+)
 from ugbio_cnv.depth_cnv_caller import genotype_for
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
@@ -187,6 +200,72 @@ def collapse_cnv_calls(
     return n_merged
 
 
+# candidates kept first in the duplicate rule of filter_nested_cnv_candidates
+CANDIDATE_KEEP_ORDER = (CNV_SOURCE_SPLIT_READ, CNV_SOURCE_PAIR, CNV_SOURCE_CNMOPS)
+
+
+def _candidate_rank(r: pysam.VariantRecord) -> tuple:
+    """Order in which candidates are kept: split-read, pair, then cn.mops; then the most reads, then position."""
+    source = r.info.get("CNV_SOURCE", ())
+    rank = next((k for k, s in enumerate(CANDIDATE_KEEP_ORDER) if s in source), 0)
+    # cn.mops candidates have no read count; the tag is not defined when no candidate has one
+    reads = (r.info.get("CLUSTER_SUPPORT") if "CLUSTER_SUPPORT" in r.header.info else None) or 0
+    return (rank, -reads, r.start, r.stop)
+
+
+def filter_nested_cnv_candidates(
+    input_vcf: str, output_vcf: str, min_len: int = 500, min_inside: float = 0.5, min_overlap: float = 0.5
+) -> dict[str, int]:
+    """
+    Drop split-read, pair and cn.mops candidates that are short, nested in a depth call or duplicates; returns counts.
+
+    A candidate is dropped when shorter than min_len ("short"), >= min_inside inside a same-type depth call ("nested"),
+    or with >= min_overlap reciprocal overlap with a same-type candidate kept before it ("duplicate"; split-read
+    candidates are kept first, then pair candidates, each by the most reads in their cluster, then cn.mops).
+    """
+    with pysam.VariantFile(input_vcf) as vin:
+        records = list(vin)
+        header = vin.header.copy()
+
+    def source(r):
+        return tuple(r.info.get("CNV_SOURCE", ()))
+
+    candidates = [
+        r for r in records if source(r) in ((CNV_SOURCE_SPLIT_READ,), (CNV_SOURCE_PAIR,), (CNV_SOURCE_CNMOPS,))
+    ]
+    depth_calls: dict[tuple[str, str], list[tuple[int, int]]] = {}
+    for r in records:
+        if CNV_SOURCE_DEPTH in source(r):
+            depth_calls.setdefault((r.chrom, r.info["SVTYPE"]), []).append((r.start, r.stop))
+    depth = {k: np.array(v) for k, v in depth_calls.items()}
+    kept_candidates: dict[tuple[str, str], list[tuple[int, int]]] = {}
+    dropped_ids, dropped = set(), {"nested": 0, "short": 0, "duplicate": 0}
+    for r in sorted(candidates, key=_candidate_rank):
+        length, key = r.stop - r.start, (r.chrom, r.info["SVTYPE"])
+        reason = None
+        if length < min_len:
+            reason = "short"
+        elif key in depth and inside_fraction(r.start, r.stop, depth[key][:, 0], depth[key][:, 1]) >= min_inside:
+            reason = "nested"
+        elif any(
+            min(e, r.stop) - max(s, r.start) >= min_overlap * max(e - s, length)
+            for s, e in kept_candidates.get(key, [])
+        ):
+            reason = "duplicate"
+        if reason:
+            dropped[reason] += 1
+            dropped_ids.add(id(r))
+        else:
+            kept_candidates.setdefault(key, []).append((r.start, r.stop))
+    kept = [r for r in records if id(r) not in dropped_ids]
+    with pysam.VariantFile(output_vcf, "wz", header=header) as vout:
+        for r in kept:
+            vout.write(r)
+    pysam.tabix_index(output_vcf, preset="vcf", force=True)
+    logger.info(f"{output_vcf}: kept {len(kept)} of {len(records)} (dropped {dropped})")
+    return dropped
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="collapse_cnv_calls",
@@ -219,6 +298,26 @@ def run(argv: list[str]) -> None:
 
 def main() -> None:
     run(sys.argv)
+
+
+def parse_args_nested(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="filter_nested_cnv_candidates",
+        description="Drop split-read, pair and cn.mops candidates that are < 500 bp, nested or duplicates",
+    )
+    parser.add_argument("--input-vcf", required=True, help="Refined calls")
+    parser.add_argument("--output-vcf", required=True, help="Output .vcf.gz")
+    parser.add_argument("--min-len", type=int, default=500, help="Minimal candidate length after refinement")
+    return parser.parse_args(argv)
+
+
+def run_nested(argv: list[str]):
+    args = parse_args_nested(argv[1:])
+    filter_nested_cnv_candidates(args.input_vcf, args.output_vcf, args.min_len)
+
+
+def main_nested():
+    run_nested(sys.argv)
 
 
 if __name__ == "__main__":

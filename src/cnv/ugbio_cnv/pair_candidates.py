@@ -16,9 +16,9 @@ pair_cnv_candidates:
      deletion, and the 500 bp minimum is applied after refinement (filter_nested_cnv_candidates), when split reads have
      moved a real deletion to its breakpoints. A duplication contains the pairs: from the left reads' first start to
      the mates' last end (left start + TLEN), so the evidence step brackets the same pairs; kept from 500 bp.
-     Clusters with >= 50% reciprocal overlap are collapsed to the one with most pairs (split_read_candidates.
+     Clusters with >= 50% reciprocal overlap are collapsed to the one with most pairs (cnv_candidate_utils.
      dedup_clusters): one deletion often gives several clusters of pairs.
-  3. The same depth check as the split-read candidates (split_read_candidates.score_with_depth), and candidates with a
+  3. The same depth check as the split-read candidates (cnv_candidate_utils.score_with_depth), and candidates with a
      same-type call of the input VCF overlapping >= 50% reciprocally are dropped (already called). The rest are added
      with CNV_SOURCE=pair, CLUSTER_SUPPORT (pairs) and CIPOS / CIEND = +-ci (as refinement gives pair-shrunk calls).
 
@@ -36,9 +36,7 @@ import numpy as np
 import pandas as pd
 from ugbio_cnv.analyze_cnv_breakpoint_reads import MIN_PAIR_SPAN
 from ugbio_cnv.breakpoint_refinement import alignment_piece
-from ugbio_cnv.cnv_vcf_consts import CNV_SOURCE_PAIR
-from ugbio_cnv.depth_cnv_caller import read_sex_chromosomes
-from ugbio_cnv.split_read_candidates import (
+from ugbio_cnv.cnv_candidate_utils import (
     PAIR_FIELDS,
     CandidateParams,
     add_candidates_to_calls,
@@ -46,6 +44,8 @@ from ugbio_cnv.split_read_candidates import (
     samtools_lines,
     score_with_depth,
 )
+from ugbio_cnv.cnv_vcf_consts import CNV_SOURCE_PAIR
+from ugbio_cnv.depth_cnv_caller import read_sex_chromosomes
 from ugbio_core.logger import logger
 
 

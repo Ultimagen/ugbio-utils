@@ -327,7 +327,7 @@ gh run view <run-id>
 - `merge_cnv_sv.py` - Merge CNV calls with SV (GRIDSS) calls; `combine_cnv_vcf_utils.py` holds the VCF combining it uses
 - `process_cnvs.py`, `add_cipos.py` - Process CNV calls from cn.mops / FREEC to VCF; add CIPOS (cn.mops workflows)
 - `bicseq2_post_processing.py`, `annotate_FREEC_segments.py` - Post-processing
-- `depth_cnv_caller.py`, `split_read_candidates.py`, `pair_candidates.py`, `breakpoint_refinement.py`, `depth_annotation.py` - Cohort-free depth CNV caller (100 bp mosdepth depth, weighted PELT, one call per event, split-read candidates, breakpoint refinement); filtered by FilterVCF with a `cnv_depth` model (`ugbio_filtering.transformers.depth_cnv_features`), then `collapse_cnv_calls.py` merges overlapping PASS calls of the same type
+- `depth_cnv_caller.py`, `split_read_candidates.py`, `pair_candidates.py`, `cnmops_candidates.py`, `cnv_candidate_utils.py`, `breakpoint_refinement.py`, `depth_annotation.py` - Cohort-free depth CNV caller (100 bp mosdepth depth, weighted PELT, one call per event, split-read candidates, breakpoint refinement); filtered by FilterVCF with a `cnv_depth` model (`ugbio_filtering.transformers.depth_cnv_features`), then `collapse_cnv_calls.py` merges overlapping PASS calls of the same type
 
 **Entry Points:** 20
 - `analyze_cnv_breakpoint_reads`, `merge_cnv_sv`, `process_cnvs`, `add_cipos_to_vcf`, `plot_cnv_results`, `bicseq2_post_processing`, `annotate_FREEC_segments`, `plot_FREEC_neutral_AF`, `reformat_parascopy_bed`, `lpa_caller`, `estimate_ploidy`

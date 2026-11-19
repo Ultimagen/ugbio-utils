@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from ugbio_cnv import pair_candidates as pc
-from ugbio_cnv.split_read_candidates import CandidateParams
+from ugbio_cnv.cnv_candidate_utils import CandidateParams
 
 CP = CandidateParams()
 

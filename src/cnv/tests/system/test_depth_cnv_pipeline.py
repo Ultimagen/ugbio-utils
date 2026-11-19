@@ -15,7 +15,13 @@ from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_cnv import analyze_cnv_breakpoint_reads, breakpoint_refinement, depth_cnv_caller
+from ugbio_cnv import (
+    analyze_cnv_breakpoint_reads,
+    breakpoint_refinement,
+    cnmops_candidates,
+    collapse_cnv_calls,
+    depth_cnv_caller,
+)
 from ugbio_cnv import split_read_candidates as src
 from ugbio_cnv.merge_cnv_sv import merge_cnv_sv_vcfs
 
@@ -119,7 +125,7 @@ def run_chain(inputs: dict, tmp_path: Path) -> str:
             "1",
         ]
     )
-    src.run_nested(
+    collapse_cnv_calls.run_nested(
         ["filter_nested_cnv_candidates", "--input-vcf", f"{t}/refined.vcf.gz", "--output-vcf", f"{t}/final.vcf.gz"]
     )
     return f"{t}/final.vcf.gz"
@@ -248,7 +254,7 @@ def test_cnmops_calls_not_called_are_added(inputs, tmp_path):
                 out.write(rec)
     pysam.tabix_index(cnmops, preset="vcf", force=True)
     out = str(tmp_path / "with_cnmops.vcf.gz")
-    src.run_cnmops(
+    cnmops_candidates.run(
         ["cnmops_cnv_candidates", "--input-vcf", str(tmp_path / "cand.vcf.gz"), "--cnmops-vcf", cnmops]
         + ["--depth-mq0", inputs["q0"], "--depth-mq20", inputs["q20"], "--annotation", inputs["annotation"]]
         + ["--output-vcf", out]
