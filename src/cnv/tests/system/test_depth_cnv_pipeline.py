@@ -1,6 +1,10 @@
 """
-End-to-end run of the depth CNV caller on HG002 chr19:19.45-19.95 Mb (612365, 40x PE), which holds a 5.2 kb
-heterozygous deletion (T2T-Q100 truth: POS 19,723,634, SVLEN 5,219; also called by the SV caller).
+End-to-end run of the depth CNV caller on HG002 chr19:49.4-51.4 Mb (612365, 40x PE). T2T-Q100 truth in the region:
+- a 4.6 kb heterozygous deletion (POS 50,574,632, SVLEN 4,622; also called by the SV caller), refined by split reads;
+- a 1.6 kb homozygous deletion (POS 50,903,499, SVLEN 1,576), refined by read pairs;
+- tandem duplications / insertions of 2-97 kb at 50.09-50.14 Mb (copy number about 5), called from depth;
+- tandem-repeat expansions at 49.46 Mb (0.9-1.7 kb), found as duplications from read pairs only.
+The depth caller also calls two deletions without truth (50.50 and 51.32 Mb), left for the filter model.
 
 Chain as in the pipeline: call_depth_cnvs -> split_read_cnv_candidates -> analyze_cnv_breakpoint_reads ->
 refine_cnv_breakpoints -> filter_nested_cnv_candidates, then merge_cnv_sv with the SV calls; with the optional cn.mops
@@ -16,7 +20,10 @@ from ugbio_cnv import split_read_candidates as src
 from ugbio_cnv.merge_cnv_sv import merge_cnv_sv_vcfs
 
 SAMPLE = "NA24385"  # as in gridss_sv_example.vcf.gz (merge_cnv_sv needs the same sample)
-TRUE_DEL = (19723635, 19728853)  # split-read junction, left-normalized: the deleted bases of the truth record
+TRUE_DEL = (50574633, 50579254)  # split-read junction, left-normalized: the deleted bases of the truth record
+HOM_DEL = (50903556, 50905041)  # pair junction of the homozygous deletion
+DUP_REGION = (50_090_000, 50_140_000)  # the duplications called from depth
+PAIR_DUPS = ((49461052, 49463638), (49461062, 49461589))  # the tandem-repeat expansions found by read pairs
 
 
 @pytest.fixture
@@ -27,13 +34,13 @@ def resources_dir():
 @pytest.fixture
 def inputs(resources_dir):
     d = resources_dir / "depth_cnv"
-    prefix = d / "HG002.chr19_19.45-19.95M"
+    prefix = d / "HG002.chr19_49.4-51.4M"
     return {
         "bam": str(prefix) + ".bam",
         "q0": str(prefix) + ".q0.regions.bed.gz",
         "q20": str(prefix) + ".q20.regions.bed.gz",
         "sv": str(resources_dir / "gridss_sv_example.vcf.gz"),
-        "annotation": str(d / "annotation.chr19_19.4-20.0M.parquet"),
+        "annotation": str(d / "annotation.chr19_49.35-51.45M.parquet"),
         "fai": str(resources_dir / "chr19.fasta.fai"),
         "fasta": str(resources_dir / "chr19.fasta"),
     }
@@ -118,15 +125,16 @@ def run_chain(inputs: dict, tmp_path: Path) -> str:
     return f"{t}/final.vcf.gz"
 
 
-def test_depth_cnv_pipeline_finds_and_refines_the_deletion(inputs, tmp_path):
+def test_depth_cnv_pipeline_finds_and_refines_the_deletions(inputs, tmp_path):
     final = run_chain(inputs, tmp_path)
     with pysam.VariantFile(final) as v:
         assert list(v.header.samples) == [SAMPLE]
         meta = {r.key: r.value for r in v.header.records if r.type == "GENERIC"}
         assert meta["depth_cnv_karyotype"] == "not inferred (no chrX)"  # chr19 only: no sex chromosomes to decide
-        dels = [r for r in v if r.info["SVTYPE"] == "DEL"]
-    assert len(dels) == 1
-    d = dels[0]
+        calls = list(v)
+    dels = [r for r in calls if r.info["SVTYPE"] == "DEL"]
+    assert len(dels) == 4
+    d = next(r for r in dels if r.start < TRUE_DEL[1] and r.stop > TRUE_DEL[0])
     assert (d.pos, d.stop) == TRUE_DEL  # refined to the split-read junction
     assert d.info["BREAKPOINT_SOURCE"] == "split_read"
     assert d.info["CNV_SOURCE"] == ("depth",)
@@ -135,6 +143,14 @@ def test_depth_cnv_pipeline_finds_and_refines_the_deletion(inputs, tmp_path):
     assert abs(d.info["DEPTH_START"] - TRUE_DEL[0]) <= 1000
     assert d.samples[SAMPLE]["GT"] == (0, 1)
     assert "PASS" in d.filter.keys()
+    h = next(r for r in dels if r.start < HOM_DEL[1] and r.stop > HOM_DEL[0])
+    assert (h.pos, h.stop) == HOM_DEL  # refined to the read-pair junction
+    assert h.info["BREAKPOINT_SOURCE"] == "pair"
+    assert h.samples[SAMPLE]["GT"] == (1, 1)
+    dups = [r for r in calls if r.info["SVTYPE"] == "DUP"]
+    assert dups and all(DUP_REGION[0] <= r.start and r.stop <= DUP_REGION[1] for r in dups)
+    assert all(r.info["CNV_SOURCE"] == ("depth",) and r.info["CN_MEAN"] > 4 for r in dups)
+    assert sum(r.stop - r.start for r in dups) > 40_000
 
 
 def test_output_merges_with_sv_calls(inputs, tmp_path):
@@ -149,7 +165,7 @@ def test_output_merges_with_sv_calls(inputs, tmp_path):
     # the SV example is genome-wide; keep the test region (the reference index here is chr19 only)
     sv_region = str(tmp_path / "sv.region.vcf.gz")
     with pysam.VariantFile(inputs["sv"]) as vin, pysam.VariantFile(sv_region, "wz", header=vin.header) as vout:
-        for r in vin.fetch("chr19", 19_450_000, 19_950_000):
+        for r in vin.fetch("chr19", 49_400_000, 51_400_000):
             vout.write(r)
     pysam.tabix_index(sv_region, preset="vcf", force=True)
     merged = str(tmp_path / "merged.vcf.gz")
@@ -170,7 +186,7 @@ def test_output_merges_with_sv_calls(inputs, tmp_path):
     assert "depth" in dels[0].info["CNV_SOURCE"]
 
 
-def test_pair_candidates_find_the_deletion_from_pairs(inputs, tmp_path):
+def test_pair_candidates_find_the_deletion_and_duplications_from_pairs(inputs, tmp_path):
     from ugbio_cnv import pair_candidates
 
     t = str(tmp_path)
@@ -197,11 +213,21 @@ def test_pair_candidates_find_the_deletion_from_pairs(inputs, tmp_path):
     hit = [r for r in found if abs(r.start - TRUE_DEL[0]) <= 600 and abs(r.stop - TRUE_DEL[1]) <= 600]
     assert len(hit) == 1
     assert hit[0].info["CNV_SOURCE"] == ("pair",) and hit[0].info["CLUSTER_SUPPORT"] >= 3
+    # the tandem-repeat expansions have no depth call: only the pairs find them
+    dups = sorted((r.start, r.stop) for r in v_dups(f"{t}/pair.vcf.gz"))
+    assert len(dups) == len(PAIR_DUPS)
+    assert all(abs(a - b) <= 100 for got, exp in zip(dups, sorted(PAIR_DUPS)) for a, b in zip(got, exp))
     # with the depth call present, the deletion is not added a second time
     pair_candidates.pair_cnv_candidates(*args, f"{t}/depth.vcf.gz", *tracks, f"{t}/pair2.vcf.gz", ["chr19"], 1)
     with pysam.VariantFile(f"{t}/pair2.vcf.gz") as v:
         again = [r for r in v if r.id.startswith("PAIR_") and r.start < TRUE_DEL[1] and r.stop > TRUE_DEL[0]]
     assert not again
+
+
+def v_dups(path: str) -> list:
+    """Duplications added by the pair candidates."""
+    with pysam.VariantFile(path) as v:
+        return [r for r in v if r.id.startswith("PAIR_") and r.info["SVTYPE"] == "DUP"]
 
 
 def test_cnmops_calls_not_called_are_added(inputs, tmp_path):
@@ -216,7 +242,7 @@ def test_cnmops_calls_not_called_are_added(inputs, tmp_path):
         header.info.add("END", 1, "Integer", "end")
         header.add_sample(SAMPLE)
         with pysam.VariantFile(cnmops, "wz", header=header) as out:
-            for s, e in ((19_600_000, 19_605_000), (TRUE_DEL[0] - 300, TRUE_DEL[1] + 700)):
+            for s, e in ((TRUE_DEL[0] - 300, TRUE_DEL[1] + 700), (51_100_000, 51_105_000)):
                 rec = out.new_record(contig="chr19", start=s, stop=e, alleles=("N", "<DEL>"))
                 rec.info["SVTYPE"] = "DEL"
                 out.write(rec)
@@ -229,4 +255,4 @@ def test_cnmops_calls_not_called_are_added(inputs, tmp_path):
     )
     with pysam.VariantFile(out) as v:
         added = [(r.start, r.stop) for r in v if r.info["CNV_SOURCE"] == ("cn.mops",)]
-    assert added == [(19_600_000, 19_605_000)]
+    assert added == [(51_100_000, 51_105_000)]
