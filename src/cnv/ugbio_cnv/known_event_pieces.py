@@ -10,7 +10,7 @@ windows the caller would call in the event's direction, without N bases and with
 segmental-duplication / low-mappability bins. The windows are written as depth calls (call_depth_cnvs format).
 
 Run the pipeline's evidence and refinement steps on them (analyze_cnv_breakpoint_reads, refine_cnv_breakpoints), and
-pass the refined VCF with the events BED to training_prep_depth_cnv_pipeline --known_events: every piece is a positive.
+pass the refined VCF with the events BED to training_prep_cnv_pipeline --known_events: every piece is a positive.
 """
 
 import argparse

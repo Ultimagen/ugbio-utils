@@ -134,7 +134,7 @@ training_prep_pipeline \
 - `--contig_for_test`: Chromosome to use as test set
 - `--ignore_genotype`: Ignore genotype when comparing to ground truth
 
-#### `training_prep_depth_cnv_pipeline`
+#### `training_prep_cnv_pipeline`
 
 Prepares training data for the depth CNV caller's filter (`--vcf_type cnv`): labels the calls of a sample with
 truth (e.g. HG002) and writes train / test HDF5 files, split by chromosome.
@@ -153,7 +153,7 @@ refine_cnv_breakpoints --input-vcf YLC444.pieces.ann.vcf.gz --alignment YLC444.c
 
 # labels the calls >= 500 bp in the benchmark BED with truvari: matched 1, unmatched 0;
 # --known_events CALL_VCF EVENTS_BED (chrom, start, end, svtype) adds positives: calls >= 50% inside an event
-training_prep_depth_cnv_pipeline \
+training_prep_cnv_pipeline \
   --call_vcf HG002.depth_cnv.vcf.gz \
   --truth_vcf GRCh38_HG2-T2TQ100-V1.1_stvar.ge500.vcf.gz \
   --benchmark_bed GRCh38_HG2-T2TQ100-V1.1_stvar.benchmark.bed \

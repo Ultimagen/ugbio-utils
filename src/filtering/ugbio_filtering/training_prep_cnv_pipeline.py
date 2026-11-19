@@ -147,7 +147,7 @@ def known_event_positives(call_vcf: str, events_bed: str, min_inside: float = 0.
     return calls[keep].assign(label=1)
 
 
-def training_prep_depth_cnv(
+def training_prep_cnv(
     call_vcf: str,
     truth_vcf: str,
     benchmark_bed: str,
@@ -202,7 +202,7 @@ def training_prep_depth_cnv(
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="training_prep_depth_cnv_pipeline",
+        prog="training_prep_cnv_pipeline",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -228,7 +228,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def run(argv: list[str]):
     args = parse_args(argv[1:])
     logger.setLevel(getattr(logging, args.verbosity))
-    training_prep_depth_cnv(
+    training_prep_cnv(
         args.call_vcf,
         args.truth_vcf,
         args.benchmark_bed,

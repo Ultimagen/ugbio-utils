@@ -5,7 +5,7 @@ import pandas as pd
 import pysam
 import pytest
 from ugbio_filtering import train_models_pipeline
-from ugbio_filtering import training_prep_depth_cnv_pipeline as tp
+from ugbio_filtering import training_prep_cnv_pipeline as tp
 
 CONTIGS = {"chr1": 5_000_000, "chr2": 5_000_000}
 INFO = [
@@ -118,7 +118,7 @@ def inputs(tmp_path):
 
 def test_labels_split_and_train(inputs, tmp_path):
     prefix = str(tmp_path / "depth_cnv")
-    train, test = tp.training_prep_depth_cnv(inputs["calls"], inputs["truth"], inputs["bed"], ["chr1"], prefix)
+    train, test = tp.training_prep_cnv(inputs["calls"], inputs["truth"], inputs["bed"], ["chr1"], prefix)
     assert len(train) == 30 and len(test) == 30  # chr1 / chr2
     assert set(train["chrom"]) == {"chr1"} and set(test["chrom"]) == {"chr2"}
     assert train["label"].sum() == 15  # every second call matches the truth
@@ -146,7 +146,7 @@ def test_known_event_positives(inputs, tmp_path):
     assert set(pos["label"]) == {1}
 
     prefix = str(tmp_path / "with_events")
-    train, _ = tp.training_prep_depth_cnv(
+    train, _ = tp.training_prep_cnv(
         inputs["calls"], inputs["truth"], inputs["bed"], ["chr1"], prefix, known_events=[(inputs["calls"], str(events))]
     )
     assert len(train) == 31
