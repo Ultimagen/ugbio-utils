@@ -154,13 +154,10 @@ train_models_pipeline --train_dfs hg002_depth_cnv.train.h5 --test_dfs hg002_dept
 ```
 
 Optional: samples with known long events (e.g. cell lines) can add training rows. The caller gives one call per event,
-so a long event alone adds one row; `scripts/cnv/split_cnv_into_pieces.py` in BioinfoResearch cuts 10-100 kb pieces of
-the events and writes them with their own truth VCF and benchmark BED. After evidence and refinement as in the
-pipeline, the pieces are labelled with the same command (`--call_vcf <pieces> --truth_vcf <prefix>.truth.vcf.gz
---benchmark_bed <prefix>.benchmark.bed`) and their `.train.h5` is added to `--train_dfs`.
-
-`cnv_filtering_model_v2.0.0.pkl` was trained on HG002 613168 and the YLC444 (chr21 DUP) and GSM704 (chrX DEL) events
-with their pieces. The same model filters single-end calls and cn.mops candidates.
+so a long event alone adds one row; split_cnv_into_pieces (BioinfoResearch) cuts 10-100 kb pieces of the events and
+writes them with their own truth VCF and benchmark BED. After evidence and refinement as in the pipeline, the pieces are
+labelled with the same command against that truth VCF and benchmark BED, and their training table is added to
+`--train_dfs`.
 
 ## Typical Workflows
 
