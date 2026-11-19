@@ -98,7 +98,25 @@ def _is_standard_biallelic_snp(ref: str, alts: tuple[str, ...] | None) -> bool:
     return ref in _STANDARD_BASES and alts is not None and len(alts) == 1 and alts[0] in _STANDARD_BASES
 
 
-def _determine_karyotype(x_ratio: float, y_ratio: float) -> str:
+def determine_karyotype(x_ratio: float, y_ratio: float | None = None) -> str:
+    """
+    Karyotype from the chrX and chrY depth ratios to the autosomes (copies / 2).
+
+    Parameters
+    ----------
+    x_ratio : float
+        chrX depth ratio to the autosomes.
+    y_ratio : float, optional
+        chrY depth ratio to the autosomes; None when chrY has no data (e.g. not among the called contigs): chrX alone
+        then tells one copy (X) from two (XX).
+
+    Returns
+    -------
+    str
+        Karyotype label (XX, XY, XXY, XYY, X0, XXXY, XXX, X), or UNDETERMINED.
+    """
+    if y_ratio is None:
+        return "X" if 0.25 <= x_ratio <= 0.75 else "XX" if 0.75 < x_ratio <= 1.25 else "UNDETERMINED"  # noqa: PLR2004
     for x_min, x_max, y_min, y_max, label in _KARYOTYPE_TABLE:
         if x_min <= x_ratio <= x_max and y_min <= y_ratio <= y_max:
             return label
@@ -195,7 +213,7 @@ def _compute_ploidy_from_chr_data(
             "karyotype not determined."
         )
     else:
-        karyotype = _determine_karyotype(x_ratio, y_ratio)
+        karyotype = determine_karyotype(x_ratio, y_ratio)
     sex_label = _sex_label_from_karyotype(karyotype)
 
     per_chrom = []

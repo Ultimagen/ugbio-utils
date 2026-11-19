@@ -34,7 +34,7 @@ from ugbio_cnv.cnv_vcf_consts import (
     CNV_SOURCE_DEPTH,
 )
 from ugbio_cnv.depth_annotation import BIN_SIZE
-from ugbio_cnv.estimate_ploidy import _determine_karyotype
+from ugbio_cnv.estimate_ploidy import determine_karyotype
 from ugbio_core.logger import logger
 
 AUTOSOME_PATTERN = re.compile(r"(chr)?\d+")
@@ -178,12 +178,7 @@ def infer_sex_chromosomes(
     ambiguous = X_RATIO_AMBIGUOUS[0] < x_ratio < X_RATIO_AMBIGUOUS[1] or (
         y_ratio is not None and Y_RATIO_AMBIGUOUS[0] < y_ratio < Y_RATIO_AMBIGUOUS[1]
     )
-    if ambiguous:
-        karyotype = "UNDETERMINED"
-    elif y_ratio is None:  # chrY not called: chrX alone decides
-        karyotype = "X" if 0.25 <= x_ratio <= 0.75 else "XX" if 0.75 < x_ratio <= 1.25 else "UNDETERMINED"  # noqa: PLR2004
-    else:
-        karyotype = _determine_karyotype(x_ratio, y_ratio)
+    karyotype = "UNDETERMINED" if ambiguous else determine_karyotype(x_ratio, y_ratio)  # no chrY: chrX alone
     found = f"{chrx_name} {x_ratio:.2f}" + (f", {chry_name} {y_ratio:.2f}" if y_ratio is not None else "")
     if karyotype == "UNDETERMINED":
         logger.warning(
