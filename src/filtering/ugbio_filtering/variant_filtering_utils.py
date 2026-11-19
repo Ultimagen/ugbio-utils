@@ -67,7 +67,7 @@ def train_model(
     _validate_data(x_train_df)
     logger.info("Transform: done")
     if vtype == VcfType.CNV:
-        # out-of-bag scores choose the decision threshold (cnv_depth_decision_threshold)
+        # out-of-bag scores choose the decision threshold (max_f1_decision_threshold in train_models_pipeline)
         clf = RandomForestClassifier(
             n_estimators=500,
             max_depth=5,
@@ -92,29 +92,31 @@ def train_model(
     return clf, transformer
 
 
-def cnv_depth_decision_threshold(model: RandomForestClassifier, labels: np.ndarray) -> int:
+def max_f1_decision_threshold(scores: np.ndarray, labels: np.ndarray) -> int:
     """
-    FilterVCF decision threshold for a CNV forest: the out-of-bag probability with the best F1 on the training
-    rows (0.20 - 0.88 in steps of 0.02), as the phred-like score FilterVCF compares it to, 30 + 10 log10(p / (1 - p)),
-    rounded to an integer (a call passes when its score is above the threshold).
+    FilterVCF decision threshold with the best F1: the probability threshold (0.20 - 0.88 in steps of 0.02) with the
+    best F1 of (scores, labels), as the phred-like score FilterVCF compares it to, 30 + 10 log10(p / (1 - p)), rounded
+    to an integer (a call passes when its score is above the threshold).
+
+    The scores should not be in-sample: e.g. out-of-bag scores of a random forest, or scores of held-out rows.
 
     Parameters
     ----------
-    model : RandomForestClassifier
-        Forest trained with oob_score=True.
+    scores : np.ndarray
+        Probability of the true class for each row.
     labels : np.ndarray
-        Training labels (0 / 1) in the order the model was trained on.
+        Labels (0 / 1) of the same rows.
 
     Returns
     -------
     int
         Decision threshold for filter_variants_pipeline --decision_threshold.
     """
-    oob = model.oob_decision_function_[:, 1]
+    scores = np.asarray(scores)
     y = np.asarray(labels).astype(bool)
 
     def f1(t):
-        return 2 * (y & (oob >= t)).sum() / max(y.sum() + (oob >= t).sum(), 1)
+        return 2 * (y & (scores >= t)).sum() / max(y.sum() + (scores >= t).sum(), 1)
 
     best = float(max(np.arange(0.2, 0.9, 0.02), key=f1))
     return int(round(30 + 10 * np.log10(best / (1 - best))))

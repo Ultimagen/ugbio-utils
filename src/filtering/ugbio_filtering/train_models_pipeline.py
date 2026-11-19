@@ -126,8 +126,9 @@ def run(argv: list[str]):
                 logger.info(f"FilterVCF decision threshold (given): {extra['decision_threshold']}")
             else:
                 trained = train_df[train_df["label"].isin([0, 1])]
-                extra["decision_threshold"] = variant_filtering_utils.cnv_depth_decision_threshold(
-                    model, trained["label"].to_numpy()
+                # out-of-bag scores: the forest's scores on the training rows that are not in-sample
+                extra["decision_threshold"] = variant_filtering_utils.max_f1_decision_threshold(
+                    model.oob_decision_function_[:, 1], trained["label"].to_numpy()
                 )
                 logger.info(f"FilterVCF decision threshold (max out-of-bag F1): {extra['decision_threshold']}")
 
