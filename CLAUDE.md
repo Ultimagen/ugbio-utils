@@ -38,7 +38,7 @@ src/
 ├── cloud_utils/  (4 files)  ugbio_cloud_utils  - AWS/GCS integration
 ├── omics/        (25 files) ugbio_omics        - AWS HealthOmics workflows
 ├── freec/        (2 files)  ugbio_freec        - FREEC CNV config
-└── pypgx/        (0 files)  ugbio_pypgx        - Pharmacogenomics (stub)
+└── pypgx/        (1 file)   ugbio_pypgx        - Pharmacogenomics (pypgx image, pgx_ngs_pipeline)
 ```
 
 ### Module Dependency Hierarchy
