@@ -40,7 +40,6 @@ filter_nested_cnv_candidates = "ugbio_cnv.split_read_candidates:main_nested"
 cnmops_cnv_candidates = "ugbio_cnv.split_read_candidates:main_cnmops"
 refine_cnv_breakpoints = "ugbio_cnv.breakpoint_refinement:main"
 collapse_cnv_calls = "ugbio_cnv.collapse_cnv_calls:main"
-cnv_known_event_pieces = "ugbio_cnv.known_event_pieces:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true
