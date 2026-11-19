@@ -183,6 +183,11 @@ sv_comparison_pipeline \
 ```
 
 
+## Sequins
+
+- `sequins_vcfeval --call-vcf --truth-vcf --eval-bed --ref-fasta --sdf-dir --output-prefix`: vcfeval of calls vs. the sequins truth; writes `<prefix>.concordance.h5` (concordance dataframe, key `concordance`).
+- `sequins_report --base-file-name ... --genomes ... --median-depths ... --detected ... --concordance-h5s ...`: HTML report (detected spikes, SNP/indel precision/recall/F1, discordant variants). The h5 list holds only the detected genomes, in the order of `--genomes`.
+
 ## Dependencies
 
 The following binary tools are included in the Docker image and need to be installed for standalone running:
