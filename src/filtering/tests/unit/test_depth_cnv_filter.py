@@ -132,7 +132,7 @@ class TestDepthCnvModel:
         assert probabilities.shape == (40, 2)
 
     def test_needed_features_are_the_info_columns(self):
-        assert transformers.get_needed_features(VcfType.CNV) == [f.lower() for f in transformers.DEPTH_CNV_INFO_FIELDS]
+        assert transformers.get_needed_features(VcfType.CNV) == [f.lower() for f in transformers.CNV_INFO_FIELDS]
 
 
 class TestDecisionThreshold:

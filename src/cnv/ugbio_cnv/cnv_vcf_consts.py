@@ -114,7 +114,7 @@ FILTER_TAG_REGISTRY = {
 
 # INFO tags written by the depth CNV caller (depth_cnv_caller, split_read_candidates, breakpoint_refinement).
 # Kept apart from INFO_TAG_REGISTRY, whose tags are added to every CNV VCF header (cn.mops, FREEC).
-DEPTH_CNV_INFO_TAGS: dict[str, tuple[str, int | str, str, str, str]] = {
+CNV_INFO_TAGS: dict[str, tuple[str, int | str, str, str, str]] = {
     "END": ("END", 1, "Integer", "End position of the variant", "INFO"),
     "CIEND": ("CIEND", 2, "Integer", "Confidence interval around END for imprecise variants", "INFO"),
     "CN_MEAN": ("CN_MEAN", 1, "Float", "Mean copy-number estimate over the call (depth caller)", "INFO"),

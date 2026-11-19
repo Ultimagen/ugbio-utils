@@ -59,7 +59,7 @@ KEY_COLUMNS = ["chrom", "pos", "id"]  # calls may share a start (e.g. two pair D
 
 def read_calls(call_vcf: str) -> pd.DataFrame:
     """Calls with the INFO columns the depth CNV filter reads, plus chrom, pos, id and end."""
-    calls = vcftools.get_vcf_df(call_vcf, custom_info_fields=transformers.DEPTH_CNV_INFO_FIELDS)
+    calls = vcftools.get_vcf_df(call_vcf, custom_info_fields=transformers.CNV_INFO_FIELDS)
     with pysam.VariantFile(call_vcf) as vcf:
         ends = {(r.chrom, r.pos, r.id): r.stop for r in vcf}
     calls = calls.reset_index(drop=True)

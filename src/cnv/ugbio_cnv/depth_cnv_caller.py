@@ -30,8 +30,8 @@ import pandas as pd
 import pysam
 from ugbio_cnv.cnv_bed_format_utils import add_vcf_header
 from ugbio_cnv.cnv_vcf_consts import (
+    CNV_INFO_TAGS,
     CNV_SOURCE_DEPTH,
-    DEPTH_CNV_INFO_TAGS,
 )
 from ugbio_cnv.depth_annotation import BIN_SIZE
 from ugbio_cnv.estimate_ploidy import _determine_karyotype
@@ -614,7 +614,7 @@ def refine_edges(calls: pd.DataFrame, bins: pd.DataFrame, p: Params) -> pd.DataF
 def depth_cnv_header(sample_name: str, fasta_index: str, sex: SexChromosomes | None = None) -> pysam.VariantHeader:
     """CNV VCF header (contigs, ALTs, registry tags, GT), the depth caller's INFO tags and the sex chromosome setup."""
     header = add_vcf_header(sample_name, fasta_index)
-    for tag in DEPTH_CNV_INFO_TAGS.values():
+    for tag in CNV_INFO_TAGS.values():
         if tag[0] not in header.info:
             header.info.add(*tag[:-1])
     sex = sex or SexChromosomes()

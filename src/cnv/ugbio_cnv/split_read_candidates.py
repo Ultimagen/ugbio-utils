@@ -38,11 +38,11 @@ import pandas as pd
 import pysam
 from ugbio_cnv.breakpoint_refinement import split_read_junctions
 from ugbio_cnv.cnv_vcf_consts import (
+    CNV_INFO_TAGS,
     CNV_SOURCE_CNMOPS,
     CNV_SOURCE_DEPTH,
     CNV_SOURCE_PAIR,
     CNV_SOURCE_SPLIT_READ,
-    DEPTH_CNV_INFO_TAGS,
 )
 from ugbio_cnv.depth_annotation import BIN_SIZE
 from ugbio_cnv.depth_cnv_caller import SexChromosomes, genotype_for, read_sex_chromosomes
@@ -273,7 +273,7 @@ def add_candidates_to_calls(
     with pysam.VariantFile(depth_vcf) as vin:
         header = vin.header.copy()
         if count_tag and count_tag not in header.info:
-            header.info.add(*DEPTH_CNV_INFO_TAGS[count_tag][:-1])
+            header.info.add(*CNV_INFO_TAGS[count_tag][:-1])
         records = list(vin)
     sample = list(header.samples)[0]
     dep = pd.DataFrame(

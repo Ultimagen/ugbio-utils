@@ -28,7 +28,7 @@ from multiprocessing import Pool
 
 import numpy as np
 import pysam
-from ugbio_cnv.cnv_vcf_consts import CNV_SOURCE_DEPTH, CNV_SOURCE_PAIR, CNV_SOURCE_SPLIT_READ, DEPTH_CNV_INFO_TAGS
+from ugbio_cnv.cnv_vcf_consts import CNV_INFO_TAGS, CNV_SOURCE_DEPTH, CNV_SOURCE_PAIR, CNV_SOURCE_SPLIT_READ
 from ugbio_core.logger import logger
 
 CIGAR_PATTERN = re.compile(r"(\d+)([MIDNSHP=X])")
@@ -272,7 +272,7 @@ def refine_cnv_breakpoints(
         header = vin.header.copy()
         for tag in ("BREAKPOINT_SOURCE", "BREAKPOINT_SUPPORT", "DEPTH_START", "DEPTH_END", "CIEND"):
             if tag not in header.info:
-                header.info.add(*DEPTH_CNV_INFO_TAGS[tag][:-1])
+                header.info.add(*CNV_INFO_TAGS[tag][:-1])
         records = []
         for rec in vin:
             source, ns, ne, n_support = refined.get(rec.id, (CNV_SOURCE_DEPTH, rec.start, rec.stop, 0))
