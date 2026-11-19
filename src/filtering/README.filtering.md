@@ -140,26 +140,12 @@ Prepares training data for the depth CNV caller's filter (`--vcf_type cnv`): lab
 truth (e.g. HG002) and writes train / test HDF5 files, split by chromosome.
 
 ```bash
-# optional: training pieces (10-100 kb) of a known long event, then evidence and refinement as in the pipeline
-# (one call per event, so a long event alone adds one row); --haploid-contigs chrX for a male sample
-cnv_known_event_pieces --depth-mq0 YLC444.q0.regions.bed.gz --depth-mq20 YLC444.q20.regions.bed.gz \
-  --annotation ref.depth_annotation.parquet --events-bed ylc444.events.bed --sample-name YLC444 \
-  --fasta-index ref.fasta.fai --n-pieces 15 --min-len 10000 --max-len 100000 --seed 1002 \
-  --output-vcf YLC444.pieces.vcf.gz
-analyze_cnv_breakpoint_reads --bam-file YLC444.cram --vcf-file YLC444.pieces.vcf.gz --reference-fasta ref.fasta \
-  --cushion 1500 --output-file YLC444.pieces.ann.vcf.gz --output-bam YLC444.pieces.ev.bam
-refine_cnv_breakpoints --input-vcf YLC444.pieces.ann.vcf.gz --alignment YLC444.cram --reference-fasta ref.fasta \
-  --output-vcf YLC444.pieces.refined.vcf.gz
-
-# labels the calls >= 500 bp in the benchmark BED with truvari: matched 1, unmatched 0;
-# --known_events CALL_VCF EVENTS_BED (chrom, start, end, svtype) adds positives: calls >= 50% inside an event
+# labels the calls >= 500 bp in the benchmark BED with truvari: matched 1, unmatched 0
 training_prep_cnv_pipeline \
   --call_vcf HG002.depth_cnv.vcf.gz \
   --truth_vcf GRCh38_HG2-T2TQ100-V1.1_stvar.ge500.vcf.gz \
   --benchmark_bed GRCh38_HG2-T2TQ100-V1.1_stvar.benchmark.bed \
   --train_chromosomes chr1 chr10 chr11 chr12 chr13 chr14 chr15 \
-  --known_events YLC444.depth_cnv.vcf.gz ylc444.events.bed \
-  --known_events YLC444.pieces.refined.vcf.gz ylc444.events.bed \
   --output_prefix hg002_depth_cnv
 
 # the threshold is stored in the pickle; without --decision_threshold it is chosen by the best F1
@@ -167,8 +153,14 @@ train_models_pipeline --train_dfs hg002_depth_cnv.train.h5 --test_dfs hg002_dept
   --output_file_prefix cnv_filtering_model --vcf_type cnv --gt_type approximate --decision_threshold 28
 ```
 
-`cnv_filtering_model_v2.0.0.pkl` was trained this way on HG002 613168 and the YLC444 (chr21 DUP) and GSM704
-(chrX DEL) events with their pieces. The same model filters single-end calls and cn.mops candidates.
+Optional: samples with known long events (e.g. cell lines) can add training rows. The caller gives one call per event,
+so a long event alone adds one row; `scripts/cnv/split_cnv_into_pieces.py` in BioinfoResearch cuts 10-100 kb pieces of
+the events and writes them with their own truth VCF and benchmark BED. After evidence and refinement as in the
+pipeline, the pieces are labelled with the same command (`--call_vcf <pieces> --truth_vcf <prefix>.truth.vcf.gz
+--benchmark_bed <prefix>.benchmark.bed`) and their `.train.h5` is added to `--train_dfs`.
+
+`cnv_filtering_model_v2.0.0.pkl` was trained on HG002 613168 and the YLC444 (chr21 DUP) and GSM704 (chrX DEL) events
+with their pieces. The same model filters single-end calls and cn.mops candidates.
 
 ## Typical Workflows
 

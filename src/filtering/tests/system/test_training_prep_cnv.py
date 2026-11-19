@@ -138,24 +138,24 @@ def test_labels_split_and_train(inputs, tmp_path):
     assert ((scores > 0.5) == test["label"].astype(bool)).mean() >= 0.9
 
 
-def test_known_event_positives(inputs, tmp_path):
-    events = tmp_path / "events.bed"
-    events.write_text("chr2\t100000\t200000\tDEL\nchr2\t300000\t400000\tDUP\n")  # one DEL event, one DUP event
-    pos = tp.known_event_positives(inputs["calls"], str(events))
-    assert list(pos["chrom"]) == ["chr2"] and list(pos["pos"]) == [100_001]  # the DUP event has no DEL call
-    assert set(pos["label"]) == {1}
+def test_pieces_label_against_their_own_truth(inputs, tmp_path):
+    """Pieces of known events are true by construction: with themselves as truth, every one is labelled 1."""
+    bed = tmp_path / "events.bed"
+    bed.write_text("chr2\t50000\t450000\n")  # the event, as split_cnv_into_pieces writes it
+    pieces_prefix = str(tmp_path / "pieces")
+    pieces, _ = tp.training_prep_cnv(inputs["calls"], inputs["calls"], str(bed), ["chr2"], pieces_prefix)
+    assert len(pieces) == 4 and set(pieces["label"]) == {1}  # the four calls starting at 100-400 kb
 
-    prefix = str(tmp_path / "with_events")
-    train, _ = tp.training_prep_cnv(
-        inputs["calls"], inputs["truth"], inputs["bed"], ["chr1"], prefix, known_events=[(inputs["calls"], str(events))]
-    )
-    assert len(train) == 31
+    # the pieces table is passed to train_models_pipeline next to the truth table
+    prefix = str(tmp_path / "truth")
+    tp.training_prep_cnv(inputs["calls"], inputs["truth"], inputs["bed"], ["chr1"], prefix)
 
     # a given decision threshold is stored instead of the out-of-bag F1 one
     out26 = str(tmp_path / "model26")
     train_models_pipeline.run(
-        ["train_models_pipeline", "--train_dfs", f"{prefix}.train.h5", "--test_dfs", f"{prefix}.test.h5",
-         "--output_file_prefix", out26, "--vcf_type", "cnv", "--gt_type", "approximate",
+        ["train_models_pipeline", "--train_dfs", f"{prefix}.train.h5", f"{pieces_prefix}.train.h5",
+         "--test_dfs", f"{prefix}.test.h5", "--output_file_prefix", out26,
+         "--vcf_type", "cnv", "--gt_type", "approximate",
          "--decision_threshold", "26"]
     )  # fmt: skip
     with open(f"{out26}.pkl", "rb") as f:

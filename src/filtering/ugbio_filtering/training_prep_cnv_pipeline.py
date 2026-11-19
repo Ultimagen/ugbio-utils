@@ -18,12 +18,12 @@
 Prepare training data for the depth CNV filtering model.
 
 Every call of at least min_len inside the benchmark BED is labelled with truvari bench against the truth: matched -> 1,
-unmatched -> 0 (pctovl 0.5, pctsize 0.5, pctseq 0, refdist 100 kb, duplications matched to insertions). Calls of other
-samples with known events (e.g. cell lines) can be added as positives: calls of the event's type with at least half of
-their length inside an event. Writes <prefix>.train.h5 and <prefix>.test.h5, split by chromosome, with the INFO
-columns the filter reads and "label": the input of
+unmatched -> 0 (pctovl 0.5, pctsize 0.5, pctseq 0, refdist 100 kb, duplications matched to insertions). Writes
+<prefix>.train.h5 and <prefix>.test.h5, split by chromosome, with the INFO columns the filter reads and "label".
+Samples with known events (e.g. cell lines) are prepared the same way from their pieces (split_cnv_into_pieces writes
+the pieces, their truth and benchmark BED). All tables are the input of
 
-    train_models_pipeline --vcf_type cnv --gt_type approximate --train_dfs <prefix>.train.h5 --test_dfs ...
+    train_models_pipeline --vcf_type cnv --gt_type approximate --train_dfs <prefix>.train.h5 ... --test_dfs ...
 """
 
 from __future__ import annotations
@@ -105,47 +105,12 @@ def label_calls(call_vcf: str, truth_vcf: str, benchmark_bed: str, workdir: str,
     return pd.DataFrame(rows, columns=[*KEY_COLUMNS, "label"]).drop_duplicates(KEY_COLUMNS)
 
 
-def known_event_positives(call_vcf: str, events_bed: str, min_inside: float = 0.5, min_len: int = 500) -> pd.DataFrame:
-    """
-    Calls of a sample with known events, labelled 1 when of the event's type and at least min_inside inside an event.
-
-    Parameters
-    ----------
-    call_vcf : str
-        Depth CNV calls of the sample.
-    events_bed : str
-        Known events: chrom, start (0-based), end, svtype (DEL / DUP).
-    min_inside : float
-        Minimal fraction of the call inside the event.
-    min_len : int
-        Minimal call length, as for the truth-labelled calls.
-
-    Returns
-    -------
-    pd.DataFrame
-        The positive calls with their INFO columns and label 1.
-    """
-    events = pd.read_csv(
-        events_bed, sep="\t", header=None, usecols=[0, 1, 2, 3], names=["chrom", "start", "end", "svtype"]
-    )
-    calls = read_calls(call_vcf)
-    start0 = calls["pos"] - 1
-    keep = pd.Series(data=False, index=calls.index)
-    long_enough = (calls["end"] - start0) >= min_len
-    for e in events.itertuples(index=False):
-        same = (calls["chrom"] == e.chrom) & (calls["svtype"] == e.svtype)
-        inside = (calls["end"].clip(upper=e.end) - start0.clip(lower=e.start)).clip(lower=0)
-        keep |= long_enough & same & (inside >= min_inside * (calls["end"] - start0).clip(lower=1))
-    return calls[keep].assign(label=1)
-
-
 def training_prep_cnv(
     call_vcf: str,
     truth_vcf: str,
     benchmark_bed: str,
     train_chromosomes: list[str],
     output_prefix: str,
-    known_events: list[tuple[str, str]] | None = None,
     min_len: int = 500,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -163,8 +128,6 @@ def training_prep_cnv(
         Chromosomes of call_vcf used for training; the other labelled chromosomes go to the test set.
     output_prefix : str
         Output prefix.
-    known_events : list[tuple[str, str]], optional
-        (call VCF, events BED) of samples with known events; their positives are added to the training set.
     min_len : int
         Minimal call length.
 
@@ -178,16 +141,12 @@ def training_prep_cnv(
         labels = label_calls(call_vcf, truth_vcf, benchmark_bed, workdir, min_len)
     labelled = read_calls(call_vcf).merge(labels, on=KEY_COLUMNS, how="inner")
     is_train = labelled["chrom"].isin(train_chromosomes)
-    train, test = labelled[is_train], labelled[~is_train]
-    extra = [known_event_positives(vcf, bed, min_len=min_len) for vcf, bed in known_events or []]
-    if extra:
-        train = pd.concat([train, *extra], ignore_index=True)
-    train, test = train.reindex(columns=columns), test.reindex(columns=columns)
+    train, test = labelled[is_train].reindex(columns=columns), labelled[~is_train].reindex(columns=columns)
     train.to_hdf(f"{output_prefix}.train.h5", key="data", mode="w")
     test.to_hdf(f"{output_prefix}.test.h5", key="data", mode="w")
     logger.info(
-        f"training rows {len(train)} ({int(train['label'].sum())} true, {sum(len(x) for x in extra)} known-event "
-        f"positives); test rows {len(test)} ({int(test['label'].sum())} true)"
+        f"training rows {len(train)} ({int(train['label'].sum())} true); "
+        f"test rows {len(test)} ({int(test['label'].sum())} true)"
     )
     return train, test
 
@@ -198,20 +157,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--call_vcf", required=True, help="Depth CNV calls of a sample with truth (any FILTER)")
-    parser.add_argument("--truth_vcf", required=True, help="Truth SV VCF")
+    parser.add_argument("--call_vcf", required=True, help="Depth CNV calls (any FILTER), or pieces of known events")
+    parser.add_argument("--truth_vcf", required=True, help="Truth SV VCF (for pieces: <prefix>.truth.vcf.gz)")
     parser.add_argument("--benchmark_bed", required=True, help="Benchmark regions of the truth")
     parser.add_argument("--train_chromosomes", nargs="+", required=True, help="Chromosomes used for training")
     parser.add_argument("--output_prefix", required=True, help="Output prefix (<prefix>.train.h5, <prefix>.test.h5)")
-    parser.add_argument(
-        "--known_events",
-        nargs=2,
-        action="append",
-        metavar=("CALL_VCF", "EVENTS_BED"),
-        default=None,
-        help="Calls of a sample with known events and the events (chrom, start, end, svtype); positives are added "
-        "to the training set (repeatable)",
-    )
     parser.add_argument("--min_len", type=int, default=500, help="Minimal call length (default: 500)")
     parser.add_argument("--verbosity", default="INFO", help="Verbosity: ERROR, WARNING, INFO, DEBUG")
     return parser.parse_args(argv)
@@ -226,7 +176,6 @@ def run(argv: list[str]):
         args.benchmark_bed,
         args.train_chromosomes,
         args.output_prefix,
-        [tuple(x) for x in args.known_events or []],
         args.min_len,
     )
 
