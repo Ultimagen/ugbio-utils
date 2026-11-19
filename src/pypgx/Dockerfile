@@ -35,6 +35,14 @@ RUN wget -q -O /tmp/pypgx-bundle.tar.gz \
 COPY docker/install-gatk.sh /tmp/install-gatk.sh
 RUN bash /tmp/install-gatk.sh && rm /tmp/install-gatk.sh
 
+COPY ./src/ ./src/
+
+# build module
+RUN pip install --no-cache-dir build
+RUN python -m build --outdir /tmp/ugbio --wheel ./src/pypgx
+RUN pip install --no-cache-dir /tmp/ugbio/*.whl
+RUN pip install --no-cache-dir pytest
+
 ##################################################################
 FROM python:3.11.18-slim-bookworm
 
@@ -53,10 +61,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Set environment variables for pypgx bundle
 ENV PYPGX_BUNDLE=/opt/pypgx-bundle
-
-# Create a script to run tests from docker CI
-RUN echo '#!/bin/sh\necho "No tests to run"' > /usr/local/bin/run_tests \
-&& chmod +x /usr/local/bin/run_tests
 
 # Don't use root user
 RUN groupadd ugbio && useradd -m ugbio -g ugbio

@@ -1,6 +1,8 @@
 [project]
 name = "ugbio_pypgx"
 version = "1.36.2-0"
+requires-python = ">=3.11"
+dependencies = []
 description = "PyPGx"
 authors = [
     { name = "Gil Hornung", email = "gil.hornung@ultimagen.com" },
@@ -10,3 +12,18 @@ readme = "README_pypgx.md"
 
 [project.license]
 text = "Apache-2.0"
+
+[project.scripts]
+run_tests = "pytest:main"
+pgx_ngs_pipeline = "ugbio_pypgx.ngs_pipeline:main"
+
+[tool.setuptools]
+packages = [
+    "ugbio_pypgx",
+]
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"
