@@ -115,9 +115,10 @@ Calls germline CNVs (≥ 500 bp) of one sample from its own read depth, without 
 Steps for one sample:
 
 ```bash
-# once per reference: GC, N, low-mappability and segdup fraction per 100 bp bin
-build_depth_annotation --reference-fasta ref.fasta --lowmap-bed GRCh38_lowmappabilityall.bed.gz \
-  --segdup-bed GRCh38_segdups.bed.gz --output ref.depth_annotation.parquet
+# once per reference: GC, N and, per BED track, covered fraction per 100 bp bin
+# (the caller reads the lowmap and segdup tracks; a missing one counts as 0)
+build_depth_annotation --reference-fasta ref.fasta --output ref.depth_annotation.parquet \
+  --bed lowmap=GRCh38_lowmappabilityall.bed.gz segdup=GRCh38_segdups.bed.gz
 
 # depth in 100 bp bins, all reads and MAPQ >= 20
 mosdepth -n -x -b 100 -f ref.fasta -Q 0 sample.q0 sample.cram

@@ -33,7 +33,7 @@ from ugbio_cnv.cnv_vcf_consts import (
     CNV_INFO_TAGS,
     CNV_SOURCE_DEPTH,
 )
-from ugbio_cnv.depth_annotation import BIN_SIZE
+from ugbio_cnv.depth_annotation import BIN_SIZE, read_annotation
 from ugbio_cnv.estimate_ploidy import determine_karyotype
 from ugbio_core.logger import logger
 
@@ -236,8 +236,7 @@ def load_bins(depth_mq0: str, depth_mq20: str, annotation: str, contigs: list[st
         The annotation columns plus depth (all reads) and depth_uniq (MAPQ>=20), sorted by chrom and start. Bins
         without all-read depth are dropped.
     """
-    ann = pd.read_parquet(annotation)
-    ann["chrom"] = ann["chrom"].astype(str)
+    ann = read_annotation(annotation)
     if contigs:
         ann = ann[ann["chrom"].isin(contigs)]
     d0 = read_mosdepth_regions(depth_mq0)

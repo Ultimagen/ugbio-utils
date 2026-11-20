@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pysam
 from ugbio_cnv.cnv_vcf_consts import CNV_INFO_TAGS, CNV_SOURCE_SPLIT_READ
-from ugbio_cnv.depth_annotation import BIN_SIZE
+from ugbio_cnv.depth_annotation import BIN_SIZE, read_annotation
 from ugbio_cnv.depth_cnv_caller import SexChromosomes, genotype_for
 
 
@@ -113,13 +113,11 @@ def score_with_depth(
     """
     t0 = pysam.TabixFile(depth_mq0, index=depth_mq0 + ".csi")
     t20 = pysam.TabixFile(depth_mq20, index=depth_mq20 + ".csi")
-    ann = pd.read_parquet(annotation)
-    ann["chrom"] = ann["chrom"].astype(str)
-    ann = ann.set_index(["chrom", "start"])
+    ann = read_annotation(annotation).set_index(["chrom", "start"])
     out = []
     for r in cand.itertuples(index=False):
         a = ann.reindex([(r.chrom, b) for b in range(r.start // BIN_SIZE * BIN_SIZE, r.end, BIN_SIZE)])
-        if a["segdup"].isna().all():
+        if a["n_frac"].isna().all():  # no bin in the annotation
             continue
         inside, inside_base = _depth_per_copy(t0, sex, r.chrom, r.start, r.end)
         flanks = np.concatenate(

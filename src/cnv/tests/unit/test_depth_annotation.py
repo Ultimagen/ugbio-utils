@@ -1,3 +1,5 @@
+import argparse
+
 import numpy as np
 import pandas as pd
 import pysam
@@ -9,7 +11,7 @@ def test_contig_annotation_gc_n_and_beds():
     seq = "G" * 100 + "AT" * 50 + "N" * 50 + "C" * 50 + "A" * 30  # 330 bp -> 4 bins, last one padded with N
     lowmap = pd.DataFrame({"chrom": ["chr1"], "start": [150], "end": [250]})
     segdup = pd.DataFrame({"chrom": ["chr2"], "start": [0], "end": [100]})
-    ann = da.contig_annotation(seq, "chr1", lowmap, segdup)
+    ann = da.contig_annotation(seq, "chr1", {"lowmap": lowmap, "segdup": segdup})
     assert list(ann["start"]) == [0, 100, 200, 300]
     assert ann["gc"].iloc[0] == pytest.approx(1.0)
     assert ann["gc"].iloc[1] == pytest.approx(0.0)
@@ -31,7 +33,7 @@ def test_build_writes_parquet(tmp_path):
     bed = tmp_path / "empty.bed"
     bed.write_text("chr9\t0\t10\n")
     out = tmp_path / "ann.parquet"
-    da.build_depth_annotation(str(fasta), str(bed), str(bed), str(out), contigs=["chr1", "chr2"])
+    da.build_depth_annotation(str(fasta), str(out), {"lowmap": str(bed)}, contigs=["chr1", "chr2"])
     ann = pd.read_parquet(out)
     assert set(ann["chrom"].astype(str)) == {"chr1"}  # chr2 is not in the FASTA, chrUn not requested
     assert len(ann) == 3
@@ -46,11 +48,33 @@ def test_regions_restrict_the_annotation(tmp_path):
     bed.write_text("chr9\t0\t10\n")
     out = tmp_path / "ann.parquet"
     # 1-based inclusive 151-250 touches bins starting at 100 and 200; '9' (b37 naming) is a whole contig
-    da.build_depth_annotation(str(fasta), str(bed), str(bed), str(out), regions=["chr1:151-250", "9"])
+    da.build_depth_annotation(str(fasta), str(out), {"segdup": str(bed)}, regions=["chr1:151-250", "9"])
     ann = pd.read_parquet(out)
     ann["chrom"] = ann["chrom"].astype(str)
     assert ann[ann.chrom == "chr1"]["start"].tolist() == [100, 200]
     assert ann[ann.chrom == "9"]["start"].tolist() == [0, 100, 200]
+
+
+def test_any_named_track_and_missing_caller_tracks(tmp_path):
+    fasta = tmp_path / "ref.fa"
+    fasta.write_text(">chr1\n" + "GC" * 100 + "\n")
+    pysam.faidx(str(fasta))
+    bed = tmp_path / "t.bed"
+    bed.write_text("chr1\t0\t50\n")
+    out = tmp_path / "ann.parquet"
+    da.run(
+        ["build_depth_annotation", "--reference-fasta", str(fasta), "--output", str(out), "--bed", f"homopolymer={bed}"]
+    )
+    ann = da.read_annotation(str(out))
+    assert list(ann["homopolymer"]) == pytest.approx([0.5, 0.0])
+    assert list(ann["lowmap"]) == [0.0, 0.0]  # not given: 0 for the caller
+    assert list(ann["segdup"]) == [0.0, 0.0]
+
+
+def test_bed_track_argument():
+    assert da.parse_bed_track("segdup=a=b.bed") == ("segdup", "a=b.bed")
+    with pytest.raises(argparse.ArgumentTypeError):
+        da.parse_bed_track("segdups.bed")
 
 
 @pytest.mark.parametrize(
