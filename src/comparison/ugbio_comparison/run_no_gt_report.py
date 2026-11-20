@@ -314,6 +314,16 @@ def run_somatic_analysis(arg_values: argparse.Namespace) -> None:
 
     Writes the activities and sample profiles to ``<output_prefix>.h5`` (keys ``<context>_activity``
     and ``<context>_profile``) and the plots to ``<output_prefix>/final_results/``.
+
+    ``--genome_archive`` is the SigProfiler reference genome archive (``GRCh38.tar.gz`` or ``GRCh37.tar.gz``),
+    installed locally because pipelines have no internet access. If you do not have it:
+
+    - copy it from ``s3://genomics-pipeline-concordanz-us-east-1/hg38/somatic/sigprofiler/GRCh38.tar.gz``
+      (``hg19/somatic/sigprofiler/GRCh37.tar.gz`` for GRCh37)
+    - or download it from the SigProfiler FTP server, e.g.
+      ``curl -O ftp://alexandrovlab-ftp.ucsd.edu/pub/tools/SigProfilerMatrixGenerator/GRCh38.tar.gz``
+
+    The archive must match the installed SigProfilerMatrixGenerator version (checksums are verified on install).
     """
     output_dir = Path(arg_values.output_prefix)
     sigprofiler_args = [
@@ -393,7 +403,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     somatic_analysis.add_argument(
         "--genome_archive",
-        help="SigProfiler archive of the reference genome (e.g. GRCh38.tar.gz), installed locally",
+        help="SigProfiler archive of the reference genome (e.g. GRCh38.tar.gz), installed locally. "
+        "Copy it from s3://genomics-pipeline-concordanz-us-east-1/hg38/somatic/sigprofiler/GRCh38.tar.gz "
+        "or download ftp://alexandrovlab-ftp.ucsd.edu/pub/tools/SigProfilerMatrixGenerator/GRCh38.tar.gz",
         required=True,
         type=str,
     )
