@@ -11,6 +11,8 @@ dist/
 *.DS_Store
 extensions.txt
 uv.lock
+# The SigProfiler environment is installed from its lock file (Docker image)
+!src/comparison/sigprofiler/uv.lock
 .claude/settings.local.json
 .claude/skills/
 .claude/settings.json

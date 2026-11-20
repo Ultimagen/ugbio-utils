@@ -8,7 +8,8 @@ authors = [
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
 ]
 dependencies = [
-    "ugbio_core[ml,vcfbed]",
+    "ugbio_core[ml,vcfbed,reports]",
+    "dill>=0.3.9",
 ]
 requires-python = ">=3.11"
 readme = "README.comparison.md"
@@ -20,6 +21,17 @@ text = "Apache-2.0"
 run_tests = "pytest:main"
 run_comparison_pipeline = "ugbio_comparison.run_comparison_pipeline:main"
 sv_comparison_pipeline = "ugbio_comparison.sv_comparison_pipeline:main"
+run_no_gt_report = "ugbio_comparison.run_no_gt_report:main"
+collect_sv_stats = "ugbio_comparison.sv_stats_collect:main"
+
+# The SigProfiler project (sigprofiler/) is separate, not part of this package
+[tool.setuptools.packages.find]
+include = ["ugbio_comparison*"]
+
+[tool.setuptools.package-data]
+"*" = [
+    "**/reports/*",
+]
 
 [tool.uv.sources.ugbio_core]
 workspace = true
