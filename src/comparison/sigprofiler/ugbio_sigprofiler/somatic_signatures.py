@@ -18,10 +18,10 @@ Outputs in ``--output_dir``:
 from __future__ import annotations
 
 import argparse
-import gzip
 import json
 import logging
 import shutil
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,7 +100,7 @@ def prepare_input_vcf(input_vcf: Path, output_dir: Path) -> Path:
     Parameters
     ----------
     input_vcf : Path
-        VCF or bgzipped VCF
+        VCF, bgzipped VCF or BCF
     output_dir : Path
         Directory to create; must not exist
 
@@ -111,12 +111,9 @@ def prepare_input_vcf(input_vcf: Path, output_dir: Path) -> Path:
     """
     output_dir.mkdir(parents=True)
     output_vcf = output_dir / f"{sample_name_from_vcf(input_vcf)}.vcf"
-    opener = gzip.open if input_vcf.suffix == ".gz" else open
-    alt_column = 4
-    with opener(input_vcf, "rt") as vcf_in, open(output_vcf, "w") as vcf_out:
-        for line in vcf_in:
-            if line.startswith("#") or line.split("\t", alt_column + 1)[alt_column] != ".":
-                vcf_out.write(line)
+    cmd = ["bcftools", "view", "--no-version", "-e", 'ALT="."', "-Ov", "-o", str(output_vcf), str(input_vcf)]
+    logger.info(" ".join(cmd))
+    subprocess.run(cmd, check=True)
     return output_vcf
 
 
@@ -281,7 +278,7 @@ def run_somatic_signatures(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="somatic_signatures", description=__doc__.splitlines()[0])
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--input_vcf", type=Path, help="Somatic VCF (plain or bgzipped)")
+    source.add_argument("--input_vcf", type=Path, help="Somatic VCF (plain, bgzipped or BCF)")
     source.add_argument("--matrices_dir", type=Path, help="Existing SigProfilerMatrixGenerator output directory")
     parser.add_argument("--genome_archive", type=Path, help="SigProfiler genome archive (e.g. GRCh38.tar.gz)")
     parser.add_argument("--reference_dir", type=Path, help="Writable directory to install the genome into")
