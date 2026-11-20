@@ -73,47 +73,58 @@ def depth_cnv_df(n: int = 2) -> pd.DataFrame:
     return pd.DataFrame([rows[i % 2] for i in range(n)])
 
 
+def cnv_features(calls: pd.DataFrame) -> pd.DataFrame:
+    """The CNV model's features of the calls, named without the transformer prefix."""
+    x = transformers.get_transformer(VcfType.CNV).fit_transform(calls)
+    return x.rename(columns=lambda c: c.split("__", 1)[1])
+
+
 class TestDepthCnvFeatures:
     def test_features(self):
-        f = transformers.depth_cnv_features(depth_cnv_df())
-        assert list(f.columns) == transformers.DEPTH_CNV_FEATURES
+        f = cnv_features(depth_cnv_df())
+        assert list(f.columns) == [
+            "svtype",
+            "dcn",
+            "svlen",
+            *transformers.CNV_NUMERIC_FIELDS,
+            "cnv_source",
+            "breakpoint_source",
+            "abs_z",
+            "refine_shrink",
+        ]
         d, u = f.iloc[0], f.iloc[1]
-        assert (d.is_del, u.is_del) == (1.0, 0.0)
-        assert d.log_len == pytest.approx(np.log10(5000))
-        assert (d.dcn, d.rel_cn) == (pytest.approx(1.0), pytest.approx(0.5))
-        assert (u.dcn, u.rel_cn) == (pytest.approx(1.0), pytest.approx(2.0))  # haploid contig: baseline 1
-        # support is taken for the call's own type
-        assert (d.sr_same, d.sr_opp, d.pe_same, d.pe_opp) == (12, 1, 7, 0)
-        assert (u.sr_same, u.sr_opp, u.pe_same, u.pe_opp) == (3, 0, 5, 2)
-        assert (d.sr_insert, u.sr_insert, d.pe_span, u.pe_span) == (5000, 1900, 5400, 2100)
-        assert d.log_support == pytest.approx(np.log1p(19))
-        assert "segdup" not in f and "lowconf" not in f  # region tracks are not features
-        assert (d.bp_split_read, d.bp_pair, u.bp_split_read) == (1.0, 0.0, 0.0)
+        assert (d.svtype, u.svtype) == (1.0, 2.0)  # svtype_encode: DEL 1, DUP 2
+        assert (d.svlen, u.svlen) == (5000, 2000)
+        assert (d.dcn, u.dcn) == (pytest.approx(1.0), pytest.approx(1.0))  # haploid contig: baseline 1
+        assert (d.abs_z, u.abs_z) == (12.0, 6.0)
+        assert (d.z, u.z) == (-12.0, 6.0)  # the INFO field as it is
+        assert (d.cnv_del_reads, d.cnv_dup_reads, u.cnv_dup_pairs) == (12, 1, 5)
+        assert (d.cnv_source, u.cnv_source) == (0.0, 1.0)  # depth, split_read
+        assert (d.breakpoint_source, u.breakpoint_source) == (1.0, 0.0)  # split_read, depth
         assert d.refine_shrink == pytest.approx(1 - 5000 / 6000)
-        assert (d.source_sr, u.source_sr, u.sr_reads, d.sr_reads) == (0.0, 1.0, 4, 0)
-        assert (d.source_pair, u.source_pair) == (0.0, 0.0)
-        assert u.uniq_frac == 0.0  # missing -> 0
+        assert u.refine_shrink == 0.0
+        assert (u.uniq_frac, d.dup_reads_median_insert_size, u.cluster_support) == (0.0, 0.0, 4)  # missing -> 0
         assert not f.isna().any().any()
 
     def test_pair_source(self):
         calls = depth_cnv_df(2)
         calls["cnv_source"] = [("pair",), ("depth", "split_read")]
-        f = transformers.depth_cnv_features(calls)
-        assert list(f.source_pair) == [1.0, 0.0]
-        assert list(f.source_sr) == [0.0, 0.0]  # only calls found by split reads alone
+        assert list(cnv_features(calls).cnv_source) == [2.0, 0.0]  # the first source
 
-    def test_missing_values_are_false(self):
+    def test_missing_values_are_zero(self):
         calls = depth_cnv_df(2)
-        calls["cnv_source"] = [np.nan, ("split_read",)]
-        f = transformers.depth_cnv_features(calls)
-        assert list(f.source_sr) == [0.0, 1.0]
+        calls["cnv_source"] = [np.nan, ("cn.mops",)]
+        calls["breakpoint_source"] = [None, "pair"]
+        calls["depth_start"] = [np.nan, 501]
+        calls["depth_end"] = [np.nan, 2501]
+        f = cnv_features(calls)
+        assert list(f.cnv_source) == [0.0, 3.0]
+        assert list(f.breakpoint_source) == [0.0, 2.0]
+        assert f.refine_shrink.iloc[0] == 0.0  # no depth segment: nothing removed
 
-    def test_cnmops_candidates_have_no_source_feature(self):
-        calls = depth_cnv_df(2)
-        calls["cnv_source"] = [("cn.mops",), ("depth",)]
-        f = transformers.depth_cnv_features(calls)
-        assert list(f.columns) == transformers.DEPTH_CNV_FEATURES
-        assert list(f.source_sr) == [0.0, 0.0] and list(f.source_pair) == [0.0, 0.0]  # scored like a depth call
+    def test_region_tracks_are_not_features(self):
+        f = cnv_features(depth_cnv_df())
+        assert "segdup_frac" not in f and "low_conf" not in f
 
 
 class TestDepthCnvModel:
@@ -124,13 +135,24 @@ class TestDepthCnvModel:
         assert model.n_estimators == 500
         assert model.max_depth == 5
         x = fitted.transform(calls)
-        assert list(x.columns) == [f"depth_cnv__{f}" for f in transformers.DEPTH_CNV_FEATURES]
+        assert x.shape == (40, 27)
         predictions, probabilities = apply_model(calls, model, fitted)
         assert list(predictions) == [1, 0] * 20
         assert probabilities.shape == (40, 2)
 
     def test_needed_features_are_the_info_columns(self):
         assert transformers.get_needed_features(VcfType.CNV) == [f.lower() for f in transformers.CNV_INFO_FIELDS]
+
+    def test_plain_pickle_round_trip(self, tmp_path):
+        # FilterVCF loads the model with plain pickle: the transformer must not hold local functions
+        import pickle
+
+        calls = depth_cnv_df(4)
+        fitted = transformers.get_transformer(VcfType.CNV).fit(calls)
+        path = tmp_path / "t.pkl"
+        path.write_bytes(pickle.dumps(fitted))
+        loaded = pickle.loads(path.read_bytes())  # noqa S301
+        pd.testing.assert_frame_equal(loaded.transform(calls), fitted.transform(calls))
 
 
 class TestDecisionThreshold:

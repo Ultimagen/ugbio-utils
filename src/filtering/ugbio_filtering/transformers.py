@@ -109,7 +109,7 @@ def region_annotation_encode(x):
     return encoding[tuple(sorted(x))]
 
 
-# Depth CNV caller (ugbio_cnv.depth_cnv_caller): INFO fields the filter reads, and the features built from them
+# Depth CNV caller (ugbio_cnv.depth_cnv_caller): the INFO fields the filter reads
 CNV_INFO_FIELDS = [
     "SVTYPE",
     "SVLEN",
@@ -117,9 +117,7 @@ CNV_INFO_FIELDS = [
     "BASE_CN",
     "Z",
     "N_MERGED",
-    "SEGDUP_FRAC",
     "UNIQ_FRAC",
-    "LOW_CONF",
     "CNV_SOURCE",
     "CLUSTER_SUPPORT",
     "BREAKPOINT_SOURCE",
@@ -140,99 +138,122 @@ CNV_INFO_FIELDS = [
     "DEL_PAIRS_MEDIAN_SPAN",
     "DUP_PAIRS_MEDIAN_SPAN",
 ]
-DEPTH_CNV_FEATURES = [
-    "is_del",
-    "log_len",
+# INFO fields that are features as they are (missing = 0)
+CNV_NUMERIC_FIELDS = [
     "cn_mean",
-    "dcn",
-    "rel_cn",
-    "abs_z",
+    "base_cn",
+    "z",
     "n_merged",
     "uniq_frac",
-    "sr_same",
-    "sr_opp",
-    "pe_same",
-    "pe_opp",
-    "sr_frac",
-    "pe_frac",
-    "total_reads",
-    "sr_insert",
-    "pe_span",
-    "log_support",
-    "bp_split_read",
-    "bp_pair",
-    "bp_support",
-    "refine_shrink",
-    "source_sr",
-    "source_pair",
-    "sr_reads",
+    "cluster_support",
+    "breakpoint_support",
+    "cnv_del_reads",
+    "cnv_dup_reads",
+    "cnv_total_reads",
+    "cnv_del_frac",
+    "cnv_dup_frac",
+    "cnv_del_pairs",
+    "cnv_dup_pairs",
+    "cnv_del_pairs_frac",
+    "cnv_dup_pairs_frac",
+    "del_reads_median_insert_size",
+    "dup_reads_median_insert_size",
+    "del_pairs_median_span",
+    "dup_pairs_median_span",
 ]
+CNV_SOURCE_ENCODE = {"depth": 0, "split_read": 1, "pair": 2, "cn.mops": 3}
+BREAKPOINT_SOURCE_ENCODE = {"split_read": 1, "pair": 2}
 
 
-def depth_cnv_feature_names(_transformer, _input_features) -> np.ndarray:
-    """Output names of depth_cnv_features (module level so plain pickle can store the transformer)."""
-    return np.array(DEPTH_CNV_FEATURES)
+def svtype_encode(x):
+    """Translate SVTYPE into integer."""
+    encoding = {"DEL": 1, "DUP": 2}
+    return encoding.get(x, 0)
 
 
-def depth_cnv_features(df: pd.DataFrame) -> pd.DataFrame:
+def cnv_source_encode(x):
+    """Translate CNV_SOURCE (the first source of a call) into integer."""
+    if isinstance(x, tuple | list):
+        x = x[0] if x else None
+    return CNV_SOURCE_ENCODE.get(x, 0)
+
+
+def _cnv_numbers(df: pd.DataFrame) -> pd.DataFrame:
+    """INFO columns as floats, the first value of a tuple, missing = 0."""
+    return df.apply(lambda s: pd.to_numeric(s.apply(tuple_break), errors="coerce")).fillna(0.0).astype(float)
+
+
+def cnv_number(df: pd.DataFrame) -> pd.DataFrame:
+    """Numeric INFO field as it is."""
+    return _cnv_numbers(df)
+
+
+def cnv_length(df: pd.DataFrame) -> pd.DataFrame:
+    """SVLEN without its sign."""
+    return _cnv_numbers(df).abs()
+
+
+def cnv_svtype(df: pd.DataFrame) -> pd.DataFrame:
+    """SVTYPE encoded by svtype_encode."""
+    return df.map(svtype_encode).astype(float)
+
+
+def cnv_source(df: pd.DataFrame) -> pd.DataFrame:
+    """CNV_SOURCE encoded by cnv_source_encode."""
+    return df.map(cnv_source_encode).astype(float)
+
+
+def breakpoint_source(df: pd.DataFrame) -> pd.DataFrame:
+    """BREAKPOINT_SOURCE: 1 split read, 2 pair, 0 depth or missing."""
+    return df.map(lambda x: BREAKPOINT_SOURCE_ENCODE.get(x, 0)).astype(float)
+
+
+def dcn(df: pd.DataFrame) -> pd.DataFrame:
+    """Copy-number change of the call, |CN_MEAN - BASE_CN| (BASE_CN 1 on haploid contigs, 2 when missing)."""
+    x = _cnv_numbers(df)
+    return pd.DataFrame({"dcn": (x["cn_mean"] - x["base_cn"].replace(0, 2.0)).abs()}, index=df.index)
+
+
+def abs_z(df: pd.DataFrame) -> pd.DataFrame:
+    """|Z|: the depth evidence of a deletion (Z < 0) or a duplication (Z > 0) in one feature."""
+    return pd.DataFrame({"abs_z": _cnv_numbers(df)["z"].abs()}, index=df.index)
+
+
+def refine_shrink(df: pd.DataFrame) -> pd.DataFrame:
+    """Fraction of the depth segment (DEPTH_START - DEPTH_END) that breakpoint refinement removed."""
+    x = _cnv_numbers(df)
+    depth_len = x["depth_end"] - x["depth_start"]
+    shrink = np.where(depth_len > 0, 1 - x["svlen"].abs() / depth_len.clip(lower=1), 0.0)
+    return pd.DataFrame({"refine_shrink": shrink}, index=df.index)
+
+
+def function_name_out(transformer, _input_features) -> np.ndarray:
+    """Output name of a FunctionTransformer that makes one feature: the name of its function."""
+    return np.array([transformer.func.__name__])
+
+
+def _cnv_transform_list() -> list:
+    """Per-field transformers of the depth CNV model, plus three that combine fields (dcn, abs_z, refine_shrink).
+
+    The functions are module level so that plain pickle (FilterVCF) can load the model.
     """
-    Filter features of depth CNV calls, from the get_vcf_df columns of CNV_INFO_FIELDS (lower case).
 
-    Read / pair support is taken for the call's own type (same) and the opposite type (opp); copy-number change is
-    relative to the contig baseline (BASE_CN, 1 on haploid contigs). Missing values are 0. cn.mops candidates
-    (CNV_SOURCE=cn.mops) have no source feature of their own: they are scored on their depth and read evidence.
-    """
+    def one_to_one(func):
+        return preprocessing.FunctionTransformer(func, feature_names_out="one-to-one")
 
-    def num(col: str) -> pd.Series:
-        if col not in df:
-            return pd.Series(0.0, index=df.index)
-        return pd.to_numeric(df[col].apply(tuple_break), errors="coerce").fillna(0.0).astype(float)
+    def combined(func):
+        return preprocessing.FunctionTransformer(func, feature_names_out=function_name_out)
 
-    def by_type(template: str, *, same: bool) -> pd.Series:
-        dele, dup = num(template.format("del")), num(template.format("dup"))
-        return pd.Series(np.where(is_del == same, dele, dup), index=df.index)
-
-    is_del = (df["svtype"] == "DEL").to_numpy()
-    svlen = num("svlen").abs()
-    base = num("base_cn").replace(0, 2.0)
-    cn_mean = num("cn_mean")
-    sr_same, pe_same = by_type("cnv_{}_reads", same=True), by_type("cnv_{}_pairs", same=True)
-    depth_len = num("depth_end") - num("depth_start")
-    bp_source = df["breakpoint_source"] if "breakpoint_source" in df else pd.Series("", index=df.index)
-    source = df["cnv_source"] if "cnv_source" in df else pd.Series([()] * len(df), index=df.index)
-    source = source.apply(lambda x: tuple(x) if isinstance(x, tuple | list) else ())  # None / NaN: no source
-    source_sr = source.apply(lambda x: float(x == ("split_read",)))
-    out = pd.DataFrame(
-        {
-            "is_del": is_del.astype(float),
-            "log_len": np.log10(svlen.clip(lower=1)),
-            "cn_mean": cn_mean,
-            "dcn": (cn_mean - base).abs(),
-            "rel_cn": cn_mean / base,
-            "abs_z": num("z").abs(),
-            "n_merged": num("n_merged"),
-            "uniq_frac": num("uniq_frac"),
-            "sr_same": sr_same,
-            "sr_opp": by_type("cnv_{}_reads", same=False),
-            "pe_same": pe_same,
-            "pe_opp": by_type("cnv_{}_pairs", same=False),
-            "sr_frac": by_type("cnv_{}_frac", same=True),
-            "pe_frac": by_type("cnv_{}_pairs_frac", same=True),
-            "total_reads": num("cnv_total_reads"),
-            "sr_insert": by_type("{}_reads_median_insert_size", same=True),
-            "pe_span": by_type("{}_pairs_median_span", same=True),
-            "log_support": np.log1p(sr_same + pe_same),
-            "bp_split_read": (bp_source == "split_read").astype(float),
-            "bp_pair": (bp_source == "pair").astype(float),
-            "bp_support": num("breakpoint_support"),
-            "refine_shrink": np.where(depth_len > 0, 1 - svlen / depth_len.clip(lower=1), 0.0),
-            "source_sr": source_sr,
-            "source_pair": source.apply(lambda x: float(x == ("pair",))),
-            "sr_reads": num("cluster_support") * source_sr,  # the cluster of a split-read candidate
-        },
-        index=df.index,
-    )
-    return out[DEPTH_CNV_FEATURES]
+    return [
+        ("svtype", one_to_one(cnv_svtype), ["svtype"]),
+        ("dcn", combined(dcn), ["cn_mean", "base_cn"]),
+        ("svlen", one_to_one(cnv_length), ["svlen"]),
+        *[(f, one_to_one(cnv_number), [f]) for f in CNV_NUMERIC_FIELDS],
+        ("cnv_source", one_to_one(cnv_source), ["cnv_source"]),
+        ("breakpoint_source", one_to_one(breakpoint_source), ["breakpoint_source"]),
+        ("abs_z", combined(abs_z), ["z"]),
+        ("refine_shrink", combined(refine_shrink), ["svlen", "depth_start", "depth_end"]),
+    ]
 
 
 def get_needed_features(vtype: VcfType = VcfType.SINGLE_SAMPLE, custom_annotations: list | None = None) -> list:
@@ -389,15 +410,8 @@ def modify_features_based_on_vcf_type(  # noqa C901
     elif vtype == VcfType.JOINT:
         pass
     elif vtype == VcfType.CNV:
-        columns = [f.lower() for f in CNV_INFO_FIELDS]
-        transform_list = [
-            (
-                "depth_cnv",
-                preprocessing.FunctionTransformer(depth_cnv_features, feature_names_out=depth_cnv_feature_names),
-                columns,
-            )
-        ]
-        features = list(columns)
+        transform_list = _cnv_transform_list()
+        features = [f.lower() for f in CNV_INFO_FIELDS]
 
     else:
         raise ValueError("Unrecognized VCF type")

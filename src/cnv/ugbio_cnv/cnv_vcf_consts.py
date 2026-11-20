@@ -130,7 +130,7 @@ CNV_INFO_TAGS: dict[str, tuple[str, int | str, str, str, str]] = {
         "LOW_CONF",
         0,
         "Flag",
-        "Mostly segdup / low-mappability sequence without a full copy change (a filter feature, not a FILTER)",
+        "Mostly segdup / low-mappability sequence without a full copy change (an annotation, not a FILTER)",
         "INFO",
     ),
     "N_MERGED": ("N_MERGED", 1, "Integer", "Number of depth segments merged into this call", "INFO"),
