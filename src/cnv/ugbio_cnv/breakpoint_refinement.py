@@ -28,6 +28,7 @@ from multiprocessing import Pool
 
 import numpy as np
 import pysam
+from ugbio_cnv.analyze_cnv_breakpoint_reads import junction_svtype
 from ugbio_cnv.cnv_vcf_consts import CNV_INFO_TAGS, CNV_SOURCE_DEPTH, CNV_SOURCE_PAIR, CNV_SOURCE_SPLIT_READ
 from ugbio_core.logger import logger
 
@@ -85,8 +86,9 @@ def split_read_junctions(
 
     Each SA piece on the same chromosome and strand is ordered with the primary piece along the read. If the second
     piece starts after the first ends on the reference, the junction is a deletion (L, R); if it starts before, a
-    tandem duplication (S, E). Bases aligned in both pieces (an overlap of h > 0 on the read: microhomology at the
-    junction) are given to the second piece, which left-normalizes the junction: (L - h, R) and (S, E - h).
+    tandem duplication (S, E): the rule of discordant pairs too (analyze_cnv_breakpoint_reads.junction_svtype). Bases
+    aligned in both pieces (an overlap of h > 0 on the read: microhomology at the junction) are given to the second
+    piece, which left-normalizes the junction: (L - h, R) and (S, E - h).
 
     Returns
     -------
@@ -106,10 +108,11 @@ def split_read_junctions(
         overlap = max(0, first[1] - second[0])  # read bases aligned in both pieces (microhomology)
         if strand == "-":  # on the minus strand, read order runs right to left on the reference
             first, second = second, first
-        if second[2] > first[3]:
-            out.append((first[3] - overlap, second[2], "DEL"))
-        elif second[2] < first[3]:
-            out.append((second[2], first[3] - overlap, "DUP"))
+        svtype = junction_svtype(first[3], second[2])
+        if svtype == "DEL":
+            out.append((first[3] - overlap, second[2], svtype))
+        elif svtype == "DUP":
+            out.append((second[2], first[3] - overlap, svtype))
     return out
 
 

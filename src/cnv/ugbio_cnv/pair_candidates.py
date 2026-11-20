@@ -3,7 +3,8 @@ Discordant-pair CNV candidates for the depth CNV caller (paired-end data).
 
 pair_cnv_candidates:
   1. Per contig, in parallel, `samtools view -q 20 -F 0xF0C -f 0x1` streams the reads (no tags decoded) and the
-     leftmost read of each pair with both mates mapped on the same chromosome and on opposite strands is kept.
+     leftmost read of each pair with both mates mapped on the same chromosome and on opposite strands is kept,
+     classified by the pair rule of the breakpoint evidence (analyze_cnv_breakpoint_reads.pair_svtype).
      Forward read left, reverse mate right (FR) supports a deletion when the span (TLEN) is >= MIN_PAIR_SPAN, the
      span floor of the breakpoint evidence (analyze_cnv_breakpoint_reads). Reverse read left, forward mate right
      (RF, everted) supports a tandem duplication when the mate starts > min_rf_gap (50 bp) after the read: overlapping
@@ -34,7 +35,7 @@ from multiprocessing import Pool
 
 import numpy as np
 import pandas as pd
-from ugbio_cnv.analyze_cnv_breakpoint_reads import MIN_PAIR_SPAN
+from ugbio_cnv.analyze_cnv_breakpoint_reads import MIN_PAIR_SPAN, pair_svtype
 from ugbio_cnv.breakpoint_refinement import alignment_piece
 from ugbio_cnv.cnv_candidate_utils import (
     PAIR_FIELDS,
@@ -71,12 +72,16 @@ def _contig_pairs(args: tuple) -> list[tuple]:
         if tlen <= 0 or f[6] != "=":  # leftmost read, mate on the same contig
             continue
         flag, pos0, mpos0 = int(f[1]), int(f[3]) - 1, int(f[7]) - 1
-        rev, mate_rev = bool(flag & 16), bool(flag & 32)
-        if not rev and mate_rev and tlen >= p.min_span:
-            svtype = "DEL"  # FR
-        elif rev and not mate_rev and mpos0 > pos0 + p.min_rf_gap:
-            svtype = "DUP"  # RF, everted
-        else:
+        svtype = pair_svtype(
+            is_reverse=bool(flag & 16),
+            mate_is_reverse=bool(flag & 32),
+            pos=pos0,
+            mate_pos=mpos0,
+            tlen=tlen,
+            min_del_span=p.min_span,
+            min_dup_gap=p.min_rf_gap,
+        )
+        if svtype is None:
             continue
         left_end = alignment_piece(pos0, "+", f[5], 0)[3]
         rows.append((contig, pos0, left_end, mpos0, pos0 + tlen, svtype))

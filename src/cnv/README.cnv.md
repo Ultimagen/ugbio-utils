@@ -76,7 +76,8 @@ Discordant pairs count too, in their own fields: `CNV_DUP_PAIRS` / `CNV_DEL_PAIR
 (over `CNV_TOTAL_READS`) and `*_PAIRS_MEDIAN_SPAN`. `CNV_*_READS`, `CNV_*_FRAC` and
 `*_READS_MEDIAN_INSERT_SIZE` stay split-read only. Each fragment votes at most once per kind of evidence, so
 a fragment with both a split read and a discordant pair counts in both. The pair fields are always written;
-on single-end input they are 0.
+on single-end input they are 0. Pairs are classified by `pair_svtype` (FR = deletion, RF = duplication), the rule
+`pair_cnv_candidates` uses too.
 
 ```bash
 analyze_cnv_breakpoint_reads \

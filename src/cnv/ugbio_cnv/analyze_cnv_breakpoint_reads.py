@@ -425,6 +425,87 @@ def _alignment_consistent_with_del(
     return None
 
 
+def junction_svtype(first: int, second: int) -> str | None:
+    """
+    The DEL / DUP rule for two pieces of one DNA fragment, ordered along the fragment.
+
+    Used for split reads (breakpoint_refinement.split_read_junctions: where the first piece ends and the second
+    starts) and for discordant pairs (pair_svtype: the forward and the reverse mate's starts). A second piece after the
+    first on the reference is a deletion, before it a tandem duplication.
+
+    Parameters
+    ----------
+    first : int
+        Reference position of the first piece (0-based)
+    second : int
+        Reference position of the second piece (0-based)
+
+    Returns
+    -------
+    str | None
+        "DEL", "DUP", or None when the positions are equal
+    """
+    if second > first:
+        return "DEL"
+    if second < first:
+        return "DUP"
+    return None
+
+
+def pair_svtype(
+    *,
+    is_reverse: bool,
+    mate_is_reverse: bool,
+    pos: int,
+    mate_pos: int,
+    tlen: int,
+    min_del_span: int = MIN_PAIR_SPAN,
+    min_dup_span: int = 0,
+    min_dup_gap: int = 0,
+) -> str | None:
+    """
+    The CNV type a discordant pair supports: the pair rule of the depth caller.
+
+    The breakpoint evidence (check_pair_cnv_consistency) and the pair candidates (pair_candidates) both use it. Mates
+    must be on opposite strands (same-strand pairs are inversion-like). The forward and the reverse mate are the first
+    and the second piece of junction_svtype: forward mate leftmost (FR) is a deletion, kept when the span |TLEN| is
+    >= min_del_span; reverse mate leftmost (RF, everted) is a tandem duplication, kept when the span is
+    >= min_dup_span and the mates start more than min_dup_gap apart (overlapping short fragments also read RF, with
+    the mates close together).
+
+    Parameters
+    ----------
+    is_reverse, mate_is_reverse : bool
+        Strands of the read and of its mate
+    pos, mate_pos : int
+        Starts of the read and of its mate (0-based)
+    tlen : int
+        Template length
+    min_del_span : int, optional
+        Shortest span of a deletion pair
+    min_dup_span : int, optional
+        Shortest span of a duplication pair
+    min_dup_gap : int, optional
+        Mate starts of a duplication pair must be more than this apart
+
+    Returns
+    -------
+    str | None
+        "DEL", "DUP" or None
+    """
+    if is_reverse == mate_is_reverse:
+        return None
+    # Along the fragment the forward mate comes first and the reverse mate second
+    forward_pos, reverse_pos = (mate_pos, pos) if is_reverse else (pos, mate_pos)
+    svtype = junction_svtype(forward_pos, reverse_pos)
+    span = abs(tlen)
+    if svtype == "DEL" and span >= min_del_span:
+        return svtype
+    if svtype == "DUP" and span >= min_dup_span and abs(mate_pos - pos) > min_dup_gap:
+        return svtype
+    return None
+
+
 def _should_skip_read(read: pysam.AlignedSegment) -> bool:
     """
     Check if a read should be skipped during breakpoint analysis.
@@ -559,23 +640,23 @@ def check_pair_cnv_consistency(
     if not _pair_is_analyzable(read, min_pair_mapping_quality):
         return False, False, None
 
-    # Same-strand mates are inversion-like, not DUP/DEL, mirroring the split-read path
-    if read.is_reverse == read.mate_is_reverse:
-        return False, False, None
-
     # One span floor for both classes. For FR pairs it sits above the span tail of ordinary pairs; for
     # everted pairs it is only a smallest believable duplication, since background eversions are
     # 0.04% of pairs on production data with spans in the hundreds of kb
-    span = abs(read.template_length)
+    svtype = pair_svtype(
+        is_reverse=read.is_reverse,
+        mate_is_reverse=read.mate_is_reverse,
+        pos=read.reference_start,
+        mate_pos=read.next_reference_start,
+        tlen=read.template_length,
+        min_del_span=min_pair_span,
+        min_dup_span=min_pair_span,
+    )
     regions = _calculate_breakpoint_regions(interval_start, interval_end, cushion)
-    if span < min_pair_span or not _pair_brackets_breakpoints(read, regions):
+    if svtype is None or not _pair_brackets_breakpoints(read, regions):
         return False, False, None
-
-    leftmost_is_reverse = read.is_reverse if read.reference_start < read.next_reference_start else read.mate_is_reverse
-    if leftmost_is_reverse:
-        return True, False, span
-    # The span overstates the deleted length by about one insert size
-    return False, True, span
+    # For deletions the span overstates the deleted length by about one insert size
+    return svtype == "DUP", svtype == "DEL", abs(read.template_length)
 
 
 def _annotate_vcf_record_with_evidence(

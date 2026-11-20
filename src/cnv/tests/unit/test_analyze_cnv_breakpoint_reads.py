@@ -22,6 +22,8 @@ from ugbio_cnv.analyze_cnv_breakpoint_reads import (
     create_bam_header,
     get_parser,
     get_supplementary_alignments,
+    junction_svtype,
+    pair_svtype,
 )
 
 
@@ -236,6 +238,37 @@ def test_check_read_cnv_consistency_deletion():
     assert is_del is True
     assert insert_size is not None
     assert insert_size > 0
+
+
+@pytest.mark.parametrize(
+    ("is_reverse", "mate_is_reverse", "pos", "mate_pos", "tlen", "expected"),
+    [
+        (False, True, 1000, 2000, 1150, "DEL"),  # FR
+        (True, False, 2000, 1000, -1150, "DEL"),  # FR, seen from the right mate
+        (False, True, 1000, 1500, 650, None),  # FR below the span floor
+        (True, False, 1000, 2000, 1150, "DUP"),  # RF
+        (False, True, 2000, 1000, -1150, "DUP"),  # RF, seen from the right mate
+        (False, False, 1000, 2000, 1150, None),  # same strand
+        (True, False, 1000, 1000, 150, None),  # mates not orderable
+    ],
+)
+def test_pair_svtype(is_reverse, mate_is_reverse, pos, mate_pos, tlen, expected):
+    kw = {"is_reverse": is_reverse, "mate_is_reverse": mate_is_reverse, "pos": pos, "mate_pos": mate_pos}
+    assert pair_svtype(**kw, tlen=tlen, min_del_span=800) == expected
+
+
+def test_junction_svtype():
+    assert junction_svtype(1000, 2000) == "DEL"
+    assert junction_svtype(2000, 1000) == "DUP"
+    assert junction_svtype(1000, 1000) is None
+
+
+def test_pair_svtype_duplication_floors():
+    kw = {"is_reverse": True, "mate_is_reverse": False, "pos": 1000}
+    assert pair_svtype(**kw, mate_pos=1040, tlen=190, min_dup_gap=50) is None  # overlapping short fragment
+    assert pair_svtype(**kw, mate_pos=1060, tlen=210, min_dup_gap=50) == "DUP"
+    assert pair_svtype(**kw, mate_pos=1600, tlen=750, min_dup_span=800) is None
+    assert pair_svtype(**kw, mate_pos=1700, tlen=850, min_dup_span=800) == "DUP"
 
 
 def test_analyze_interval_breakpoints(temp_bam_file):
