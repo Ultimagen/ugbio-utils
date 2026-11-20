@@ -338,7 +338,7 @@ gh run view <run-id>
 **ugbio_comparison** (17 files):
 - Truvari-based SV comparison, VCFEVAL concordance
 - Report notebooks (`reports/`): variant calling, SV and no-ground-truth reports
-- COSMIC signatures (SigProfiler) in a separate uv project, `src/comparison/sigprofiler` (numpy>=2, own lock and venv, run as a subprocess via `sigprofiler_runner.py`)
+- COSMIC signatures (SigProfiler) in a separate uv project, `src/comparison/sigprofiler` (numpy>=2, pinned SigProfiler versions, own venv, run as a subprocess via `sigprofiler_runner.py`)
 - Entry points: `run_comparison_pipeline`, `sv_comparison_pipeline`, `run_no_gt_report`, `collect_sv_stats`
 
 **ugbio_srsnv** (20 files):

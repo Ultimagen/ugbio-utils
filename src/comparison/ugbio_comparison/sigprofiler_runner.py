@@ -2,11 +2,11 @@
 
 SigProfiler needs numpy>=2 while the ugbio workspace pins numpy<2, so the analysis
 (``src/comparison/sigprofiler``, package ``ugbio_sigprofiler``) is a separate project
-with its own lock file. This module finds its Python interpreter and runs it:
+with its own virtual environment. This module finds its Python interpreter and runs it:
 
 1. ``$UGBIO_SIGPROFILER_PYTHON`` if set (the ugbio_comparison Docker image sets it)
 2. otherwise, in a repository checkout, ``uv run --project src/comparison/sigprofiler``,
-   which creates or updates that project's ``.venv`` from its lock file on first use
+   which creates or updates that project's ``.venv`` on first use
 """
 
 from __future__ import annotations

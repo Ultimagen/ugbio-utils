@@ -6,13 +6,14 @@ authors = [
     { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },
 ]
 # SigProfiler needs numpy>=2 / pandas>=2 while the ugbio workspace pins numpy<2,
-# so this project has its own lock and virtual environment (not a workspace member).
+# so this project has its own virtual environment (not a workspace member).
+# SigProfiler versions are pinned: the genome archives and the expected signatures are tied to them.
 dependencies = [
     "numpy>=2.0.0",
     "pandas>=2.0.0",
-    "sigprofilermatrixgenerator>=1.6.0,<2",
-    "sigprofilerassignment>=1.1.5,<2",
-    "sigprofilerplotting>=1.6.0,<2",
+    "sigprofilermatrixgenerator==1.6.0",
+    "sigprofilerassignment==1.1.5",
+    "sigprofilerplotting==1.6.0",
 ]
 requires-python = ">=3.11,<3.13"
 

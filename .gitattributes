@@ -27,4 +27,4 @@ src/consensus/tests/resources/*.json filter=lfs diff=lfs merge=lfs -text
 src/consensus/tests/resources/*.bedGraph.gz filter=lfs diff=lfs merge=lfs -text
 
 # report test resources: signature plots
-src/comparison/tests/resources/**/*.png filter=lfs diff=lfs merge=lfs -text
+*.png filter=lfs diff=lfs merge=lfs -text
