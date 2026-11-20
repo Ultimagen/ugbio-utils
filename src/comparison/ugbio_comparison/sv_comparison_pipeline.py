@@ -62,8 +62,6 @@ class SVComparison:
         ignore_type: bool = True,
         skip_collapse: bool = False,
         pctovl: float | None = None,
-        refdist: int | None = None,
-        chunksize: int | None = None,
         dup_to_ins: bool = False,
     ):
         """
@@ -96,10 +94,6 @@ class SVComparison:
             truvari should run with -p multi
         pctovl : float, optional
             Minimal reciprocal overlap (--pctovl), by default truvari's
-        refdist : int, optional
-            Maximal breakpoint distance (--refdist), by default truvari's
-        chunksize : int, optional
-            Chunk size (--chunksize), by default truvari's; should be at least refdist
         dup_to_ins : bool, optional
             If True, duplications can match insertions (--dup-to-ins), by default False
         Returns
@@ -122,9 +116,8 @@ class SVComparison:
         truvari_cmd.extend(["--pctseq", str(pctseq)])
         truvari_cmd.extend(["--pctsize", str(pctsize)])
         truvari_cmd.extend(["--sizemax", str(maxsize)])
-        for flag, value in (("--pctovl", pctovl), ("--refdist", refdist), ("--chunksize", chunksize)):
-            if value is not None:
-                truvari_cmd.extend([flag, str(value)])
+        if pctovl is not None:
+            truvari_cmd.extend(["--pctovl", str(pctovl)])
         if dup_to_ins:
             truvari_cmd.append("--dup-to-ins")
 

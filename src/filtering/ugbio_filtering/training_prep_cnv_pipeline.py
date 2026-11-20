@@ -18,7 +18,7 @@
 Prepare training data for the depth CNV filtering model.
 
 Every call of at least min_len inside the benchmark BED is labelled with truvari bench against the truth: matched -> 1,
-unmatched -> 0 (pctovl 0.5, pctsize 0.5, pctseq 0, refdist 100 kb, duplications matched to insertions). Writes
+unmatched -> 0 (pctovl 0.5, pctsize 0.5, pctseq 0, duplications matched to insertions). Writes
 <prefix>.train.h5 and <prefix>.test.h5, split by chromosome, with the INFO columns the filter reads and "label".
 Samples with known events (e.g. cell lines) are prepared the same way from their pieces (split_cnv_into_pieces writes
 the pieces, their truth and benchmark BED). All tables are the input of
@@ -50,8 +50,6 @@ TRUVARI_OPTIONS = {
     "maxsize": -1,
     "pctovl": 0.5,
     "pctsize": 0.5,
-    "refdist": 100000,
-    "chunksize": 100000,
     "dup_to_ins": True,  # T2T-Q100 writes duplications as insertions
 }
 KEY_COLUMNS = ["chrom", "pos", "id"]  # calls may share a start (e.g. two pair DUP candidates); IDs are unique
