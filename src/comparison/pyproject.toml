@@ -9,7 +9,6 @@ authors = [
 ]
 dependencies = [
     "ugbio_core[ml,vcfbed,reports]",
-    "dill>=0.3.9",
 ]
 requires-python = ">=3.11"
 readme = "README.comparison.md"
