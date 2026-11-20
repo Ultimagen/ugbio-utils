@@ -24,11 +24,11 @@ RUN pip install ${OUT_DIR}/*.whl
 RUN pip install pytest
 
 # SigProfiler needs numpy>=2 while the ugbio packages pin numpy<2, so it gets its own
-# virtual environment, installed from its lock file (see sigprofiler_runner.py).
+# virtual environment, with pinned SigProfiler versions (see sigprofiler_runner.py).
 # uv is installed in a throwaway venv so it does not end up in the runtime image.
 RUN python -m venv /tmp/uv && /tmp/uv/bin/pip install uv && \
     UV_PROJECT_ENVIRONMENT=/opt/sigprofiler_venv UV_PYTHON_DOWNLOADS=never \
-    /tmp/uv/bin/uv sync --frozen --no-dev --no-editable --no-cache \
+    /tmp/uv/bin/uv sync --no-dev --no-editable --no-cache \
         --python /usr/local/bin/python3 --project ./src/$MODULE_DIR/sigprofiler && \
     rm -rf /tmp/uv
 

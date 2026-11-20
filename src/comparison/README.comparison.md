@@ -211,12 +211,12 @@ archive (`GRCh38.tar.gz` or `GRCh37.tar.gz`, about 0.8 GB; installed it takes ab
 #### The SigProfiler environment
 
 The SigProfiler packages need numpy>=2, while the workspace pins numpy<2, so the signature analysis
-(`sigprofiler/`, package `ugbio_sigprofiler`) is a separate uv project with its own lock file. It is not a workspace
+(`sigprofiler/`, package `ugbio_sigprofiler`) is a separate uv project with pinned SigProfiler versions. It is not a workspace
 member and not part of the `ugbio_comparison` package. `run_no_gt_report` runs it as a subprocess, with:
 
 1. `$UGBIO_SIGPROFILER_PYTHON`, if set; the Docker image installs the environment in `/opt/sigprofiler_venv` and sets it
 2. otherwise, in a repository checkout, `uv run --project src/comparison/sigprofiler`, which creates or updates
-   `src/comparison/sigprofiler/.venv` from the lock file on first use
+   `src/comparison/sigprofiler/.venv` on first use
 
 Its own tests run in its environment: `uv run --project src/comparison/sigprofiler pytest src/comparison/sigprofiler/tests`.
 
