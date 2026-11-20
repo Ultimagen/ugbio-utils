@@ -87,7 +87,7 @@ class TestDepthCnvFeatures:
         assert (u.sr_same, u.sr_opp, u.pe_same, u.pe_opp) == (3, 0, 5, 2)
         assert (d.sr_insert, u.sr_insert, d.pe_span, u.pe_span) == (5000, 1900, 5400, 2100)
         assert d.log_support == pytest.approx(np.log1p(19))
-        assert (d.lowconf, u.lowconf) == (0.0, 1.0)
+        assert "segdup" not in f and "lowconf" not in f  # region tracks are not features
         assert (d.bp_split_read, d.bp_pair, u.bp_split_read) == (1.0, 0.0, 0.0)
         assert d.refine_shrink == pytest.approx(1 - 5000 / 6000)
         assert (d.source_sr, u.source_sr, u.sr_reads, d.sr_reads) == (0.0, 1.0, 4, 0)
@@ -104,10 +104,8 @@ class TestDepthCnvFeatures:
 
     def test_missing_values_are_false(self):
         calls = depth_cnv_df(2)
-        calls["low_conf"] = [np.nan, True]
         calls["cnv_source"] = [np.nan, ("split_read",)]
         f = transformers.depth_cnv_features(calls)
-        assert list(f.lowconf) == [0.0, 1.0]
         assert list(f.source_sr) == [0.0, 1.0]
 
     def test_cnmops_candidates_have_no_source_feature(self):
