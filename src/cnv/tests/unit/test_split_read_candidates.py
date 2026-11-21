@@ -8,7 +8,7 @@ from ugbio_cnv import cnv_candidate_utils as cu
 from ugbio_cnv import collapse_cnv_calls
 from ugbio_cnv import split_read_candidates as src
 from ugbio_cnv.cnv_vcf_consts import CNV_SOURCE_CNMOPS, CNV_SOURCE_PAIR
-from ugbio_cnv.depth_cnv_caller import SexChromosomes, write_depth_calls
+from ugbio_cnv.depth_cnv_caller import Params, SexChromosomes, write_depth_calls
 
 
 @pytest.fixture
@@ -213,6 +213,37 @@ class TestScoreWithDepth:
         sex = SexChromosomes({"chrX"}, set(), "XY")
         out = cu.score_with_depth(cand, depth_file, depth_file, ann, sex, cu.CandidateParams(), require_change=False)
         assert out.empty
+
+    def n_run(self, tmp_path, n_start, n_end, length=100_000):
+        """Depth 30 on chrX:0-length, with N in the reference and so no reads over [n_start, n_end)."""
+        starts = np.arange(0, length, 100)
+        in_n = (starts >= n_start) & (starts < n_end)
+        bed = tmp_path / "n.regions.bed"
+        bed.write_text("".join(f"chrX\t{s}\t{s + 100}\t{0 if n else 30}\n" for s, n in zip(starts, in_n, strict=True)))
+        ann = tmp_path / "n_ann.parquet"
+        pd.DataFrame(
+            {"chrom": "chrX", "start": starts, "gc": 0.4, "n_frac": in_n.astype(float), "lowmap": 0.0, "segdup": 0.0}
+        ).to_parquet(ann)
+        return pysam.tabix_index(str(bed), preset="bed", csi=True, force=True), str(ann)
+
+    def score_n(self, depth_file, ann, start, end):
+        cand = pd.DataFrame([{"chrom": "chrX", "start": start, "end": end, "svtype": "DEL", "n_reads": 5}])
+        sex = SexChromosomes(set(), set(), "XX")
+        return cu.score_with_depth(cand, depth_file, depth_file, ann, sex, cu.CandidateParams(), require_change=False)
+
+    def test_n_bins_are_not_deletion_evidence(self, tmp_path):
+        # a 10 kb candidate with 2 kb of N inside: no reads there whatever the copy number, so no loss
+        depth_file, ann = self.n_run(tmp_path, 54_000, 56_000)
+        r = self.score_n(depth_file, ann, 50_000, 60_000).iloc[0]
+        assert r.cn_mean == pytest.approx(2.0)  # not 1.6, as with the N bins counted as 0
+        assert r.uniq_frac == pytest.approx(1.0)
+
+    def test_candidate_across_an_assembly_gap_is_dropped(self, tmp_path):
+        gap = (20_000, 20_000 + Params().gap_break_bp)  # a run of N as long as the caller's gap_break_bp
+        depth_file, ann = self.n_run(tmp_path, *gap, length=200_000)
+        assert len(self.score_n(depth_file, ann, 10_000, 15_000)) == 1  # next to the gap
+        assert self.score_n(depth_file, ann, 15_000, 30_000).empty  # into the gap
+        assert self.score_n(depth_file, ann, 15_000, 130_000).empty  # across it
 
     def test_without_the_par_the_edge_looks_like_a_gain(self, tmp_path):
         r = self.score(tmp_path, SexChromosomes({"chrX"}, set(), "XY")).iloc[0]  # the false gain at PAR2

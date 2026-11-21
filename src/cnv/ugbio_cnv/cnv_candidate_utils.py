@@ -4,7 +4,8 @@ Shared pieces of the depth CNV caller's candidate steps (split_read_candidates, 
 - CandidateParams: clustering, depth-check and overlap parameters.
 - samtools_lines: SAM lines of a region, decoding only the needed CRAM fields.
 - dedup_clusters: collapse same-type read clusters with >= 50% reciprocal overlap to the one with the most reads.
-- score_with_depth: depth features of each candidate (mean inside vs median of the flanks) and the depth-change check.
+- score_with_depth: depth features of each candidate (mean inside vs median of the flanks, over callable bins) and the
+  depth-change check.
 - add_candidates_to_calls: add the candidates that are not already called to the depth calls.
 """
 
@@ -16,7 +17,7 @@ import pandas as pd
 import pysam
 from ugbio_cnv.cnv_vcf_consts import CNV_INFO_TAGS, CNV_SOURCE_SPLIT_READ
 from ugbio_cnv.depth_annotation import BIN_SIZE, read_annotation
-from ugbio_cnv.depth_cnv_caller import SexChromosomes, genotype_for
+from ugbio_cnv.depth_cnv_caller import Params, SexChromosomes, assembly_gaps, genotype_for
 
 
 @dataclass
@@ -81,17 +82,44 @@ def _depth_bins(tbx: pysam.TabixFile, chrom: str, start: int, end: int) -> tuple
     return np.array([int(r[1]) for r in rows], dtype=np.int64), np.array([float(r[3]) for r in rows])
 
 
-def _depth_values(tbx: pysam.TabixFile, chrom: str, start: int, end: int) -> np.ndarray:
-    return _depth_bins(tbx, chrom, start, end)[1]
-
-
 def _depth_per_copy(
-    tbx: pysam.TabixFile, sex: SexChromosomes, chrom: str, start: int, end: int
-) -> tuple[np.ndarray, np.ndarray]:
-    """Depth per expected copy of the bins in [start, end), and their baseline (2, 1, or 2 in a male PAR)."""
+    tbx: pysam.TabixFile, sex: SexChromosomes, chrom: str, start: int, end: int, mask: "CallableBins"
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Depth per expected copy, baseline (2, 1, or 2 in a male PAR) and start of the callable bins in [start, end)."""
     starts, depth = _depth_bins(tbx, chrom, start, end)
+    keep = mask.callable(chrom, starts)
+    starts, depth = starts[keep], depth[keep]
     base = sex.baseline(chrom, starts)
-    return depth / base, base
+    return depth / base, base, starts
+
+
+class CallableBins:
+    """
+    The depth caller's static mask from the annotation: a bin is callable if it has no N and its GC fraction is within
+    [gc_min, gc_max]; and the assembly gaps (runs of N bins of at least gap_break_bp).
+    """
+
+    def __init__(self, ann: pd.DataFrame, p: Params):
+        self.bins, self.gaps = {}, {}
+        for chrom, a in ann.groupby("chrom", sort=False, observed=True):
+            a = a.sort_values("start")  # noqa: PLW2901
+            starts, n_frac = a["start"].to_numpy(), a["n_frac"].to_numpy()
+            ok = (n_frac == 0) & a["gc"].between(p.gc_min, p.gc_max).to_numpy()
+            self.bins[chrom] = (starts, ok)
+            self.gaps[chrom] = assembly_gaps(starts, n_frac, p.gap_break_bp)
+
+    def callable(self, chrom: str, starts: np.ndarray) -> np.ndarray:
+        """Whether each bin (by start) is callable; a bin missing from the annotation is not."""
+        if chrom not in self.bins or not len(starts):
+            return np.zeros(len(starts), dtype=bool)
+        a_starts, ok = self.bins[chrom]
+        i = np.clip(np.searchsorted(a_starts, starts), 0, len(a_starts) - 1)
+        return (a_starts[i] == starts) & ok[i]
+
+    def overlaps_gap(self, chrom: str, start: int, end: int) -> bool:
+        """Whether [start, end) overlaps an assembly gap."""
+        g_start, g_end = self.gaps.get(chrom, (np.array([]), np.array([])))
+        return bool(((g_start < end) & (g_end > start)).any())
 
 
 def score_with_depth(
@@ -107,23 +135,31 @@ def score_with_depth(
     """
     Depth ratio, copy number and z per candidate; with require_change, those without the expected change drop.
 
+    Only the callable bins count, as in the depth caller (no N, GC within the caller's range): an N bin has no reads
+    whatever the copy number, so it is not deletion evidence. A candidate that overlaps an assembly gap (a run of N
+    bins of at least the caller's gap_break_bp) is dropped, as the depth caller does not call across one.
+
     Each depth bin is divided by its baseline (sex chromosome setup, including the male PARs), so a candidate next to
     or across a baseline change (a PAR edge) is not read as a gain or a loss. A candidate with no bin in the annotation
     (outside the regions it was built for, e.g. depth_calling_regions) is dropped: the depth caller does not call there.
     """
     t0 = pysam.TabixFile(depth_mq0, index=depth_mq0 + ".csi")
     t20 = pysam.TabixFile(depth_mq20, index=depth_mq20 + ".csi")
-    ann = read_annotation(annotation).set_index(["chrom", "start"])
+    ann = read_annotation(annotation)
+    mask = CallableBins(ann, Params())
+    ann = ann.set_index(["chrom", "start"])
     out = []
     for r in cand.itertuples(index=False):
         a = ann.reindex([(r.chrom, b) for b in range(r.start // BIN_SIZE * BIN_SIZE, r.end, BIN_SIZE)])
         if a["n_frac"].isna().all():  # no bin in the annotation
             continue
-        inside, inside_base = _depth_per_copy(t0, sex, r.chrom, r.start, r.end)
+        if mask.overlaps_gap(r.chrom, r.start, r.end):
+            continue
+        inside, inside_base, inside_starts = _depth_per_copy(t0, sex, r.chrom, r.start, r.end, mask)
         flanks = np.concatenate(
             [
-                _depth_per_copy(t0, sex, r.chrom, r.start - p.flank, r.start - p.flank_gap)[0],
-                _depth_per_copy(t0, sex, r.chrom, r.end + p.flank_gap, r.end + p.flank)[0],
+                _depth_per_copy(t0, sex, r.chrom, r.start - p.flank, r.start - p.flank_gap, mask)[0],
+                _depth_per_copy(t0, sex, r.chrom, r.end + p.flank_gap, r.end + p.flank, mask)[0],
             ]
         )
         if len(inside) == 0 or len(flanks) < p.min_flank_bins or np.median(flanks) <= 0:
@@ -135,7 +171,8 @@ def score_with_depth(
         no_change = (r.svtype == "DEL" and ratio >= p.max_del_ratio) or (r.svtype == "DUP" and ratio <= p.min_dup_ratio)
         if require_change and no_change:
             continue
-        uniq = _depth_values(t20, r.chrom, r.start, r.end)
+        u_starts, u_depth = _depth_bins(t20, r.chrom, r.start, r.end)
+        uniq = u_depth[np.isin(u_starts, inside_starts)]
         raw_inside = inside * inside_base
         out.append(
             {

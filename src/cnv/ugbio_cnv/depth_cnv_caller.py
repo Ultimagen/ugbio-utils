@@ -502,9 +502,34 @@ def set_baseline(bins: pd.DataFrame, sex: SexChromosomes) -> pd.DataFrame:
     return bins
 
 
+def assembly_gaps(starts: np.ndarray, n_frac: np.ndarray, min_bp: int) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Assembly gaps of one chromosome.
+
+    Parameters
+    ----------
+    starts : np.ndarray
+        Sorted bin starts of one chromosome.
+    n_frac : np.ndarray
+        N fraction of the same bins.
+    min_bp : int
+        Minimal gap length.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        Start and end positions of the runs of N bins (n_frac >= 0.5) of at least min_bp.
+    """
+    is_n = np.r_[0, (n_frac >= 0.5).astype(np.int8), 0]  # noqa: PLR2004
+    edges = np.diff(is_n)
+    run_start, run_end = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+    long_run = (run_end - run_start) * BIN_SIZE >= min_bp
+    return starts[run_start[long_run]], starts[run_end[long_run] - 1] + BIN_SIZE
+
+
 def assembly_gap_ends(starts: np.ndarray, n_frac: np.ndarray, min_bp: int) -> np.ndarray:
     """
-    Ends of the assembly gaps of one chromosome.
+    Ends of the assembly gaps of one chromosome (see assembly_gaps).
 
     Parameters
     ----------
@@ -520,11 +545,7 @@ def assembly_gap_ends(starts: np.ndarray, n_frac: np.ndarray, min_bp: int) -> np
     np.ndarray
         End positions of the runs of N bins (n_frac >= 0.5) of at least min_bp.
     """
-    is_n = np.r_[0, (n_frac >= 0.5).astype(np.int8), 0]  # noqa: PLR2004
-    edges = np.diff(is_n)
-    run_start, run_end = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
-    long_run = (run_end - run_start) * BIN_SIZE >= min_bp
-    return starts[run_end[long_run] - 1] + BIN_SIZE
+    return assembly_gaps(starts, n_frac, min_bp)[1]
 
 
 def make_units(bins: pd.DataFrame, p: Params) -> pd.DataFrame:
