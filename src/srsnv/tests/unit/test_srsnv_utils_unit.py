@@ -1599,7 +1599,7 @@ class TestMultiCallColumns:
                 "POS": [10, 10, 20, 30, 30, 40],
                 "RN": ["a", "a", "b", "c", "c", "d"],
                 "REF": ["A", "A", "C", "G", "G", "T"],
-                "ALT": ["T", "T", "A", "C", "T", "G"],  # c: different alts -> two single-call molecules
+                "ALT": ["T", "T", "A", "C", "T", "G"],  # c: different alts -> two non-concordant molecules
                 "MATE": [2, 1, 2, 1, 2, 1],
                 "is_mixed_start": [True, True, False, False, False, True],
             }
@@ -1621,10 +1621,10 @@ class TestMultiCallColumns:
         assert pd.isna(groups[0])
         assert groups[1:] == [
             "concordant, mixed",
-            "single-call, non-mixed",
-            "single-call, non-mixed",
-            "single-call, non-mixed",
-            "single-call, mixed",
+            "non-concordant, non-mixed",
+            "non-concordant, non-mixed",
+            "non-concordant, non-mixed",
+            "non-concordant, mixed",
         ]
 
     def test_dedupe(self):

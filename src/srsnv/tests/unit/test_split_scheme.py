@@ -283,11 +283,11 @@ class TestStartOnlyPpmseq:
 
 
 class TestMultiCallScheme:
-    """Multi-call (ppmSeq+ dual flow; MATE column): concordant vs single-call x mixed-start, per molecule."""
+    """Multi-call (ppmSeq+ dual flow; MATE column): concordant vs non-concordant x mixed-start, per molecule."""
 
     @staticmethod
     def _df():
-        # molecule a: concordant (R1+R2) mixed; b: single-call (R2 only) non-mixed; c: single-call (R1) mixed
+        # molecule a: concordant (R1+R2 rows) mixed; b: non-concordant (R2 only) non-mixed; c: non-concordant (R1) mixed
         return pd.DataFrame(
             {
                 "CHROM": ["chr1"] * 4,
@@ -314,15 +314,41 @@ class TestMultiCallScheme:
         rg = out[READ_GROUP].astype(object).tolist()
         assert rg[0] == "concordant, mixed"
         assert pd.isna(rg[1])  # the R2 call of molecule a is in no group (molecule counted once)
-        assert rg[2:] == ["single-call, non-mixed", "single-call, mixed"]
+        assert rg[2:] == ["non-concordant, non-mixed", "non-concordant, mixed"]
         masks = scheme.display_variant.group_masks(out)
         assert {k: int(v.sum()) for k, v in masks.items()} == {
-            "single-call, non-mixed": 1,
-            "single-call, mixed": 1,
+            "non-concordant, non-mixed": 1,
+            "non-concordant, mixed": 1,
             "concordant, non-mixed": 0,
             "concordant, mixed": 1,
         }
         assert scheme.display_suffix == "multi_call"
+
+    def test_concordance_from_dnn_image_stats(self):
+        # DNN featuremap_df: the sibling call's row is usually downsampled away -> concordance comes from the
+        # per-image cs_n_supporting (calls carrying the alt), and the cs_* stats must not select PE_DUPLEX.
+        fm_df = pd.DataFrame(
+            {
+                "CHROM": ["chr1"] * 3,
+                "POS": [10, 20, 30],
+                "RN": ["a", "b", "c"],
+                "REF": ["A", "C", "G"],
+                "ALT": ["T", "A", "C"],
+                "MATE": [1, 2, 1],
+                "st": ["MIXED", "PLUS", "MIXED"],
+                "et": ["MIXED", "MINUS", "PLUS"],
+                "cs_n_crossing": [2, 2, 1],
+                "cs_n_supporting": [2, 1, 1],
+            }
+        )
+        out, scheme = resolve_scheme_and_add_columns(fm_df, adapter_version="v1")
+        assert scheme is ss.MULTI_CALL_SCHEME
+        assert out[READ_GROUP].astype(object).tolist() == [
+            "concordant, mixed",
+            "non-concordant, non-mixed",
+            "non-concordant, mixed",
+        ]
+        assert resolve_scheme(fm_df.drop(columns=["MATE"])) is ss.PE_DUPLEX_SCHEME
 
     def test_without_ppmseq_tags_all_non_mixed(self):
         out, scheme = resolve_scheme_and_add_columns(self._df().drop(columns=["st", "et"]))

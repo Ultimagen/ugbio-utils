@@ -3741,9 +3741,9 @@ class SRSNVReport:
 
     @exception_handler
     def calc_multi_call_summary_table(self):
-        """Multi-call (ppmSeq+ dual flow) SNVQ summary: concordant (alt in both calls) vs single-call molecules.
+        """Multi-call (ppmSeq+ dual flow) SNVQ summary: concordant (alt in both calls) vs non-concordant molecules.
 
-        Rows: variant class x call concordance (concordant / single-call / all). SNVs are additionally split by
+        Rows: variant class x call concordance (concordant / non-concordant / all). SNVs are additionally split by
         the COMBINED cycle skip (cycle skip in the R1 or R2 flow order). Per molecule (``data_df`` is deduplicated
         to one row per molecule in multi-call mode). Reports n_TP, n_FP, % of the class's TP molecules,
         Median SNVQ (TP/FP), TP%>=60, FP%>=60 and ROC AUC (Phred). Written to the QC h5 under
@@ -3773,7 +3773,7 @@ class SRSNVReport:
         rows = []
         for cls_name, cls_mask in class_masks:
             n_tp_cls = int((cls_mask & label).sum())
-            for conc_name, conc_mask in (("concordant", conc), ("single-call", ~conc), ("all", np.ones(n, bool))):
+            for conc_name, conc_mask in (("concordant", conc), ("non-concordant", ~conc), ("all", np.ones(n, bool))):
                 mask = cls_mask & conc_mask
                 tp_mask, fp_mask = mask & label, mask & ~label
                 n_tp, n_fp = int(tp_mask.sum()), int(fp_mask.sum())
@@ -4578,7 +4578,7 @@ class SRSNVReport:
         # Duplex-PE CS-family concordance summary (PE reads, concordant vs non-concordant). Self-skips
         # unless the CS / pe-duplex columns are present.
         self.calc_pe_concordance_summary_table()
-        # Multi-call concordant vs single-call summary (per molecule). Self-skips unless MATE-derived columns exist.
+        # Multi-call concordant vs non-concordant summary (per molecule). Self-skips unless MATE-derived columns exist.
         self.calc_multi_call_summary_table()
         hmer_indel_fq_recall_plot = os.path.join(
             self.params["workdir"], f"{self.params['data_name']}hmer_indel_fq_recall"

@@ -119,20 +119,23 @@ PE_DUPLEX_GROUPS = [PE_DUPLEX_GROUP_SIMPLEX_SE, PE_DUPLEX_GROUP_SIMPLEX_PE, PE_D
 
 # Multi-call (ppmSeq+ dual flow): every molecule is called twice, R1 in flow order 1 and R2 in flow order 2, stored as
 # a mate pair with the same qname and strand. snvfind --emit-mate tags each read row with MATE (0 unpaired, 1 R1,
-# 2 R2). A candidate molecule = rows sharing CHROM/POS/RN/variant; it is "concordant" when both calls (MATE 1 and 2)
-# show the alt, else "single-call". Split = concordance x mixed-start, counted per molecule (one representative row
-# per molecule -- the R1 row when present -- carries the group; the other call's row is in no group).
+# 2 R2). A candidate molecule = rows sharing CHROM/POS/RN/variant; it is "concordant" when both calls show the alt
+# (DNN per-image stat cs_n_supporting >= 2; fallback when absent: both the MATE 1 and MATE 2 rows are in the df),
+# else "non-concordant" (the other call shows REF or does not cover the site). Split = concordance x mixed-start,
+# counted per molecule (one representative row per molecule -- the R1 row when present -- carries the group; the
+# other call's row is in no group).
 MATE = "MATE"
 MATE_R1 = 1
 MATE_R2 = 2
 DEFAULT_FLOW_ORDER_R1 = "TGCA"
+MULTI_CALL_N_CALLS = 2  # calls per molecule; concordant = all of them carry the alt
 IS_MULTI_CALL_CONCORDANT = "is_multi_call_concordant"  # per-row: the molecule's alt is seen in both calls
 IS_MOLECULE_REPRESENTATIVE = "is_molecule_representative"  # per-row: the row that represents its molecule
 # per-row: the SNV motif is a cycle skip in EITHER flow order (R1 or R2) -- a multi-call molecule is read in both
 IS_CYCLE_SKIP_COMBINED = "is_cycle_skip_combined"
 MULTI_CALL_GROUP = "multi_call_group"
-MULTI_CALL_GROUP_SINGLE_NON = "single-call, non-mixed"
-MULTI_CALL_GROUP_SINGLE_MIXED = "single-call, mixed"
+MULTI_CALL_GROUP_SINGLE_NON = "non-concordant, non-mixed"
+MULTI_CALL_GROUP_SINGLE_MIXED = "non-concordant, mixed"
 MULTI_CALL_GROUP_CONC_NON = "concordant, non-mixed"
 MULTI_CALL_GROUP_CONC_MIXED = "concordant, mixed"
 MULTI_CALL_GROUPS = [
@@ -165,7 +168,7 @@ class ReportMode(Enum):
     CONSENSUS = "consensus"  # consensus data: split on consensus vs non-consensus (fs/rs)
     # paired-end duplex (DNN per-image CS-family stats present): simplex / duplex-SE / duplex-PE
     PE_DUPLEX = "pe_duplex"
-    # multi-call (ppmSeq+ dual flow, MATE present): concordant (both calls) vs single-call x mixed-start
+    # multi-call (ppmSeq+ dual flow, MATE present): concordant (both calls) vs non-concordant x mixed-start
     MULTI_CALL = "multi_call"
     NONE = "none"  # neither available: single "all reads" group
 
@@ -261,8 +264,10 @@ def add_multi_call_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFra
     """Add the multi-call grouping columns (concordance, molecule representative, ``multi_call_group``).
 
     A molecule is keyed by (CHROM, POS, RN, variant descriptors present among REF/ALT/X_IC/X_IL/X_INDEL_SEQ).
-    It is *concordant* iff it has both an R1 (``MATE == 1``) and an R2 (``MATE == 2``) row, i.e. the alt was
-    seen in both calls. One representative row per molecule (the R1 row when present, else its first row)
+    It is *concordant* iff the alt was seen in both calls: the DNN per-image stat ``cs_n_supporting >= 2`` (calls
+    carrying the alt at the site; the training featuremap is downsampled, so the sibling call's row is almost never
+    present). Fallback when ``cs_n_supporting`` is absent: the molecule has both an R1 (``MATE == 1``) and an R2
+    (``MATE == 2``) row. One representative row per molecule (the R1 row when present, else its first row)
     gets the ``multi_call_group`` label (concordance x ``is_mixed_start``); the other call's row gets NaN, so the
     report's per-group metrics count molecules, not reads. Requires ``is_mixed_start`` (False when absent).
     Rows without ``RN`` are their own molecule.
@@ -278,7 +283,11 @@ def add_multi_call_columns_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFra
     is_r1 = mate.eq(MATE_R1)
     has_r1 = is_r1.groupby(mol_id).transform("any")
     has_r2 = mate.eq(MATE_R2).groupby(mol_id).transform("any")
-    data_df[IS_MULTI_CALL_CONCORDANT] = (has_r1 & has_r2).to_numpy()
+    if CS_N_SUPPORTING in data_df.columns:
+        n_sup = pd.to_numeric(data_df[CS_N_SUPPORTING], errors="coerce").fillna(0)
+        data_df[IS_MULTI_CALL_CONCORDANT] = n_sup.ge(MULTI_CALL_N_CALLS).to_numpy()
+    else:
+        data_df[IS_MULTI_CALL_CONCORDANT] = (has_r1 & has_r2).to_numpy()
     # Representative: lowest positive MATE first (R1), MATE 0 / unknown last; ties -> first row in frame order.
     rank = mate.where(mate > 0, 99)
     order = pd.DataFrame({"m": mol_id.to_numpy(), "r": rank.to_numpy(), "i": np.arange(len(data_df))})

@@ -224,7 +224,7 @@ def _pe_duplex_groups(data_df: pd.DataFrame) -> pd.Categorical:
 
 
 def _multi_call_groups(data_df: pd.DataFrame) -> pd.Categorical:
-    """Multi-call split: single-call / concordant x non-mixed / mixed (start tag), one row per molecule.
+    """Multi-call split: non-concordant / concordant x non-mixed / mixed (start tag), one row per molecule.
 
     Reads the per-row ``multi_call_group`` column assigned by
     :func:`~ugbio_srsnv.srsnv_utils.add_multi_call_columns_to_featuremap_df`; the non-representative call of a
@@ -340,7 +340,8 @@ PE_DUPLEX_SCHEME = SplitScheme(
     # Paired-end duplex: detected by the DNN per-image CS-family stat `cs_n_crossing`. Checked before
     # MIXED (pe-duplex consensus reads also carry st/et) so the simplex-SE / simplex-PE / duplex-SE /
     # duplex-PE split wins for pe-duplex runs.
-    detect=lambda cols: CS_N_CROSSING in cols,
+    # Multi-call featuremaps also carry the cs_* image stats -> exclude MATE (multi-call wins regardless of order).
+    detect=lambda cols: CS_N_CROSSING in cols and MATE not in cols,
     add_columns=_pe_duplex_add_columns,
     tag_axis="duplex overlap",
     variants=(
@@ -416,14 +417,13 @@ NONE_SCHEME = SplitScheme(
     ),
 )
 
-# Ordered registry. PE_DUPLEX first: it detects the DNN per-image CS-family stat `cs_n_crossing`,
-# emitted only by duplex-PE DeepSRSNV runs, whose per-molecule split must win over the ppmSeq MIXED
-# split (which also matches because st/et are present). MULTI_CALL (MATE column) next, also before MIXED for the
-# same reason. ppmSeq tags then beat per-read fs/rs. NONE is
-# the explicit fallback, not consulted via `detect`.
+# Ordered registry. MULTI_CALL first (MATE column): multi-call DNN featuremaps also carry the per-image cs_* stats
+# PE_DUPLEX detects. PE_DUPLEX next (DNN per-image CS-family stat `cs_n_crossing`, duplex-PE runs). Both precede
+# MIXED, which also matches because st/et are present. ppmSeq tags then beat per-read fs/rs. NONE is the explicit
+# fallback, not consulted via `detect`.
 SPLIT_SCHEMES: tuple[SplitScheme, ...] = (
-    PE_DUPLEX_SCHEME,
     MULTI_CALL_SCHEME,
+    PE_DUPLEX_SCHEME,
     MIXED_SCHEME,
     CONSENSUS_SCHEME,
     NONE_SCHEME,
