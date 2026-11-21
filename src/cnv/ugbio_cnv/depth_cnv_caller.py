@@ -248,6 +248,27 @@ def load_bins(depth_mq0: str, depth_mq20: str, annotation: str, contigs: list[st
 SEXES = ("male", "female")
 
 
+def sex_chromosome_names(fasta_index: str) -> tuple[str, str]:
+    """
+    chrX / chrY names of a reference: chrX, chrY (hg38 style) unless the index has X, Y (GRCh37 style) instead.
+
+    Parameters
+    ----------
+    fasta_index : str
+        Reference .fai.
+
+    Returns
+    -------
+    tuple[str, str]
+        The chrX and chrY names.
+    """
+    with open(fasta_index) as f:
+        names = {line.split("\t", 1)[0] for line in f}
+    if "chrX" not in names and "X" in names:
+        return "X", "Y"
+    return "chrX", "chrY"
+
+
 def sex_chromosome_setup(sex: str, chrx_name: str = "chrX", chry_name: str = "chrY") -> SexChromosomes:
     """
     Sex chromosome setup from a given sex.
@@ -309,7 +330,12 @@ def sex_chromosome_ratios(
 
 
 def infer_sex_chromosomes(
-    x_ratio: float | None, y_ratio: float | None, chrx_name: str = "chrX", chry_name: str = "chrY"
+    x_ratio: float | None,
+    y_ratio: float | None,
+    chrx_name: str = "chrX",
+    chry_name: str = "chrY",
+    *,
+    chry_in_bins: bool = False,
 ) -> SexChromosomes:
     """
     Sex chromosome setup from the chrX / chrY depth ratios, with estimate_ploidy.determine_karyotype.
@@ -317,7 +343,8 @@ def infer_sex_chromosomes(
     One chrX copy makes chrX haploid, two or more diploid; chrY is haploid if present and not called otherwise.
     Without chrX data nothing is decided (the sex chromosomes are not being called). If the karyotype cannot be
     determined (a ratio between two copy numbers, see X_RATIO_AMBIGUOUS / Y_RATIO_AMBIGUOUS), chrX and chrY are not
-    called.
+    called. A chrY that is being called but has too few clean bins for a ratio is not called either (its copy number
+    is unknown).
 
     Parameters
     ----------
@@ -325,6 +352,8 @@ def infer_sex_chromosomes(
         chrX / chrY depth ratio to the autosomes (sex_chromosome_ratios); None if not measured.
     chrx_name, chry_name : str
         Sex chromosome names in the reference.
+    chry_in_bins : bool
+        chrY is among the bins being called (so y_ratio None means too few clean bins, not "not called").
 
     Returns
     -------
@@ -335,7 +364,9 @@ def infer_sex_chromosomes(
         if y_ratio is not None:
             logger.warning(f"{chrx_name} has too few clean bins to infer the karyotype: {chry_name} is not called")
             return SexChromosomes(skipped={chrx_name, chry_name}, karyotype=f"UNDETERMINED (no {chrx_name})")
-        return SexChromosomes(karyotype=f"not inferred (no {chrx_name})")
+        return SexChromosomes(
+            skipped={chry_name} if chry_in_bins else set(), karyotype=f"not inferred (no {chrx_name})"
+        )
     ambiguous = X_RATIO_AMBIGUOUS[0] < x_ratio < X_RATIO_AMBIGUOUS[1] or (
         y_ratio is not None and Y_RATIO_AMBIGUOUS[0] < y_ratio < Y_RATIO_AMBIGUOUS[1]
     )
@@ -355,7 +386,9 @@ def infer_sex_chromosomes(
         sex.haploid.add(chrx_name)
     if has_y:
         sex.haploid.add(chry_name)
-    elif y_ratio is not None:
+    elif y_ratio is not None or chry_in_bins:
+        if y_ratio is None:
+            logger.warning(f"{chry_name} has too few clean bins for its copy number: it is not called")
         sex.skipped.add(chry_name)
     return sex
 
@@ -1120,8 +1153,8 @@ def call_depth_cnvs(  # noqa: PLR0913
     output_vcf: str,
     sex: str | None = None,
     contigs: list[str] | None = None,
-    chrx_name: str = "chrX",
-    chry_name: str = "chrY",
+    chrx_name: str | None = None,
+    chry_name: str | None = None,
     par_bed: str | None = None,
     params: Params | None = None,
 ) -> pd.DataFrame:
@@ -1145,8 +1178,8 @@ def call_depth_cnvs(  # noqa: PLR0913
         if the depth is ambiguous, chrX and chrY are not called.
     contigs : list[str], optional
         Contigs to call (default: all annotated contigs).
-    chrx_name, chry_name : str
-        Sex chromosome names in the reference.
+    chrx_name, chry_name : str, optional
+        Sex chromosome names in the reference (default: from the fasta index, sex_chromosome_names).
     par_bed : str, optional
         Pseudoautosomal regions (BED, e.g. the par_regions genome resource). In a male, the chrX PARs keep baseline 2
         (their chrY copy is masked in the reference, so all their reads map to chrX). Without it the whole male chrX
@@ -1160,9 +1193,13 @@ def call_depth_cnvs(  # noqa: PLR0913
         The calls.
     """
     p = params or Params()
+    default_x, default_y = sex_chromosome_names(fasta_index)
+    chrx_name, chry_name = chrx_name or default_x, chry_name or default_y
     bins = normalize(load_bins(depth_mq0, depth_mq20, annotation, contigs), p)
     x_ratio, y_ratio = sex_chromosome_ratios(bins, chrx_name, chry_name, p)
-    inferred = infer_sex_chromosomes(x_ratio, y_ratio, chrx_name, chry_name)
+    inferred = infer_sex_chromosomes(
+        x_ratio, y_ratio, chrx_name, chry_name, chry_in_bins=bool((bins["chrom"] == chry_name).any())
+    )
     setup = inferred
     if sex:
         setup = sex_chromosome_setup(sex, chrx_name, chry_name)
@@ -1226,8 +1263,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--fasta-index", required=True, help="Reference .fai")
     parser.add_argument("--output-vcf", required=True, help="Output .vcf.gz")
     parser.add_argument("--contigs", nargs="+", default=None, help="Contigs to call (default: all annotated)")
-    parser.add_argument("--chrx-name", default="chrX", help="chrX name in the reference")
-    parser.add_argument("--chry-name", default="chrY", help="chrY name in the reference")
+    parser.add_argument(
+        "--chrx-name", default=None, help="chrX name in the reference (default: chrX, or X if the index has no chrX)"
+    )
+    parser.add_argument(
+        "--chry-name", default=None, help="chrY name in the reference (default: chrY, or Y if the index has no chrX)"
+    )
     parser.add_argument(
         "--par-bed",
         default=None,

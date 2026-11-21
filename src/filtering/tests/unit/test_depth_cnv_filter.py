@@ -157,16 +157,17 @@ class TestDepthCnvModel:
 
 class TestDecisionThreshold:
     def test_max_f1_threshold(self):
-        # true rows score 0.80 - 0.95, false rows 0.10 - 0.75: the best F1 is at the first step above 0.75 (p = 0.76)
+        # true rows score 0.80 - 0.95 (36.0 - 42.8), false rows 0.10 - 0.75 (up to 34.8): 35 is the lowest clean cut
         scores = np.r_[np.linspace(0.8, 0.95, 20), np.linspace(0.1, 0.75, 20)]
         labels = np.r_[np.ones(20), np.zeros(20)]
-        assert max_f1_decision_threshold(scores, labels) == round(30 + 10 * np.log10(0.76 / 0.24)) == 35
+        assert max_f1_decision_threshold(scores, labels) == 35
 
     def test_max_f1_threshold_takes_any_scores(self):
-        # plain lists, no model; keeping the true row at 0.30 is worth the false row at 0.35, not the one at 0.25
+        # plain lists, no model; keeping the true row at 0.30 (26.3) is worth the false row at 0.35 (27.3), not the
+        # one at 0.25 (25.2): 26, not 25, which would also pass 0.25 because FilterVCF passes a score above it
         scores = [0.25, 0.3, 0.35, 0.9, 0.9, 0.9, 0.1]
         labels = [0, 1, 0, 1, 1, 1, 0]
-        assert max_f1_decision_threshold(scores, labels) == round(30 + 10 * np.log10(0.26 / 0.74)) == 25
+        assert max_f1_decision_threshold(scores, labels) == 26
 
     def test_given_threshold_wins(self):
         from ugbio_filtering.filter_variants_pipeline import resolve_decision_threshold

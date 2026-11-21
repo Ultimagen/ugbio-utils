@@ -94,9 +94,10 @@ def train_model(
 
 def max_f1_decision_threshold(scores: np.ndarray, labels: np.ndarray) -> int:
     """
-    FilterVCF decision threshold with the best F1: the probability threshold (0.20 - 0.88 in steps of 0.02) with the
-    best F1 of (scores, labels), as the phred-like score FilterVCF compares it to, 30 + 10 log10(p / (1 - p)), rounded
-    to an integer (a call passes when its score is above the threshold).
+    FilterVCF decision threshold with the best F1: the integer threshold (24 - 38, i.e. probabilities of about
+    0.20 - 0.88) with the best F1 of (scores, labels), on the score FilterVCF compares it to,
+    30 + 10 log10(p / (1 - p)), with FilterVCF's rule: a call passes when its score is above the threshold.
+    The lowest threshold wins a tie.
 
     The scores should not be in-sample: e.g. out-of-bag scores of a random forest, or scores of held-out rows.
 
@@ -112,14 +113,15 @@ def max_f1_decision_threshold(scores: np.ndarray, labels: np.ndarray) -> int:
     int
         Decision threshold for filter_variants_pipeline --decision_threshold.
     """
-    scores = np.asarray(scores)
+    p = np.asarray(scores, dtype=float)
     y = np.asarray(labels).astype(bool)
+    quals = np.clip(30 + 10 * np.log10((p + 1e-10) / (1 - p + 1e-10)), 0, None)  # as filter_variants_pipeline
 
     def f1(t):
-        return 2 * (y & (scores >= t)).sum() / max(y.sum() + (scores >= t).sum(), 1)
+        passed = quals > t
+        return 2 * (y & passed).sum() / max(y.sum() + passed.sum(), 1)
 
-    best = float(max(np.arange(0.2, 0.9, 0.02), key=f1))
-    return int(round(30 + 10 * np.log10(best / (1 - best))))
+    return int(max(range(24, 39), key=f1))
 
 
 def apply_model(

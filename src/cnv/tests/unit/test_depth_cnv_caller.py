@@ -114,6 +114,21 @@ class TestSexInference:
         sex = dc.infer_sex_chromosomes(*self.ratios(1.0, None, "X", "Y"), "X", "Y")
         assert (sex.haploid, sex.skipped) == ({"X"}, set())
 
+    def test_chry_without_a_ratio_is_not_called(self):
+        # chrY among the bins but too few clean ones for a ratio: its copy number is unknown, so it is not called
+        female = dc.infer_sex_chromosomes(*self.ratios(2.0, None), chry_in_bins=True)
+        assert (female.haploid, female.skipped) == (set(), {"chrY"})
+        male = dc.infer_sex_chromosomes(*self.ratios(1.0, None), chry_in_bins=True)
+        assert (male.haploid, male.skipped) == ({"chrX"}, {"chrY"})
+        assert dc.infer_sex_chromosomes(None, None, chry_in_bins=True).skipped == {"chrY"}
+
+    def test_sex_chromosome_names_from_the_fasta_index(self, tmp_path):
+        hg38, b37 = tmp_path / "hg38.fai", tmp_path / "b37.fai"
+        hg38.write_text("chr1\t100\t6\t60\t61\nchrX\t100\t200\t60\t61\nchrY\t100\t400\t60\t61\n")
+        b37.write_text("1\t100\t3\t60\t61\nX\t100\t200\t60\t61\nY\t100\t400\t60\t61\n")
+        assert dc.sex_chromosome_names(str(hg38)) == ("chrX", "chrY")
+        assert dc.sex_chromosome_names(str(b37)) == ("X", "Y")
+
     def test_no_sex_chromosomes_called(self):
         sex = dc.infer_sex_chromosomes(None, None)
         assert (sex.haploid, sex.skipped) == (set(), set())
