@@ -61,6 +61,8 @@ class SVComparison:
         ignore_filter: bool = False,
         ignore_type: bool = True,
         skip_collapse: bool = False,
+        pctovl: float | None = None,
+        dup_to_ins: bool = False,
     ):
         """
         Run truvari, generate truvari report and concordance VCF
@@ -90,6 +92,10 @@ class SVComparison:
         skip_collapse : bool, optional
             If True, VCF collapsing step was skipped (usually for defining truthset) and
             truvari should run with -p multi
+        pctovl : float, optional
+            Minimal reciprocal overlap (--pctovl), by default truvari's
+        dup_to_ins : bool, optional
+            If True, duplications can match insertions (--dup-to-ins), by default False
         Returns
         -------
         None
@@ -110,6 +116,10 @@ class SVComparison:
         truvari_cmd.extend(["--pctseq", str(pctseq)])
         truvari_cmd.extend(["--pctsize", str(pctsize)])
         truvari_cmd.extend(["--sizemax", str(maxsize)])
+        if pctovl is not None:
+            truvari_cmd.extend(["--pctovl", str(pctovl)])
+        if dup_to_ins:
+            truvari_cmd.append("--dup-to-ins")
 
         self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
         self.__execute(" ".join(truvari_cmd))

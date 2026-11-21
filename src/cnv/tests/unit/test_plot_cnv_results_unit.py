@@ -252,3 +252,26 @@ Y\t2000\t3000\t28
         assert out_calls_fig.size() > 0
         assert out_coverage_fig.size() > 0
         assert out_dup_del_fig.size() > 0
+
+
+@pytest.mark.parametrize(
+    ("info", "expected"),
+    [
+        ("SVTYPE=DUP;CopyNumber=3.5", 3.5),  # cn.mops
+        ("SVTYPE=DEL;CopyNumber=1;CN_MEAN=0.9", 1.0),  # CopyNumber first
+        ("SVTYPE=DEL;CN_MEAN=1.04;BASE_CN=2;FILTER=PASS", 1.04),  # depth CNV caller
+        ("SVTYPE=DEL;CopyNumber=.;CN_MEAN=0.9", 0.9),
+        ("SVTYPE=DEL;FILTER=PASS", None),
+    ],
+)
+def test_extract_copy_number(info, expected):
+    assert plot_cnv_results.extract_copy_number(info) == expected
+
+
+def test_coverage_median_ignores_uncovered_windows():
+    import pandas as pd
+
+    # a subset input: most windows have no coverage; the median of the covered ones is the normalization
+    cov = pd.Series([0.0] * 10 + [30.0, 32.0, 34.0])
+    assert plot_cnv_results.coverage_median(cov) == 32.0
+    assert plot_cnv_results.coverage_median(pd.Series([0.0, 0.0])) == 0.0

@@ -45,7 +45,7 @@ When analyzing dependencies, recognize these patterns:
 - **ML/Training**: scikit-learn, xgboost, joblib → ugbio_core[ml] extra (machine learning stack)
 - **Data Serialization**: pyarrow, fastparquet → ugbio_core[parquet] extra (columnar/parquet I/O)
 - **Cloud Operations**: boto3, google-cloud-storage → module-specific (cloud-specific, not core functionality)
-- **Specialized Tools**: cnvpytor, truvari, domain packages → module-specific (tool-specific dependencies)
+- **Specialized Tools**: truvari, domain packages → module-specific (tool-specific dependencies)
 
 ---
 

@@ -6,12 +6,13 @@ This module provides Python scripts and utilities for Copy Number Variation (CNV
 
 The CNV module integrates multiple CNV calling algorithms and provides tools for processing, filtering, combining, annotating, and visualizing CNV calls. It supports both germline and somatic CNV detection workflows.
 
-Note that the package itself does not call variants, it just provides facilities for preparing data, calling, changing the format and combining callsets.
+Apart from the depth CNV caller, the package does not call variants itself: it provides facilities for preparing
+data, calling, changing the format and combining callsets.
 
 The package is designed to work with the following CNV callers:
 
-- **cn.mops** - Read depth-based CNV caller using a Bayesian approach
-- **CNVpytor** - Read depth analysis for CNV detection
+- **Depth CNV caller** (this package) - cohort-free germline read-depth caller, see below
+- **cn.mops** - cohort read-depth caller (R scripts in `cnmops/`), optional extra candidates for the depth caller
 - **ControlFREEC** - Control-FREEC for somatic CNV detection
 
 ## Installation
@@ -24,19 +25,19 @@ Install the CNV module and its dependencies:
 pip install ugbio-cnv
 ```
 
-Pre-built docker image can be downloaded from Dockerhub: [`ultimagenomics/ugbio_cnv`](https://hub.docker.com/r/ultimagenomics/ugbio_filtering)
+Pre-built docker image can be downloaded from Dockerhub: [`ultimagenomics/ugbio_cnv`](https://hub.docker.com/r/ultimagenomics/ugbio_cnv)
 
 
 ## Available Tools
 
 ### CNV Processing
 
-#### `process_cnmops_cnvs`
-Process CNV calls in BED format from cn.mops and ControlFREEC: filter by length and low-complexity regions, annotate, and convert to VCF format.
+#### `process_cnvs`
+Process CNV calls in BED format from cn.mops or ControlFREEC: filter by length and low-complexity regions, annotate, and convert to VCF format.
 
 ```bash
-process_cnmops_cnvs \
-  --input_bed_file cnmops_calls.bed \
+process_cnvs \
+  --input_bed_file cnv_calls.bed \
   --cnv_lcr_file ug_cnv_lcr.bed \
   --min_cnv_length 10000 \
   --intersection_cutoff 0.5 \
@@ -44,65 +45,19 @@ process_cnmops_cnvs \
 ```
 
 **Key Parameters:**
-- `--input_bed_file` - Input BED file from cn.mops
+- `--input_bed_file` - Input CNV BED file
 - `--cnv_lcr_file` - UG-CNV-LCR BED file for filtering low-complexity regions (see workflows for the BED)
 - `--min_cnv_length` - CNVs below this length will be marked (default: 10000)
 - `--intersection_cutoff` - Overlap threshold with the cnv lcr(default: 0.5)
 
-### Combining CNV Calls
-
-Tools for combining and analyzing CNV calls (currently implemented combining of CNV calls from cn.mops and CNVPytor) are all aggregated under CLI interface `combine_cnmops_cnvpytor_cnv_calls`. This CLI contains the following tools - each can also be called by a standalone script:
-
-```
-    concat              Combine CNV VCFs from different callers (cn.mops and cnvpytor)
-    filter_cnmops_dups  Filter short duplications from cn.mops calls in the combined CNV VCF
-    annotate_gaps       Annotate CNV calls with percentage of gaps (Ns) from reference genome
-    annotate_regions    Annotate CNV calls with region annotations from BED file
-    merge_records       Merge adjacent or nearby CNV records in a VCF file
-```
-
-#### `concat`
-Concatenate CNV VCF files from different callers (cn.mops and CNVpytor) into a single sorted and indexed VCF.
-The tool adds "source" tag for each CNV
+#### `add_cipos_to_vcf`
+Add CIPOS (± half the window size) to the calls of a cn.mops VCF.
 
 ```bash
-combine_cnv_vcfs \
-  --cnmops_vcf cnmops1.vcf cnmops2.vcf \
-  --cnvpytor_vcf cnvpytor1.vcf cnvpytor2.vcf \
-  --output_vcf combined.vcf.gz \
-  --fasta_index reference.fasta.fai \
-  --out_directory ./output
+add_cipos_to_vcf --input_vcf calls.vcf.gz --window_size 1000 --output_vcf calls.cipos.vcf.gz
 ```
 
-#### `annotate_regions`
-Annotate CNV calls with custom genomic regions that they overlap. The BED is expected to contain |-separated names of regions in the fourth column. The annotation is added to the info field under tag REGION_ANNOTATION
-
-```bash
-annotate_regions \
-  --input_vcf calls.vcf.gz \
-  --output_vcf annotated.vcf.gz \
-  --annotation_bed regions.bed
-```
-#### `annotate_gaps`
-Annotate CNV calls with percentage of Ns that they cover. Adds an info tag GAPS_PERCENTAGE
-
-```bash
-annotate_gaps \
-  --calls_vcf calls.vcf.gz \
-  --output_vcf annotated.vcf.gz \
-  --ref_fasta Homo_sapiens_assembly38.fasta
-```
-
-#### `merge_records`
-
-Combines overlapping records in the VCF
-
-```bash
-merge_records
-   --input_vcf calls.vcf.gz \
-   --output_vcf calls.combined.vcf.gz \
-   --distance 0
-```
+### Breakpoint evidence and SV merge
 
 #### `analyze_cnv_breakpoint_reads`
 Analyze reads at CNV breakpoints to identify supporting evidence for duplications and deletions.
@@ -121,7 +76,8 @@ Discordant pairs count too, in their own fields: `CNV_DUP_PAIRS` / `CNV_DEL_PAIR
 (over `CNV_TOTAL_READS`) and `*_PAIRS_MEDIAN_SPAN`. `CNV_*_READS`, `CNV_*_FRAC` and
 `*_READS_MEDIAN_INSERT_SIZE` stay split-read only. Each fragment votes at most once per kind of evidence, so
 a fragment with both a split read and a discordant pair counts in both. The pair fields are always written;
-on single-end input they are 0.
+on single-end input they are 0. Pairs are classified by `pair_svtype` (FR = deletion, RF = duplication), the rule
+`pair_cnv_candidates` uses too.
 
 ```bash
 analyze_cnv_breakpoint_reads \
@@ -135,7 +91,86 @@ analyze_cnv_breakpoint_reads \
 
 - An everted (RF) pair is DUP evidence and an FR pair DEL evidence, if the pair starts in the start window and ends in the end window.
 - A pair must span at least `--min-pair-span` bases (template length, default 800). Its alignment must have MAPQ of at least `--min-pair-mapping-quality` (default 20).
-- With `--output-bam`, pair mates get read group `PAIR`, which keeps them out of `refine_cnv_breakpoints`.
+- With `--output-bam`, pair mates get read group `PAIR`, apart from the split reads (`DUP` / `DEL`).
+
+#### `merge_cnv_sv`
+Merge CNV calls with SV calls (e.g. GRIDSS) of the same sample.
+
+- SV deletions and duplications in the size range are added.
+- Where a CNV and an SV call overlap (truvari collapse), the higher-QUAL call is kept, with the sources and IDs of both.
+
+```bash
+merge_cnv_sv \
+  --cnv_vcf cnv_calls.vcf.gz \
+  --sv_vcf sv_calls.vcf.gz \
+  --output_vcf merged.vcf.gz \
+  --fasta_index Homo_sapiens_assembly38.fasta.fai \
+  --min_sv_length 500
+```
+
+### Depth CNV caller (cohort-free germline calling)
+
+Calls germline CNVs (≥ 500 bp) of one sample from its own read depth, without a cohort, with one call per event.
+
+Steps for one sample:
+
+```bash
+# once per reference: GC, N and, per BED track, covered fraction per 100 bp bin
+# (the caller reads the lowmap and segdup tracks; a missing one counts as 0)
+build_depth_annotation --reference-fasta ref.fasta --output ref.depth_annotation.parquet \
+  --bed lowmap=GRCh38_lowmappabilityall.bed.gz segdup=GRCh38_segdups.bed.gz
+
+# depth in 100 bp bins, all reads and MAPQ >= 20
+mosdepth -n -x -b 100 -f ref.fasta -Q 0 sample.q0 sample.cram
+mosdepth -n -x -b 100 -f ref.fasta -Q 20 sample.q20 sample.cram
+
+# depth calls: GC correction, weighted change-point segmentation, one call per event
+call_depth_cnvs --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.regions.bed.gz \
+  --annotation ref.depth_annotation.parquet --sample-name SAMPLE \
+  --fasta-index ref.fasta.fai --output-vcf sample.depth.vcf.gz
+
+# adds events from clusters of split reads that the depth misses
+split_read_cnv_candidates --alignment sample.cram --reference-fasta ref.fasta --depth-vcf sample.depth.vcf.gz \
+  --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.regions.bed.gz \
+  --annotation ref.depth_annotation.parquet --output-vcf sample.cand.vcf.gz
+
+# paired-end only: adds events from clusters of discordant pairs
+pair_cnv_candidates --alignment sample.cram --reference-fasta ref.fasta --input-vcf sample.cand.vcf.gz \
+  --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.regions.bed.gz \
+  --annotation ref.depth_annotation.parquet --output-vcf sample.pair_cand.vcf.gz
+
+# optional: adds cn.mops calls (process_cnvs output) the depth caller misses
+cnmops_cnv_candidates --input-vcf sample.pair_cand.vcf.gz --cnmops-vcf sample.cnmops.vcf.gz \
+  --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.regions.bed.gz \
+  --annotation ref.depth_annotation.parquet --output-vcf sample.cnmops_cand.vcf.gz
+
+# split-read and pair evidence at the breakpoints, on the last candidates VCF
+# (then samtools sort + index the evidence BAM)
+analyze_cnv_breakpoint_reads --bam-file sample.cram --vcf-file sample.cnmops_cand.vcf.gz \
+  --reference-fasta ref.fasta --cushion 1500 --output-file sample.ann.vcf.gz --output-bam sample.evidence.bam
+
+# moves the breakpoints to split-read junctions
+refine_cnv_breakpoints --input-vcf sample.ann.vcf.gz --alignment sample.cram --reference-fasta ref.fasta \
+  --output-vcf sample.refined.vcf.gz
+
+# drops candidates that are short, inside a depth call, or duplicates
+filter_nested_cnv_candidates --input-vcf sample.refined.vcf.gz --output-vcf sample.calls.vcf.gz
+```
+
+Sex chromosomes are inferred from the depth (or set with `--sex male|female`). For a male sample, pass
+`--par-bed` (the `par_regions` genome resource); otherwise the chrX pseudoautosomal regions look like gains.
+
+Filter the calls with `filter_variants_pipeline` and a `cnv` model. Pass the fields in
+`ugbio_filtering.transformers.CNV_INFO_FIELDS` as `--custom_annotations`, and use `--overwrite_qual_tag` and the
+model's threshold (`--decision_threshold 28` for `cnv_filtering_model_v2.0.0.pkl`; the default is 30).
+
+Then merge overlapping PASS calls of the same type into one call (DEL and DUP are never merged, so a position has at
+most two PASS calls). A non-PASS call at least half inside a PASS call of either type is dropped; the other non-PASS
+calls are kept unchanged:
+
+```bash
+collapse_cnv_calls --input-vcf sample.filtered.vcf.gz --output-vcf sample.cnv.vcf.gz
+```
 
 ### Somatic CNV Tools (ControlFREEC)
 
@@ -158,9 +193,10 @@ Generate coverage plots along the genome for germline and tumor samples.
 ```bash
 plot_cnv_results \
   --sample_name SAMPLE \
-  --germline_cov_file germline_coverage.bed \
-  --tumor_cov_file tumor_coverage.bed \
-  --cnv_file cnv_calls.bed \
+  --germline_coverage germline_coverage.bed \
+  --tumor_coverage tumor_coverage.bed \
+  --duplication_cnv_calls dup_calls.bed \
+  --deletion_cnv_calls del_calls.bed \
   --out_directory ./plots
 ```
 
@@ -169,7 +205,8 @@ Generate histogram of allele frequencies at neutral (non-CNV) locations.
 
 ```bash
 plot_FREEC_neutral_AF \
-  --input_file neutral_regions.txt \
+  --mpileup sample.pileup \
+  --cnvs_file sample_CNVs \
   --sample_name SAMPLE \
   --out_directory ./plots
 ```
@@ -180,10 +217,9 @@ The module depends on:
 
 - **Python 3.11+**
 - **ugbio_core** - Core utilities from this workspace
-- **CNVpytor** (1.3.1) - Python-based CNV caller
-- **cn.mops** (R package) - Bayesian CNV detection
 - **Bioinformatics tools**: samtools, bedtools, bcftools
-- **R 4.3.1** with Bioconductor packages
+- **R** with cn.mops (Ultimagen fork), argparse, magrittr, rhdf5, rtracklayer, GenomicRanges: only for the optional
+  cn.mops path (`cnmops/`; in the cnv image)
 
 ## Key R Scripts
 
@@ -244,8 +280,7 @@ Rscript cnmops/rebin_cohort_reads_count.R \
 
 - See germline and somatic CNV calling workflows published in GH repository `Ultimagen\healthomics-workflows`
 for the reference implementations of the suggested workflows.
-- For optimal CNV calling, use cohort-based approaches when multiple samples are available
-- Filter CNV calls using the provided LCR (low-complexity region) files to reduce false positives
+- `process_cnvs` (cn.mops, ControlFREEC) can filter calls with the UG-CNV-LCR (low-complexity region) BED
 - Consider minimum CNV length thresholds based on your sequencing depth and biological context
 - The module supports both GRCh37 and GRCh38 reference genomes
 ## Key Components
@@ -254,7 +289,7 @@ for the reference implementations of the suggested workflows.
 
 Process CNV calls from CN.MOPS or ControlFREEC in BED format: filter by length and UG-CNV-LCR, annotate with coverage statistics, and convert to VCF format.
 
-**Note:** This module is called programmatically (not via CLI) from other pipeline scripts.
+**Note:** The pipelines run it as the `process_cnvs` CLI; it can also be called from Python.
 
 #### Programmatic Usage
 

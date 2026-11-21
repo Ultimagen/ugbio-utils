@@ -96,7 +96,7 @@ train_models_pipeline \
 - `--test_dfs`: Test HDF5 files for model evaluation
 - `--output_file_prefix`: Prefix for output .pkl (model) and .h5 (results) files
 - `--gt_type`: Ground truth type - "exact" or "approximate" (default: exact)
-- `--vcf_type`: VCF type - "single_sample", "deep_variant", or "cnv" (default: single_sample)
+- `--vcf_type`: VCF type - "single_sample", "deep_variant", or "cnv" (depth CNV caller; default: single_sample)
 - `--custom_annotations`: Additional INFO annotations to include in training
 
 #### `training_prep_pipeline`
@@ -136,31 +136,28 @@ training_prep_pipeline \
 
 #### `training_prep_cnv_pipeline`
 
-Prepares training data specifically for CNV filtering models.
+Prepares training data for the depth CNV caller's filter (`--vcf_type cnv`): labels the calls of a sample with
+truth (e.g. HG002) and writes train / test HDF5 files, split by chromosome.
 
-**Purpose**: Generate labeled CNV training datasets by comparing CNV calls to truth set.
-
-**Usage**:
 ```bash
+# labels the calls >= 500 bp in the benchmark BED with truvari: matched 1, unmatched 0
 training_prep_cnv_pipeline \
-  --call_vcf cnv_calls.vcf.gz \
-  --base_vcf cnv_truth.vcf.gz \
-  --output_prefix cnv_training_data \
-  [--hcr high_confidence.bed] \
-  [--custom_annotations ANNOTATION1 ANNOTATION2] \
-  [--train_fraction 0.25] \
-  [--ignore_cnv_type] \
-  [--skip_collapse] \
-  [--verbosity INFO]
+  --call_vcf HG002.depth_cnv.vcf.gz \
+  --truth_vcf GRCh38_HG2-T2TQ100-V1.1_stvar.ge500.vcf.gz \
+  --benchmark_bed GRCh38_HG2-T2TQ100-V1.1_stvar.benchmark.bed \
+  --train_chromosomes chr1 chr10 chr11 chr12 chr13 chr14 chr15 \
+  --output_prefix hg002_depth_cnv
+
+# the threshold is stored in the pickle; without --decision_threshold it is chosen by the best F1
+train_models_pipeline --train_dfs hg002_depth_cnv.train.h5 --test_dfs hg002_depth_cnv.test.h5 \
+  --output_file_prefix cnv_filtering_model --vcf_type cnv --gt_type approximate --decision_threshold 28
 ```
 
-**Key Parameters**:
-- `--call_vcf`: CNV call VCF file
-- `--base_vcf`: CNV truth VCF file
-- `--output_prefix`: Prefix for output HDF5 files
-- `--train_fraction`: Fraction of CNVs for training, rest for testing (default: 0.25)
-- `--ignore_cnv_type`: Ignore CNV type when matching to truth
-- `--skip_collapse`: Skip collapsing variants before comparison
+Optional: samples with known long events (e.g. cell lines) can add training rows. The caller gives one call per event,
+so a long event alone adds one row; split_cnv_into_pieces (BioinfoResearch) cuts 10-100 kb pieces of the events and
+writes them with their own truth VCF and benchmark BED. After evidence and refinement as in the pipeline, the pieces are
+labelled with the same command against that truth VCF and benchmark BED, and their training table is added to
+`--train_dfs`.
 
 ## Typical Workflows
 

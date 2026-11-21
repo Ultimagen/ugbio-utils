@@ -7,14 +7,14 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
         "CNV_SOURCE",
         ".",
         "String",
-        "the tool that called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
+        "the tool that called this CNV. can be combination of: depth, split_read, pair, cn.mops, gridss",
         "INFO",
     ),
     "CNV_SOURCE": (
         "CNV_SOURCE",
         ".",
         "String",
-        "the tool that called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
+        "the tool that called this CNV. can be combination of: depth, split_read, pair, cn.mops, gridss",
         "INFO",
     ),
     "CNV_ID": (
@@ -111,3 +111,57 @@ FILTER_TAG_REGISTRY = {
         "FILTER",
     ),
 }
+
+# INFO tags written by the depth CNV caller (depth_cnv_caller, split_read_candidates, breakpoint_refinement).
+# Kept apart from INFO_TAG_REGISTRY, whose tags are added to every CNV VCF header (cn.mops, FREEC).
+CNV_INFO_TAGS: dict[str, tuple[str, int | str, str, str, str]] = {
+    "END": ("END", 1, "Integer", "End position of the variant", "INFO"),
+    "CIEND": ("CIEND", 2, "Integer", "Confidence interval around END for imprecise variants", "INFO"),
+    "CN_MEAN": ("CN_MEAN", 1, "Float", "Mean copy-number estimate over the call (depth caller)", "INFO"),
+    "BASE_CN": (
+        "BASE_CN",
+        1,
+        "Integer",
+        "Expected copy number of the contig for this sample (2, or 1 when haploid)",
+        "INFO",
+    ),
+    "Z": ("Z", 1, "Float", "Strongest segment z-score of the copy-number change vs the baseline", "INFO"),
+    "LOW_CONF": (
+        "LOW_CONF",
+        0,
+        "Flag",
+        "Mostly segdup / low-mappability sequence without a full copy change (an annotation, not a FILTER)",
+        "INFO",
+    ),
+    "N_MERGED": ("N_MERGED", 1, "Integer", "Number of depth segments merged into this call", "INFO"),
+    "SEGDUP_FRAC": ("SEGDUP_FRAC", 1, "Float", "Mean segmental-duplication fraction over the call", "INFO"),
+    "UNIQ_FRAC": ("UNIQ_FRAC", 1, "Float", "Mean fraction of depth from reads with MAPQ>=20", "INFO"),
+    "CLUSTER_SUPPORT": (
+        "CLUSTER_SUPPORT",
+        1,
+        "Integer",
+        "Split reads or discordant pairs in the cluster that created a split_read or pair candidate",
+        "INFO",
+    ),
+    "BREAKPOINT_SOURCE": (
+        "BREAKPOINT_SOURCE",
+        1,
+        "String",
+        "Where the breakpoints come from: split_read (junction), pair (deletion shrunk by discordant pairs) or depth",
+        "INFO",
+    ),
+    "BREAKPOINT_SUPPORT": (
+        "BREAKPOINT_SUPPORT",
+        1,
+        "Integer",
+        "Split reads or discordant pairs supporting the breakpoints (0 for depth breakpoints)",
+        "INFO",
+    ),
+    "DEPTH_START": ("DEPTH_START", 1, "Integer", "Start of the call from depth, before breakpoint refinement", "INFO"),
+    "DEPTH_END": ("DEPTH_END", 1, "Integer", "End of the call from depth, before breakpoint refinement", "INFO"),
+}
+# CNV_SOURCE values of the depth CNV caller
+CNV_SOURCE_DEPTH = "depth"
+CNV_SOURCE_SPLIT_READ = "split_read"
+CNV_SOURCE_PAIR = "pair"
+CNV_SOURCE_CNMOPS = "cn.mops"  # optional cohort caller (cnmops_cnv_candidates)

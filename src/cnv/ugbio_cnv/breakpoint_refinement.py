@@ -1,740 +1,327 @@
 """
-CNV breakpoint refinement using windowed split-read analysis.
+Refine CNV breakpoints to split-read junctions, or shrink deletions with discordant pairs.
 
-BIOIN-2676: Refine CNV breakpoints by analyzing soft-clipped reads from windowed
-regions at CNV boundaries. Uses median position + max deviation for CIPOS estimation.
+For each DEL/DUP call, primary reads (MAPQ >= 20) within +-window of either edge that carry an SA tag on the same
+chromosome and strand are split into their two aligned pieces, ordered along the read:
+  DEL: piece 1 ends at the left breakpoint L, piece 2 starts at the right breakpoint R (R > L)
+  DUP (tandem): piece 1 ends at the duplication end E, piece 2 starts at the duplication start S (S < E)
+When the two pieces overlap on the read by h bases (microhomology at the junction: the aligner puts the shared bases
+in both pieces), the junction is left-normalized as in VCF: L - h for a deletion, E - h for a duplication.
+Junctions are grouped by similar position (+-100 bp) and size (+-10%); the largest group with >= 2 reads replaces the
+call's breakpoints (BREAKPOINT_SOURCE=split_read). Calls > 3 kb only accept junctions at least half their size, so
+a small indel near a large event cannot shrink it, and no call is refined below min_len (500 bp, the caller's
+minimum). Without a junction, DEL calls are shrunk to the interval allowed by FR discordant pairs spanning both edges
+(BREAKPOINT_SOURCE=pair), also to no less than min_len. Otherwise the call is unchanged
+(BREAKPOINT_SOURCE=depth). The depth breakpoints are kept in DEPTH_START / DEPTH_END; BREAKPOINT_SUPPORT is the
+number of reads or pairs used.
 """
 
 import argparse
-import statistics
+import os
+import re
+import shutil
 import sys
+import tempfile
+from collections import Counter
 from dataclasses import dataclass
+from multiprocessing import Pool
 
+import numpy as np
 import pysam
-from ugbio_cnv.analyze_cnv_breakpoint_reads import _calculate_breakpoint_regions
+from ugbio_cnv.analyze_cnv_breakpoint_reads import junction_svtype
+from ugbio_cnv.cnv_vcf_consts import CNV_INFO_TAGS, CNV_SOURCE_DEPTH, CNV_SOURCE_PAIR, CNV_SOURCE_SPLIT_READ
 from ugbio_core.logger import logger
 
-# Constants for read filtering
-MIN_READS_PER_BREAKPOINT = 3  # Minimum reads required for reliable breakpoint estimation
-BAM_CSOFT_CLIP = 4  # CIGAR operation code for soft clipping
+CIGAR_PATTERN = re.compile(r"(\d+)([MIDNSHP=X])")
 
 
 @dataclass
-class BamRefinementResult:
-    """Per-BAM breakpoint refinement result."""
+class RefineParams:
+    window: int = 1500  # search reads within +-window of each call edge
+    min_reads: int = 2  # split reads (or pairs) needed to move a breakpoint
+    min_mapq: int = 20  # primary read MAPQ
+    min_sa_mapq: int = 1  # supplementary alignment MAPQ (from the SA tag)
+    pos_tol: int = 100  # junctions in one group: start within +-pos_tol ...
+    size_tol: float = 0.10  # ... and size within +-size_tol
+    min_len: int = 500  # a refined call keeps at least the caller's minimum length; shorter junctions are not used
+    small_call: int = 3000  # longer calls need a junction of >= 0.5 x their size
+    max_edge_shift: int = 2000  # a junction's start and end must lie within this of the call's start and end
 
-    bam_index: int
-    bam_path: str
-    read_count: int  # Number of matched read pairs
-    refined_start: int
-    refined_end: int
-    refined_cipos: tuple[int, int]
-    ci_size: int  # refined_cipos[1] - refined_cipos[0] - 1
+
+def read_length_from_cigar(cigar: str) -> int:
+    """Read length (incl. soft and hard clips) from a CIGAR string."""
+    return sum(int(n) for n, op in CIGAR_PATTERN.findall(cigar) if op in "MIS=XH")
 
 
-def _extract_softclip_positions(reads: list[pysam.AlignedSegment]) -> list[int | None]:
+def alignment_piece(pos0: int, strand: str, cigar: str, read_len: int) -> tuple[int, int, int, int]:
     """
-    Extract breakpoint positions from soft-clipped regions in reads.
-
-    For each read, identifies the reference position where soft clipping occurs.
-    If a read has soft clips on both ends, uses the position corresponding to
-    the longest soft clip.
-
-    Parameters
-    ----------
-    reads : list[pysam.AlignedSegment]
-        Reads with soft-clipped alignments
+    One aligned piece of a read.
 
     Returns
     -------
-    list[int | None]
-        List of 1-based reference positions where soft clips occur (None if nowhere)
+    tuple[int, int, int, int]
+        (query_start, query_end) in read orientation, then (ref_start, ref_end) 0-based half-open.
     """
-    positions = []
-    for read in reads:
-        if read.cigartuples is None:
-            positions.append(None)
-            continue
-
-        # Check for soft clips at start and end
-        left_clip = 0
-        right_clip = 0
-
-        # First operation
-        if read.cigartuples[0][0] == BAM_CSOFT_CLIP:
-            left_clip = read.cigartuples[0][1]
-
-        # Last operation
-        if read.cigartuples[-1][0] == BAM_CSOFT_CLIP:
-            right_clip = read.cigartuples[-1][1]
-
-        # Skip reads with no soft clipping
-        if left_clip == 0 and right_clip == 0:
-            positions.append(None)
-            continue
-
-        # Use position of longest soft clip
-        if left_clip >= right_clip:
-            # Breakpoint is at the start of alignment (1-based)
-            positions.append(read.reference_start + 1)
-        else:
-            # Breakpoint is at the end of alignment (1-based)
-            # reference_end is already exclusive (0-based), so it's the correct 1-based position
-            positions.append(read.reference_end)
-
-    return positions
+    ops = [(int(n), op) for n, op in CIGAR_PATTERN.findall(cigar)]
+    lead = ops[0][0] if ops[0][1] in "SH" else 0
+    qlen = sum(n for n, op in ops if op in "MI=X")
+    rlen = sum(n for n, op in ops if op in "MDN=X")
+    qs, qe = lead, lead + qlen
+    if strand == "-":
+        qs, qe = read_len - qe, read_len - qs
+    return qs, qe, pos0, pos0 + rlen
 
 
-def _process_reads_from_window(
-    bam: pysam.AlignmentFile, chrom: str, start: int, end: int, cnv_type: str
-) -> list[pysam.AlignedSegment]:
+def split_read_junctions(
+    chrom: str,
+    pos0: int,
+    cigar: str,
+    sa_tag: str,
+    *,
+    is_reverse: bool,
+    min_sa_mapq: int = 1,
+) -> list[tuple[int, int, str]]:
     """
-    Process reads from a window, filtering by RG tag and deduplicating.
+    Deletion / tandem-duplication junctions implied by one split read.
 
-    Parameters
-    ----------
-    bam : pysam.AlignmentFile
-        Open BAM file
-    chrom : str
-        Chromosome
-    start : int
-        Window start
-    end : int
-        Window end
-    cnv_type : str
-        CNV type for RG filtering ("DEL" or "DUP")
+    Each SA piece on the same chromosome and strand is ordered with the primary piece along the read. If the second
+    piece starts after the first ends on the reference, the junction is a deletion (L, R); if it starts before, a
+    tandem duplication (S, E): the rule of discordant pairs too (analyze_cnv_breakpoint_reads.junction_svtype). Bases
+    aligned in both pieces (an overlap of h > 0 on the read: microhomology at the junction) are given to the second
+    piece, which left-normalizes the junction: (L - h, R) and (S, E - h).
 
     Returns
     -------
-    list[pysam.AlignedSegment]
-        Filtered reads from window
+    list[tuple[int, int, str]]
+        (start, end, svtype) per junction, 0-based.
     """
-    seen_pairs: set[tuple[str, str, int]] = set()
-    reads = []
-    for read in bam.fetch(chrom, start, end):
-        # Skip unmapped, secondary, and duplicate reads (but NOT supplementary)
-        if read.is_unmapped or read.is_secondary or read.is_duplicate:
+    strand = "-" if is_reverse else "+"
+    read_len = read_length_from_cigar(cigar)
+    primary = alignment_piece(pos0, strand, cigar, read_len)
+    out = []
+    for sa in sa_tag.rstrip(";").split(";"):
+        sa_chrom, sa_pos, sa_strand, sa_cigar, sa_mapq, _ = sa.split(",")
+        if sa_chrom != chrom or sa_strand != strand or int(sa_mapq) < min_sa_mapq:
             continue
-
-        # Skip reads without query name
-        if not read.query_name:
-            continue
-
-        # Get RG tag and filter by CNV type
-        try:
-            rg_tag = read.get_tag("RG")
-            rg = str(rg_tag) if rg_tag is not None else "UNKNOWN"
-        except KeyError:
-            rg = "UNKNOWN"
-
-        if rg != cnv_type:
-            continue
-
-        # Deduplication: track (read_name, RG, flag (the primary and the supplementary alignment
-        # are considered different)) tuples to distinguish alignments
-        read_key = (read.query_name, rg, read.flag)
-        if read_key in seen_pairs:
-            continue
-        seen_pairs.add(read_key)
-
-        reads.append(read)
-    return reads
+        other = alignment_piece(int(sa_pos) - 1, sa_strand, sa_cigar, read_len)
+        first, second = sorted((primary, other), key=lambda x: x[0])  # along the read
+        overlap = max(0, first[1] - second[0])  # read bases aligned in both pieces (microhomology)
+        if strand == "-":  # on the minus strand, read order runs right to left on the reference
+            first, second = second, first
+        svtype = junction_svtype(first[3], second[2])
+        if svtype == "DEL":
+            out.append((first[3] - overlap, second[2], svtype))
+        elif svtype == "DUP":
+            out.append((second[2], first[3] - overlap, svtype))
+    return out
 
 
-def extract_reads_windowed(
-    bam_files: list[str],
-    cnv_chrom: str,
-    cnv_start: int,
-    cnv_end: int,
-    cnv_type: str,
-    cushion: int = 2500,
-) -> dict[int, tuple[list[pysam.AlignedSegment], list[pysam.AlignedSegment]]]:
+def edge_junctions(
+    aln: pysam.AlignmentFile, chrom: str, start: int, end: int, svtype: str, p: RefineParams
+) -> list[tuple[int, int]]:
+    """Split-read junctions of the call's type from reads near either edge of [start, end)."""
+    out, seen = [], set()
+    for a, b in ((start - p.window, start + p.window), (end - p.window, end + p.window)):
+        for r in aln.fetch(chrom, max(a, 0), b):
+            if r.is_secondary or r.is_supplementary or r.mapping_quality < p.min_mapq or not r.has_tag("SA"):
+                continue
+            if r.query_name in seen:
+                continue
+            seen.add(r.query_name)
+            for js, je, jt in split_read_junctions(
+                chrom,
+                r.reference_start,
+                r.cigarstring,
+                r.get_tag("SA"),
+                is_reverse=r.is_reverse,
+                min_sa_mapq=p.min_sa_mapq,
+            ):
+                if jt == svtype:
+                    out.append((js, je))
+    return out
+
+
+def best_junction_cluster(
+    junctions: list[tuple[int, int]], start: int, end: int, p: RefineParams
+) -> tuple[int, int, int] | None:
     """
-    Extract reads from two 5kb windows at CNV boundaries with separate deduplication.
+    Largest group of junctions with similar position and size; breakpoints are the group medians.
 
-    For small CNVs where windows overlap, reads in the overlap can contribute
-    to both left and right breakpoint evidence.
-
-    Parameters
-    ----------
-    bam_files : list[str]
-        BAM file paths (supports multi-sample BAMs)
-    cnv_chrom : str
-        Chromosome
-    cnv_start : int
-        CNV start position
-    cnv_end : int
-        CNV end position
-    cnv_type : str
-        "DEL" or "DUP" for RG filtering
-    cushion : int
-        Half-window size (default: 2500 bp)
-
-    Returns
-    -------
-    dict[int, tuple[list[pysam.AlignedSegment], list[pysam.AlignedSegment]]]
-        Dictionary mapping BAM index to (left_reads, right_reads) tuple.
-        Each BAM's reads are kept separate for independent refinement.
+    Only junctions whose start and end are within max_edge_shift of the call's start and end are used, so a read
+    near one edge cannot move the call onto a nearby event.
     """
-    per_bam_reads = {}
-
-    # Calculate breakpoint regions using existing helper
-    start_region_start, start_region_end, end_region_start, end_region_end = _calculate_breakpoint_regions(
-        cnv_start, cnv_end, cushion
-    )
-
-    for i, bam_path in enumerate(bam_files):
-        with pysam.AlignmentFile(bam_path, "rb") as bam:
-            # Process left window with its own deduplication set
-            left_reads = _process_reads_from_window(bam, cnv_chrom, start_region_start, start_region_end, cnv_type)
-            # Process right window with its own deduplication set
-            right_reads = _process_reads_from_window(bam, cnv_chrom, end_region_start, end_region_end, cnv_type)
-            # Store per-BAM reads
-            per_bam_reads[i] = (left_reads, right_reads)
-
-    return per_bam_reads
-
-
-def estimate_refined_breakpoints(
-    left_reads: list[pysam.AlignedSegment],
-    right_reads: list[pysam.AlignedSegment],
-    original_cipos: tuple[int, int],
-) -> tuple[int, int, tuple[int, int]] | None:
-    """
-    Estimate refined breakpoints using median + max deviation from the primary - supplementary pairs.
-    The primary and the supplementary pairs should be in the left_reads and right_reads (or vice versa)
-
-    Only returns refined values if CIPOS interval size < original interval size.
-
-    Parameters
-    ----------
-    left_reads : list[pysam.AlignedSegment]
-        Reads from left window
-    right_reads : list[pysam.AlignedSegment]
-        Reads from right window
-    original_cipos : tuple[int, int]
-        Original CIPOS bounds (left, right)
-
-    Returns
-    -------
-    (refined_start, refined_end, refined_cipos) or None if not improved
-    """
-    # Extract breakpoint positions from soft-clipped reads
-    left_positions = _extract_softclip_positions(left_reads)
-    right_positions = _extract_softclip_positions(right_reads)
-
-    matching_positions = [
-        (left_positions[i], right_positions[i])
-        for i in range(len(left_positions))
-        if (left_positions[i] is not None)
-        and (right_positions[i] is not None)
-        and (left_positions[i] < right_positions[i])  # type: ignore
+    call_len = end - start
+    # depth cannot resolve events below ~1-2 kb, so only short calls may shrink to a much smaller junction
+    min_size = p.min_len if call_len <= p.small_call else max(p.min_len, 0.5 * call_len)
+    js = [
+        (a, b)
+        for a, b in junctions
+        if min_size <= b - a and abs(a - start) <= p.max_edge_shift and abs(b - end) <= p.max_edge_shift
     ]
-    left_positions = [x[0] for x in matching_positions]
-    right_positions = [x[1] for x in matching_positions]
-
-    # Need at least MIN_READS_PER_BREAKPOINT positions per breakpoint
-    if len(left_positions) < MIN_READS_PER_BREAKPOINT or len(right_positions) < MIN_READS_PER_BREAKPOINT:
+    if len(js) < p.min_reads:
         return None
-
-    # Calculate median and max deviation
-    left_median = round(statistics.median([x for x in left_positions if x is not None]))
-    right_median = round(statistics.median([x for x in right_positions if x is not None]))
-
-    left_max_dev = max(abs(pos - left_median) for pos in left_positions if pos is not None)
-    right_max_dev = max(abs(pos - right_median) for pos in right_positions if pos is not None)
-
-    # Refined CIPOS: symmetric (-max_dev, +max_dev)
-    refined_cipos = (-max(left_max_dev, right_max_dev), max(left_max_dev, right_max_dev) + 1)
-
-    # Only update if refined interval is tighter than original
-    original_interval_size = original_cipos[1] - original_cipos[0] - 1
-    refined_interval_size = refined_cipos[1] - refined_cipos[0] - 1
-
-    if refined_interval_size >= original_interval_size:
+    js = np.array(js)
+    sizes = js[:, 1] - js[:, 0]
+    best = None
+    for a, b in js:
+        size = b - a
+        sel = js[(np.abs(js[:, 0] - a) <= p.pos_tol) & (np.abs(sizes - size) <= p.size_tol * size)]
+        if best is None or len(sel) > len(best):
+            best = sel
+    if len(best) < p.min_reads:
         return None
+    return int(np.median(best[:, 0])), int(np.median(best[:, 1])), len(best)
 
-    return left_median, right_median, refined_cipos
 
-
-def select_best_bam(
-    per_bam_results: list[BamRefinementResult],
-) -> BamRefinementResult | None:
-    """
-    Select the BAM with the smallest confidence interval.
-
-    Parameters
-    ----------
-    per_bam_results : list[BamRefinementResult]
-        List of refinement results per BAM
-
-    Returns
-    -------
-    BamRefinementResult or None
-        Best BAM's refinement result, or None if no BAM meets criteria
-
-    Notes
-    -----
-    Selection criteria:
-    1. Must have >= MIN_READS_PER_BREAKPOINT matched read pairs
-    2. Among qualifying BAMs, select smallest CI size
-    3. Ties broken by BAM index (first BAM wins)
-    """
-    if not per_bam_results:
+def pair_bounds(
+    aln: pysam.AlignmentFile, chrom: str, start: int, end: int, p: RefineParams
+) -> tuple[int, int, int] | None:
+    """Interval allowed by FR pairs with one read near the left edge and its mate near the right edge."""
+    left_end, right_start = [], []
+    for r in aln.fetch(chrom, max(start - p.window, 0), start + p.window):
+        if (
+            r.is_secondary
+            or r.is_supplementary
+            or not r.is_paired
+            or r.mate_is_unmapped
+            or r.is_reverse
+            or not r.mate_is_reverse
+            or r.next_reference_name != chrom
+            or r.mapping_quality < p.min_mapq
+        ):
+            continue
+        if end - p.window <= r.next_reference_start <= end + p.window and r.next_reference_start > r.reference_end:
+            left_end.append(r.reference_end)
+            right_start.append(r.next_reference_start)
+    if len(left_end) < p.min_reads:
         return None
-
-    # Filter by read count threshold
-    qualifying_bams = [result for result in per_bam_results if result.read_count >= MIN_READS_PER_BREAKPOINT]
-
-    if not qualifying_bams:
-        return None
-
-    # Select BAM with minimum CI size (ties broken by first occurrence)
-    best_bam = min(qualifying_bams, key=lambda r: (r.ci_size, r.bam_index))
-
-    return best_bam
+    return int(np.percentile(left_end, 90)), int(np.percentile(right_start, 10)), len(left_end)
 
 
-def _get_jalign_support_info(
-    record: pysam.VariantRecord,
-) -> tuple[int, int, bool]:
-    """
-    Extract JALIGN support information from VCF record.
-
-    Parameters
-    ----------
-    record : pysam.VariantRecord
-        VCF record to extract from
-
-    Returns
-    -------
-    tuple[int, int, bool]
-        (jalign_del_reads, jalign_dup_reads, has_strong_support)
-    """
-    try:
-        jalign_del_reads = record.info.get("JALIGN_DEL_SUPPORT", 0)
-        jalign_dup_reads = record.info.get("JALIGN_DUP_SUPPORT", 0)
-        has_strong_jalign_support = (
-            jalign_del_reads >= MIN_READS_PER_BREAKPOINT or jalign_dup_reads >= MIN_READS_PER_BREAKPOINT
-        )
-    except (ValueError, KeyError):
-        jalign_del_reads = 0
-        jalign_dup_reads = 0
-        has_strong_jalign_support = False
-
-    return jalign_del_reads, jalign_dup_reads, has_strong_jalign_support
+def _refine_contig(args: tuple) -> dict:
+    vcf, aln_path, reference, chrom, p = args
+    res = {}
+    with pysam.AlignmentFile(aln_path, reference_filename=reference) as aln, pysam.VariantFile(vcf) as v:
+        if chrom not in aln.references:
+            return res
+        for rec in v.fetch(chrom):
+            svtype, s, e = rec.info["SVTYPE"], rec.start, rec.stop
+            hit = best_junction_cluster(edge_junctions(aln, chrom, s, e, svtype, p), s, e, p)
+            if hit:
+                res[rec.id] = (CNV_SOURCE_SPLIT_READ, hit[0], hit[1], hit[2])
+                continue
+            if svtype == "DEL":
+                pb = pair_bounds(aln, chrom, s, e, p)
+                if pb and pb[1] > pb[0]:
+                    ns, ne = max(s, pb[0]), min(e, pb[1])
+                    if ne - ns >= p.min_len and (ns, ne) != (s, e):
+                        res[rec.id] = (CNV_SOURCE_PAIR, ns, ne, pb[2])
+    return res
 
 
-def _process_bam_refinement(
-    bam_idx: int,
-    bam_path: str,
-    left_reads: list[pysam.AlignedSegment],
-    right_reads: list[pysam.AlignedSegment],
-    cipos: tuple[int, int],
-) -> BamRefinementResult | None:
-    """
-    Process single BAM for CNV breakpoint refinement.
-
-    Parameters
-    ----------
-    bam_idx : int
-        BAM file index
-    bam_path : str
-        Path to BAM file
-    left_reads : list[pysam.AlignedSegment]
-        Reads from left window
-    right_reads : list[pysam.AlignedSegment]
-        Reads from right window
-    cipos : tuple[int, int]
-        Original CIPOS bounds
-
-    Returns
-    -------
-    BamRefinementResult or None
-        Refinement result if successful, None otherwise
-    """
-    matched_left, matched_right = match_reads(left_reads, right_reads)
-    refinement_result = estimate_refined_breakpoints(matched_left, matched_right, cipos)
-
-    if refinement_result is None:
-        return None
-
-    refined_start, refined_end, refined_cipos = refinement_result
-    ci_size = refined_cipos[1] - refined_cipos[0] - 1
-
-    return BamRefinementResult(
-        bam_index=bam_idx,
-        bam_path=bam_path,
-        read_count=len(matched_left),
-        refined_start=refined_start,
-        refined_end=refined_end,
-        refined_cipos=refined_cipos,
-        ci_size=ci_size,
-    )
-
-
-def _log_refinement_failure(
-    record: pysam.VariantRecord,
-    original_start: int,
-    original_end: int,
-    svtype: str,
-    cipos: tuple[int, int],
-    jalign_del_reads: int,
-    jalign_dup_reads: int,
-):
-    """
-    Log and categorize CNV refinement failure.
-
-    Parameters
-    ----------
-    record : pysam.VariantRecord
-        VCF record that failed refinement
-    original_start : int
-        CNV start position
-    original_end : int
-        CNV end position
-    svtype : str
-        CNV type ("DEL" or "DUP")
-    cipos : tuple[int, int]
-        Original CIPOS bounds
-    jalign_del_reads : int
-        JALIGN DEL support count
-    jalign_dup_reads : int
-        JALIGN DUP support count
-    """
-    base_msg = "CNV with strong JALIGN support not refined (no CIPOS improvement)"
-
-    position_info = (
-        f"{record.chrom}:{original_start}-{original_end} ({svtype}), "
-        f"JALIGN_DEL={jalign_del_reads}, JALIGN_DUP={jalign_dup_reads}, "
-    )
-
-    position_info += f" original_CIPOS={cipos}"
-
-    logger.debug(f"{base_msg}: {position_info}")
-
-
-def _update_record_with_refinement(
-    record: pysam.VariantRecord,
-    best_bam: BamRefinementResult,
-    original_interval_size: int,
-) -> int:
-    """
-    Update VCF record with refined breakpoints from best BAM.
-
-    Parameters
-    ----------
-    record : pysam.VariantRecord
-        VCF record to update (mutated in-place)
-    best_bam : BamRefinementResult
-        Best BAM's refinement result
-    original_interval_size : int
-        Original CIPOS interval size
-
-    Returns
-    -------
-    int
-        CIPOS interval size reduction (bp)
-    """
-    record.pos = best_bam.refined_start
-    record.stop = best_bam.refined_end - 1
-    record.info["CIPOS"] = best_bam.refined_cipos
-    record.info["SVLEN"] = (record.stop - record.pos + 1,)
-
-    reduction = original_interval_size - best_bam.ci_size
-    return reduction
-
-
-def _log_refinement_summary(
-    stats: dict[str, int],
-    cipos_reductions: list[int],
+def refine_cnv_breakpoints(
+    input_vcf: str,
+    alignment: str,
+    reference: str,
     output_vcf: str,
-) -> None:
+    threads: int = 8,
+    params: RefineParams | None = None,
+) -> Counter:
     """
-    Log summary statistics for CNV breakpoint refinement.
-
-    Parameters
-    ----------
-    stats: dict[str, int]
-        Refinement statistics
-    cipos_reductions : list[int]
-        List of CIPOS interval size reductions (in bp)
-    output_vcf : str
-        Path to output VCF file
-    """
-    logger.info("=" * 70)
-    logger.info("CNV Breakpoint Refinement Summary")
-    logger.info("=" * 70)
-    logger.info(f"Total CNVs processed:           {stats['total_cnvs']}")
-    logger.info(f"  Non-DEL/DUP (skipped):        {stats['non_del_dup']}")
-    logger.info(f"  DEL/DUP analyzed:             {stats['total_cnvs'] - stats['non_del_dup']}")
-
-    refinement_pct = (
-        stats["refined_cnvs"] / (stats["total_cnvs"] - stats["non_del_dup"]) * 100
-        if (stats["total_cnvs"] - stats["non_del_dup"]) > 0
-        else 0
-    )
-    logger.info(f"  Successfully refined:         {stats['refined_cnvs']} ({refinement_pct:.1f}%)")
-    logger.info(f"  Insufficient evidence (<{MIN_READS_PER_BREAKPOINT} reads): {stats['insufficient_evidence']}")
-    logger.info(f"  No improvement (CIPOS):       {stats['no_improvement']}")
-
-    if cipos_reductions:
-        logger.info("")
-        logger.info("CIPOS Interval Size Reductions:")
-        logger.info(f"  Mean reduction:   {statistics.mean(cipos_reductions):.1f} bp")
-        logger.info(f"  Median reduction: {statistics.median(cipos_reductions):.1f} bp")
-        logger.info(f"  Min reduction:    {min(cipos_reductions)} bp")
-        logger.info(f"  Max reduction:    {max(cipos_reductions)} bp")
-
-    logger.info("=" * 70)
-    logger.info(f"Output written to: {output_vcf}")
-
-
-def match_reads(
-    left_reads: list[pysam.AlignedSegment],
-    right_reads: list[pysam.AlignedSegment],
-) -> tuple[list[pysam.AlignedSegment], list[pysam.AlignedSegment]]:
-    """
-    Match reads from left and right windows based on query name and RG tag.
-
-    This allows both primary and supplementary alignments from the same read to be included.
-
-    Parameters
-    ----------
-    left_reads : list[pysam.AlignedSegment]
-        Reads from left window
-    right_reads : list[pysam.AlignedSegment]
-        Reads from right window
-
-    Returns
-    -------
-    matched_left : list[pysam.AlignedSegment]
-        Matched reads from left window
-    matched_right : list[pysam.AlignedSegment]
-        Matched reads from right window
-    """
-
-    def _read_key(read):
-        return (read.query_name, read.get_tag("RG"))
-
-    matches = []
-    right_reads_lookup = {}
-    for read in right_reads:
-        right_reads_lookup[_read_key(read)] = right_reads_lookup.get(_read_key(read), []) + [read]
-    for read in left_reads:
-        for other_read in right_reads_lookup.get(_read_key(read), []):
-            if other_read.flag != read.flag:
-                matches.append((read, other_read))
-    return ([match[0] for match in matches], [match[1] for match in matches])
-
-
-def refine_cnv_breakpoints_from_vcf(
-    input_vcf: str, bam_files: list[str], output_vcf: str, sv_vcf: str | None = None, cushion: int = 2500
-) -> None:
-    """
-    Refine CNV breakpoints from VCF using windowed split-read analysis.
+    Refine the breakpoints of every call in input_vcf and write output_vcf (bgzipped, indexed).
 
     Parameters
     ----------
     input_vcf : str
-        Input VCF with CNVs (must have CIPOS field)
-    bam_files : list[str]
-        BAM file paths for evidence extraction
+        CNV calls with unique IDs.
+    alignment : str
+        BAM / CRAM of the sample.
+    reference : str
+        Reference FASTA (for CRAM).
     output_vcf : str
-        Output VCF with refined breakpoints
-    sv_vcf : str, optional
-        SV calls VCF (not implemented - raises NotImplementedError)
-    cushion : int
-        Half-window size (default: 2500 bp)
+        Output .vcf.gz.
+    threads : int
+        Contigs processed in parallel.
+    params : RefineParams, optional
+        Refinement parameters.
 
-    Raises
-    ------
-    NotImplementedError
-        If sv_vcf is provided
-    ValueError
-        If input VCF lacks CIPOS field
+    Returns
+    -------
+    Counter
+        Number of calls per breakpoint source (split_read, pair).
     """
-    if sv_vcf is not None:
-        raise NotImplementedError("SV VCF integration not yet implemented")
-
-    logger.info("Starting CNV breakpoint refinement")
-    logger.info(f"  Input VCF: {input_vcf}")
-    logger.info(f"  BAM files: {', '.join(bam_files)}")
-    logger.info(f"  Processing {len(bam_files)} BAM file(s)")
-    logger.info(f"  Output VCF: {output_vcf}")
-
-    vcf_in = pysam.VariantFile(input_vcf)
-    vcf_out = pysam.VariantFile(output_vcf, "w", header=vcf_in.header)
-
-    # Statistics tracking
-    stats = {
-        "total_cnvs": 0,
-        "non_del_dup": 0,
-        "refined_cnvs": 0,
-        "insufficient_evidence": 0,
-        "no_improvement": 0,
-    }
-
-    cipos_reductions = []  # Track interval size reductions
-    progress_interval = 500  # Log progress every N records
-
-    for record in vcf_in:
-        stats["total_cnvs"] += 1
-
-        # Progress reporting
-        if stats["total_cnvs"] % progress_interval == 0:
-            logger.info(f"Processed {stats['total_cnvs']} CNVs ({stats['refined_cnvs']} refined so far)...")
-
-        # Extract CIPOS (required)
-        if "CIPOS" not in record.info:
-            raise ValueError(f"Record {record.chrom}:{record.pos} missing CIPOS field")
-
-        cipos = record.info["CIPOS"]
-        original_start = record.pos
-        original_end = record.stop
-        original_interval_size = cipos[1] - cipos[0] - 1
-
-        # Get CNV type from SVTYPE
-        svtype = record.info.get("SVTYPE", "").upper()
-        if svtype not in ("DEL", "DUP"):
-            # Not a DEL/DUP, write unchanged
-            stats["non_del_dup"] += 1
-            vcf_out.write(record)
-            continue
-
-        # Extract reads from windowed regions (per-BAM)
-        per_bam_reads = extract_reads_windowed(bam_files, record.chrom, original_start, original_end, svtype, cushion)
-
-        # Process each BAM independently using helper
-        per_bam_results = [
-            result
-            for result in [
-                _process_bam_refinement(idx, bam_files[idx], left, right, cipos)
-                for idx, (left, right) in per_bam_reads.items()
-            ]
-            if result is not None
-        ]
-
-        # Select best BAM
-        best_bam = select_best_bam(per_bam_results)
-
-        if best_bam is not None:
-            # Update record with best BAM's refined breakpoints using helper
-            reduction = _update_record_with_refinement(record, best_bam, original_interval_size)
-
-            stats["refined_cnvs"] += 1
-            cipos_reductions.append(reduction)
-
+    p = params or RefineParams()
+    tmp = None
+    if not any(os.path.exists(input_vcf + ext) for ext in (".tbi", ".csi")):
+        # contigs are fetched in parallel, so an index is needed: index a copy, never the caller's file (tabix_index
+        # replaces a plain .vcf with .vcf.gz, and the input's folder may be read-only)
+        tmp = tempfile.mkdtemp(dir=os.path.dirname(os.path.abspath(output_vcf)))
+        indexed = os.path.join(tmp, "input.vcf.gz")
+        with open(input_vcf, "rb") as f:
+            gzipped = f.read(2) == b"\x1f\x8b"
+        if gzipped:
+            shutil.copy(input_vcf, indexed)
         else:
-            # Extract JALIGN support info using helper
-            jalign_del_reads, jalign_dup_reads, has_strong_jalign_support = _get_jalign_support_info(record)
+            pysam.tabix_compress(input_vcf, indexed)
+        pysam.tabix_index(indexed, preset="vcf", force=True)
+        input_vcf = indexed
+    with pysam.VariantFile(input_vcf) as v:
+        contigs = list(dict.fromkeys(r.chrom for r in v))
+    refined = {}
+    with Pool(threads) as pool:
+        for r in pool.imap_unordered(_refine_contig, [(input_vcf, alignment, reference, c, p) for c in contigs]):
+            refined.update(r)
+    with pysam.VariantFile(input_vcf) as vin:
+        header = vin.header.copy()
+        for tag in ("BREAKPOINT_SOURCE", "BREAKPOINT_SUPPORT", "DEPTH_START", "DEPTH_END", "CIEND"):
+            if tag not in header.info:
+                header.info.add(*CNV_INFO_TAGS[tag][:-1])
+        records = []
+        for rec in vin:
+            source, ns, ne, n_support = refined.get(rec.id, (CNV_SOURCE_DEPTH, rec.start, rec.stop, 0))
+            new = rec.copy()
+            new.translate(header)
+            new.info["DEPTH_START"], new.info["DEPTH_END"] = rec.pos, rec.stop
+            new.info["BREAKPOINT_SOURCE"], new.info["BREAKPOINT_SUPPORT"] = source, n_support
+            if source != CNV_SOURCE_DEPTH:
+                new.start, new.stop = ns, ne
+                new.info["SVLEN"] = ne - ns
+                ci = (-10, 10) if source == CNV_SOURCE_SPLIT_READ else (-200, 200)
+                new.info["CIPOS"], new.info["CIEND"] = ci, ci
+            records.append(new)
+    order = {c: i for i, c in enumerate(header.contigs)}
+    records.sort(key=lambda r: (order[r.chrom], r.start))
+    with pysam.VariantFile(output_vcf, "wz", header=header) as vout:
+        for r in records:
+            vout.write(r)
+    pysam.tabix_index(output_vcf, preset="vcf", force=True)
+    if tmp:
+        shutil.rmtree(tmp, ignore_errors=True)
+    counts = Counter(s[0] for s in refined.values())
+    logger.info(f"{output_vcf}: {sum(counts.values())} of {len(records)} calls refined ({dict(counts)})")
+    return counts
 
-            # Update counters based on category
-            if has_strong_jalign_support:
-                stats["no_improvement"] += 1
-                _log_refinement_failure(
-                    record,
-                    original_start,
-                    original_end,
-                    svtype,
-                    cipos,
-                    jalign_del_reads,
-                    jalign_dup_reads,
-                )
 
-            else:
-                stats["insufficient_evidence"] += 1
-
-        vcf_out.write(record)
-
-    vcf_in.close()
-    vcf_out.close()
-
-    # Log summary statistics
-    _log_refinement_summary(stats, cipos_reductions, output_vcf)
-
-
-def get_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
-    """
-    Create or populate argument parser for CNV breakpoint refinement.
-
-    Parameters
-    ----------
-    parser : argparse.ArgumentParser, optional
-        Existing parser to add arguments to. If None, creates a new parser.
-
-    Returns
-    -------
-    argparse.ArgumentParser
-        Parser with all arguments added.
-    """
-    if parser is None:
-        parser = argparse.ArgumentParser(
-            description=__doc__,
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-        )
-
-    parser.add_argument(
-        "--input-vcf",
-        required=True,
-        help="Input VCF file with CNV calls (must have CIPOS field)",
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="refine_cnv_breakpoints", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument(
-        "--bam-files",
-        required=True,
-        nargs="+",
-        help="One or more BAM file paths for evidence extraction",
-    )
-    parser.add_argument(
-        "--output-vcf",
-        required=True,
-        help="Output VCF file with refined breakpoints",
-    )
-    parser.add_argument(
-        "--cushion",
-        type=int,
-        default=2500,
-        help="Half-window size for read extraction (default: 2500 bp)",
-    )
-    parser.add_argument(
-        "--sv-vcf",
-        default=None,
-        help="SV calls VCF for integration (not yet implemented)",
-    )
-
-    return parser
+    parser.add_argument("--input-vcf", required=True, help="CNV calls (unique IDs)")
+    parser.add_argument("--alignment", required=True, help="Sample BAM / CRAM")
+    parser.add_argument("--reference-fasta", required=True, help="Reference FASTA")
+    parser.add_argument("--output-vcf", required=True, help="Output .vcf.gz")
+    parser.add_argument("--threads", type=int, default=8, help="Contigs processed in parallel")
+    return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    """
-    Main entry point for CNV breakpoint refinement CLI.
+def run(argv: list[str]):
+    args = parse_args(argv[1:])
+    refine_cnv_breakpoints(args.input_vcf, args.alignment, args.reference_fasta, args.output_vcf, args.threads)
 
-    Parameters
-    ----------
-    argv : list[str], optional
-        Command line arguments. If None, uses sys.argv.
 
-    Returns
-    -------
-    int
-        Exit code: 0 for success, 1 for error.
-    """
-    parser = get_parser()
-    args = parser.parse_args(argv)
-
-    try:
-        refine_cnv_breakpoints_from_vcf(
-            input_vcf=args.input_vcf,
-            bam_files=args.bam_files,
-            output_vcf=args.output_vcf,
-            sv_vcf=args.sv_vcf,
-            cushion=args.cushion,
-        )
-        return 0
-    except Exception as e:
-        logger.error(f"Error refining CNV breakpoints: {e}")
-        return 1
+def main():
+    run(sys.argv)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

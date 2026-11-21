@@ -18,6 +18,17 @@ sns.set_context("talk")
 sns.set_style("white")
 
 
+def coverage_median(cov: pd.Series) -> float:
+    """
+    Median coverage of the covered windows, the normalization of the plots.
+
+    Windows with no coverage (e.g. outside the regions of a subset input) are left out, so they cannot set the
+    median to 0; if no window is covered, the median of all windows is used.
+    """
+    covered = cov[cov > 0]
+    return float(covered.median()) if len(covered) else float(cov.median())
+
+
 def smooth_wl(df_reads_count, wl=100000, bin_size=1000) -> pd.DataFrame:
     """smooth coverage along the genome to a specicic window size (wl) using data with a specific bin size (bin_size)"""
     multiply_factor = wl / bin_size
@@ -35,6 +46,19 @@ def smooth_wl(df_reads_count, wl=100000, bin_size=1000) -> pd.DataFrame:
             start = end + 1
             end = end + wl
     return df_smooth_wl
+
+
+def extract_copy_number(info_string: str) -> float | None:
+    """
+    Copy number of a call from its INFO string: CopyNumber (cn.mops calls), or CN_MEAN (depth CNV caller) when there is
+    no CopyNumber. None if the call has no copy number.
+    """
+    values = {}
+    for item in info_string.split(";"):
+        key, _, value = item.partition("=")
+        if key in ("CopyNumber", "CN_MEAN") and value not in ("", "."):
+            values[key] = float(value.split(",")[0])
+    return values.get("CopyNumber", values.get("CN_MEAN"))
 
 
 def plot_coverage(
@@ -288,7 +312,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     parser.add_argument("--sample_name", help="sample name", required=True, type=str)
     parser.add_argument(
         "--vcf-like",
-        help="input CNV calls are in VCF-like format (e.g cn.mops,cnvpytor)",
+        help="input CNV calls are in VCF-like format (e.g. cn.mops calls, or a CNV VCF converted to BED)",
         action="store_true",
         required=False,
     )
@@ -325,7 +349,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     # load & normalize coverage
     df_germline_cov = pd.read_csv(args.germline_coverage, header=None, sep="\t", dtype={0: str})
     df_germline_cov.columns = ["chr", "start", "end", "cov"]
-    df_germline_cov["norm_cov"] = df_germline_cov["cov"] / df_germline_cov["cov"].median()
+    df_germline_cov["norm_cov"] = df_germline_cov["cov"] / coverage_median(df_germline_cov["cov"])
     df_germline_cov["log_norm_cov"] = np.log2(df_germline_cov["norm_cov"])
     df_germline_cov_norm_100k = smooth_wl(df_germline_cov[["chr", "start", "end", "norm_cov"]], 100000)
     df_germline_cov_norm_100k["start_fig"] = list(range(len(df_germline_cov_norm_100k)))
@@ -347,7 +371,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     if is_somatic:
         df_tumor_cov = pd.read_csv(args.tumor_coverage, header=None, sep="\t", dtype={0: str})
         df_tumor_cov.columns = ["chr", "start", "end", "cov"]
-        df_tumor_cov["norm_cov"] = df_tumor_cov["cov"] / df_tumor_cov["cov"].median()
+        df_tumor_cov["norm_cov"] = df_tumor_cov["cov"] / coverage_median(df_tumor_cov["cov"])
         df_tumor_cov["log_norm_cov"] = np.log2(df_tumor_cov["norm_cov"])
         df_tumor_cov_norm_100k = smooth_wl(df_tumor_cov[["chr", "start", "end", "norm_cov"]], 100000)
         df_tumor_cov_norm_100k["start_fig"] = list(range(len(df_tumor_cov_norm_100k)))
@@ -361,20 +385,6 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     ##### plot CNV calls #####
     ##########################
     # load UG calls
-    def extract_copy_number(info_string):
-        spstr = info_string.split(";")
-        spstr_copynumber = [x for x in spstr if x.startswith("CopyNumber=")]
-        copynumber_value = None
-        if len(spstr_copynumber) == 1:
-            copynumber_value = spstr_copynumber[0].replace("CopyNumber=", "")
-            copynumber_value = None if copynumber_value == "." else float(copynumber_value)
-        spstr_cn = [x for x in spstr if x.startswith("CN=")]
-        cn_value = None
-        if len(spstr_cn) == 1:
-            cn_value = spstr_cn[0].replace("CN=", "")
-            cn_value = None if cn_value == "." else float(cn_value)
-        return min([v for v in [copynumber_value, cn_value] if v is not None])
-
     if args.duplication_cnv_calls:
         if os.path.getsize(args.duplication_cnv_calls) > 0:
             df_dup = pd.read_csv(args.duplication_cnv_calls, sep="\t", header=None, dtype={0: str})
