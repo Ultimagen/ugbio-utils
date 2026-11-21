@@ -900,8 +900,9 @@ def test_hmer_indel_snvq_summary_and_plots(consensus_resources, real_models_calc
 
 
 def test_snvq_thresholds_no_snvq80(consensus_resources, real_models_calc_run_info):
-    """_snvq_thresholds() is [50,60,70] for every split mode (SNVQ80/90 omitted -- the recalibrated SNVQ
-    ceiling is ~84, so the high thresholds would be structurally ~0)."""
+    """_snvq_thresholds() is [50,60,70] for the non-multi-call split modes (SNVQ80/90 omitted -- the recalibrated
+    SNVQ ceiling is ~84, so the high thresholds would be structurally ~0). Multi-call adds 80 (see
+    test_multi_call_report_path)."""
     df, metadata = consensus_resources
     with tempfile.TemporaryDirectory() as temp_output_dir:
         report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
@@ -1276,3 +1277,7 @@ def test_multi_call_report_path(resources_dir):
         assert (Path(td) / "mc.trinuc_stats_per_flow.png").exists()
         assert (Path(td) / "mc.trinuc_stats.png").exists()
         assert (Path(td) / "mc.report.html").exists()
+        # multi-call adds SNVQ80 (TP median ~75): Recall@SNVQ=80 in the run-info table, %>=80 in the summary
+        quality = pd.read_hdf(h5, "run_quality_summary_table_multi_call")
+        assert ("Recall at SNVQ=80", "All reads") in quality.index, quality.index.tolist()
+        assert {"TP%>=80", "FP%>=80"} <= set(table.columns)

@@ -3574,7 +3574,10 @@ class SRSNVReport:
     def _snvq_thresholds(self) -> list[int]:
         """SNVQ thresholds for the Recall@SNVQ rows. SNVQ90 is intentionally omitted: the recalibrated
         SNVQ ceiling is counting-LUT-limited (~84 on typical runs), so Recall@SNVQ90 would be
-        structurally 0 rather than informative."""
+        structurally 0 rather than informative. Multi-call (two calls per molecule) also reports
+        SNVQ80: its TP median SNVQ is ~75, so Recall@SNVQ70 alone no longer separates models."""
+        if self.scheme.mode is ReportMode.MULTI_CALL:
+            return [50, 60, 70, 80]
         return [50, 60, 70]
 
     def _hmer_indel_class_conditions(self):
@@ -3746,7 +3749,7 @@ class SRSNVReport:
         Rows: variant class x call concordance (concordant / non-concordant / all). SNVs are additionally split by
         the COMBINED cycle skip (cycle skip in the R1 or R2 flow order). Per molecule (``data_df`` is deduplicated
         to one row per molecule in multi-call mode). Reports n_TP, n_FP, % of the class's TP molecules,
-        Median SNVQ (TP/FP), TP%>=60, FP%>=60 and ROC AUC (Phred). Written to the QC h5 under
+        Median SNVQ (TP/FP), TP/FP%>=60, TP/FP%>=80 and ROC AUC (Phred). Written to the QC h5 under
         ``multi_call_summary_table``. Self-skips unless the multi-call columns are present.
         """
         if IS_MULTI_CALL_CONCORDANT not in self.data_df.columns:
@@ -3756,6 +3759,7 @@ class SRSNVReport:
         label = data[LABEL].to_numpy().astype(bool)
         snvq = pd.to_numeric(data[QUAL], errors="coerce").to_numpy()
         pct60 = 60  # high-confidence SNVQ threshold
+        pct80 = 80  # multi-call TP median is ~75, so >=80 is the separating threshold
         conc = data[IS_MULTI_CALL_CONCORDANT].fillna(value=False).astype(bool).to_numpy()
         n = len(data)
         vt = data[VARIANT_TYPE].to_numpy() if VARIANT_TYPE in data.columns else np.full(n, VARIANT_TYPE_SNV)
@@ -3787,6 +3791,8 @@ class SRSNVReport:
                     "Median SNVQ (FP)": signif(np.nanmedian(snvq[fp_mask]) if n_fp else np.nan, SIG_DIGITS),
                     "TP%>=60": signif(100 * (tp_mask & (snvq >= pct60)).sum() / n_tp if n_tp else np.nan, SIG_DIGITS),
                     "FP%>=60": signif(100 * (fp_mask & (snvq >= pct60)).sum() / n_fp if n_fp else np.nan, SIG_DIGITS),
+                    "TP%>=80": signif(100 * (tp_mask & (snvq >= pct80)).sum() / n_tp if n_tp else np.nan, SIG_DIGITS),
+                    "FP%>=80": signif(100 * (fp_mask & (snvq >= pct80)).sum() / n_fp if n_fp else np.nan, SIG_DIGITS),
                 }
                 if n_tp > 0 and n_fp > 0:
                     sub = data[mask]
