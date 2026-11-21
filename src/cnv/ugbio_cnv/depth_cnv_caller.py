@@ -1042,7 +1042,7 @@ HOM_DEL_MAX_CN = 0.5  # a deletion with a lower copy number has lost every copy
 
 def genotype_for(svtype: str, cn_mean: float | None = None) -> tuple:
     """
-    Genotype of a call, as in the cn.mops / CNVpytor output.
+    Genotype of a call, from its type and copy number.
 
     Parameters
     ----------

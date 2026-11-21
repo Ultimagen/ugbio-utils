@@ -198,15 +198,9 @@ class TestWriteVcfRecordsWithSource:
         output_vcf_path = tmp_path / "output.vcf.gz"
         with pysam.VariantFile(str(vcf_path), "r") as vcf_in:
             with pysam.VariantFile(str(output_vcf_path), "w", header=combined_header) as vcf_out:
-                # Write first 5 records with source annotation
-                source_name = "CNVpytor"
-                record_count = 0
-                for record in vcf_in:
-                    if record_count >= 5:
-                        break
-                    merge_cnv_sv.write_vcf_records_with_source(vcf_in, vcf_out, combined_header, source_name)
-                    record_count += 1
-                    break  # write_vcf_records_with_source processes all records internally
+                # Write the records with source annotation
+                source_name = "gridss"
+                merge_cnv_sv.write_vcf_records_with_source(vcf_in, vcf_out, combined_header, source_name)
 
         # Read the output file and verify
         with pysam.VariantFile(str(output_vcf_path), "r") as vcf_result:
@@ -216,7 +210,7 @@ class TestWriteVcfRecordsWithSource:
             # Check that CNV_SOURCE is present in all records
             for record in records:
                 assert "CNV_SOURCE" in record.info
-                assert record.info["CNV_SOURCE"] == ("CNVpytor",)
+                assert record.info["CNV_SOURCE"] == ("gridss",)
 
                 # Check that filters are cleared (should be empty or only PASS)
                 # In pysam, an empty filter set means PASS
@@ -471,7 +465,7 @@ class TestWriteVcfRecordsWithSource:
             record2.stop = 6000
             record2.alleles = ("N", "<DUP>")
             record2.info["SVTYPE"] = "DUP"
-            record2.info["CNV_SOURCE"] = ("cn.mops", "cnvpytor")
+            record2.info["CNV_SOURCE"] = ("cn.mops", "depth")
             record2.samples["test_sample"]["GT"] = (0, 1)
             vcf_in.write(record2)
 
@@ -503,7 +497,7 @@ class TestWriteVcfRecordsWithSource:
 
             # Record 2: Multiple sources should be preserved
             assert "CNV_SOURCE" in records[1].info
-            assert records[1].info["CNV_SOURCE"] == ("cn.mops", "cnvpytor")
+            assert records[1].info["CNV_SOURCE"] == ("cn.mops", "depth")
 
             # Record 3: No CNV_SOURCE should remain absent
             assert "CNV_SOURCE" not in records[2].info
