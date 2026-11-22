@@ -1,5 +1,5 @@
 # Pinned by digest: patched Python (CVE-2026-6100 fixed in 3.11.16) and a fresh build cache key
-FROM python:3.11.17-slim-bookworm@sha256:f06d01d4ba3f8ad5af45a3ec87df19c1d317d8e8961edc0fabda61811af6f7cf AS build
+FROM python:3.11.18-slim-bookworm AS build
 
 ARG PYPGX_BRANCH=0.27.0
 ARG PYPGX_BUNDLE_BRANCH=0.27.0
@@ -36,7 +36,7 @@ COPY docker/install-gatk.sh /tmp/install-gatk.sh
 RUN bash /tmp/install-gatk.sh && rm /tmp/install-gatk.sh
 
 ##################################################################
-FROM python:3.11.17-slim-bookworm@sha256:f06d01d4ba3f8ad5af45a3ec87df19c1d317d8e8961edc0fabda61811af6f7cf
+FROM python:3.11.18-slim-bookworm
 
 RUN apt-get update && \
     apt-get upgrade -y && \
