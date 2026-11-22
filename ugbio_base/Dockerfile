@@ -68,6 +68,11 @@ RUN git clone https://github.com/bedops/bedops.git && \
     cd .. && \
     rm -rf bedops
 
+# The module images build their Python packages on this stage (ugbio_base_build).
+# pywfa and pyabpoa (truvari dependencies) are released only as source and compile with
+# -march=native by default; target AVX2, so the images also run on hosts without AVX-512
+ENV PYWFA_MARCH=x86-64-v3 AVX2=1
+
 # =============================================================================
 # Stage 2: Runtime image — only binaries and runtime shared libraries
 # =============================================================================

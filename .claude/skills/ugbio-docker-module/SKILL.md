@@ -74,6 +74,7 @@ When the module has its own strict/conflicting version constraints, it's still m
 - DO run `apt-get upgrade -y` if the Dockerfile does its own apt installs, to pick up patched system packages.
 - DO install GATK with `docker/install-gatk.sh` (COPY + RUN) if the module bundles GATK — it installs the Ultima GATK build with fixed netty (official releases still bundle a vulnerable netty) into /opt/gatk.
 - DO pin any version that's had a proven runtime incompatibility (numpy/pandas ABI, etc.) with a comment explaining *why*, not just what.
+- DO build native extensions for a portable CPU target, not `-march=native`: the build runner may have AVX-512 while the hosts running the image do not, which crashes with an illegal instruction. `ugbio_base_build` sets `PYWFA_MARCH=x86-64-v3` and `AVX2=1` for pywfa/pyabpoa (truvari dependencies); a module not built on `ugbio_base_build` (e.g. cnv) must set them itself.
 
 ## DON'T
 
