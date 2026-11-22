@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 from ugbio_comparison import sequins_report
-from ugbio_comparison.sequins_vcfeval import H5_KEY
+from ugbio_comparison.sequins_report import H5_KEY
 
 
 def row(call, base, alleles=("A", "C"), pos=100, gt=(0, 1), gt_truth=(0, 1), **kw):

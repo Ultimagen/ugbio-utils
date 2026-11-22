@@ -6,8 +6,7 @@ import sys
 
 import pandas as pd
 
-from ugbio_comparison.sequins_vcfeval import H5_KEY
-
+H5_KEY = "concordance"  # key of the concordance dataframe written by the SequinsAnalysis VcfEvalConcordance task
 CSS = (
     "body{font-family:sans-serif;margin:2em}table{border-collapse:collapse;margin:1em 0}"
     "th,td{border:1px solid #ccc;padding:4px 10px;text-align:left}th{background:#eee}"
