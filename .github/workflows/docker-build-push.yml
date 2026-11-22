@@ -230,7 +230,7 @@ jobs:
       # Build into the runner's Docker (not pushed yet), so the image can be scanned before it is published
       - name: Build and scan
         id: build-scan
-        uses: Ultimagen/ugbio-utils/.github/actions/docker-build-scan@main
+        uses: Ultimagen/ugbio-utils/.github/actions/docker-build-scan@trivy-scan-timeout-20m
         with:
           docker-file: ${{ inputs.docker-file }}
           docker-context: ${{ inputs.docker-context }}

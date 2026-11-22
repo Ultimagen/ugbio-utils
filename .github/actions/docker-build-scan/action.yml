@@ -155,6 +155,8 @@ runs:
         format: 'json'
         output: 'trivy-results.json'
         exit-code: '0'
+        # Large images (TensorRT-based ugbio_deep_srsnv) exceed Trivy's default 5m analysis deadline.
+        timeout: '20m'
 
     # Trivy only inventories package-manager and language-package installs; Syft also detects versions
     # from executables (e.g. CPython in /usr/local) and labels executables that belong to no package
