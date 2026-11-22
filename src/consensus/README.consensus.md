@@ -21,6 +21,13 @@ DS:i:<family size>                    number of pairs in that family
 CS:Z:<run-id>-<10-digit family id>    --use-umi only: the cross-strand duplex group
 ```
 
+The positional part of the dedup key is the fragment's two 5' ends: the forward mate's
+start and the reverse mate's end (FF/RR pairs, which have neither, use the leftmost
+start and the rightmost end). The 3' ends move with read length and adapter trimming,
+so on read-through inserts, where both mates start at the same base, or dovetails, a
+key built from them splits copies of one strand 1-2 bp apart and breaks the strand link
+(BIOIN-3197).
+
 `--use-umi` adds `(R1.u5, R2.u3)` to the dedup key alongside the position, so the
 two strands of one duplex molecule land in **separate** `MI` families — which is
 what we want, since each strand is consensus-called on its own. The cost is that
@@ -54,7 +61,7 @@ clusters that are the same molecule into one `MI` family:
   the strands. On by default with `--use-umi`; `--no-orientation-in-key` turns it off, and
   `--cross-strand` does so implicitly (forcing both is an error).
   Without `--use-umi` it can still be forced on; `CS` is then the position family: every
-  orientation family at one (chrom, left_start, right_end) shares a `CS`, which over-links
+  orientation family at one (chrom, left, right) position shares a `CS`, which over-links
   independent molecules at the same place.
 
 ```bash
@@ -97,14 +104,6 @@ mode further than `--pad` away, gets no tag, and a stale one is dropped. Like
    true pairs (12.4 %), `ends_read_uncertainty: 50` recovers 3,307 (96.6 %),
    precision 100 % both ways.
 3. For SRSNV/DeepSRSNV, add `"CS:Z"` to `cram_tags_to_copy`.
-
-> ⚠️ This module is verified byte-for-byte against a 12,670,749-record baseline
-> (`MI`/`DS` identical to the pre-`CS` output, 55,884 `CS` links, 0 gained / 0
-> lost). The one deliberate deviation is `--regions`: a read that starts upstream of an
-> interval and reaches into it is now emitted (as `samtools view -L` would), which adds
-> ~30 of 12.67 M records versus that baseline. Do not refactor it — including "just" reordering the `set_tag` calls,
-> which fixes the emitted aux order as `MI, DS, CS` — without re-running
-> `/data/Runs/BIOIN-3068/cmp_stream.py` and `cs_links.py`.
 
 ## mark_duplex_consensus
 

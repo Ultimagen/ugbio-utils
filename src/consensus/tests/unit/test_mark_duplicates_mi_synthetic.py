@@ -112,9 +112,10 @@ def marked(path):
     return out
 
 
-def snapshot(path):
-    """Every record in file order: (name, flag, start, end, MI, DS, CS, po)."""
-    with pysam.AlignmentFile(str(path), "rb") as bam:
+def snapshot(path, reference=None):
+    """Every record in file order: (name, flag, start, end, MI, DS, CS, po). CRAM needs `reference`."""
+    kwargs = {"reference_filename": str(reference)} if reference else {}
+    with pysam.AlignmentFile(str(path), "rc" if str(path).endswith(".cram") else "rb", **kwargs) as bam:
         return [
             (
                 r.query_name,
@@ -573,8 +574,9 @@ def test_cs_reads_orientation_from_the_flag_for_dovetailed_pairs(tmp_path):
     """
     f1r2 = pair("fwd", "chr1", 1000, 1010, UMI_A, UMI_B, kind="F1R2")
     f2r1 = pair("rev", "chr1", 1000, 1010, UMI_B, UMI_A, kind="F2R1")
-    # dovetail: R1 (forward) starts to the right of R2 (reverse)
+    # dovetail: the forward mate starts at 1010, to the right of the reverse one, on both strands
     f1r2[0].reference_start, f1r2[1].reference_start = 1010, 1000
+    f2r1[0].reference_start, f2r1[1].reference_start = 1000, 1010
     got = marked(run(tmp_path, flatten(f1r2, f2r1), "--use-umi", "--pair-orientation-tag", "po"))
     assert got["fwd"]["CS"] == got["rev"]["CS"] == "fwd"
     assert (got["fwd"]["po"], got["rev"]["po"]) == ("F1R2", "F2R1")
@@ -1432,3 +1434,127 @@ def test_supplementary_records_get_the_same_tags_whole_file_and_sharded(tmp_path
     assert snapshot(sharded) == snapshot(whole)
     supp = {(s[0], s[2]): s[5:8] for s in snapshot(whole) if s[1] & 2048}
     assert supp == {("a", "chr1"): ("a", 2, "a"), ("b", "chr2"): (None, 1, None)}
+
+
+# --- BIOIN-3197: keys from the 5' ends ----------------------------------------------------------------
+
+
+def fr_pair(name, fwd_start, fwd_len, rev_start, rev_len, u5, u3, *, r1_reverse):
+    """An FR pair with explicit mate lengths; R1 is the reverse mate iff `r1_reverse` (F2R1)."""
+    fwd_flag, rev_flag = (1 | 128, 1 | 64 | 16) if r1_reverse else (1 | 64, 1 | 128 | 16)
+    fwd_tags, rev_tags = ({"u3": u3}, {"u5": u5}) if r1_reverse else ({"u5": u5}, {"u3": u3})
+    return [
+        segment(name, "chr1", fwd_start, flag=fwd_flag, length=fwd_len, tags=fwd_tags),
+        segment(name, "chr1", rev_start, flag=rev_flag, length=rev_len, tags=rev_tags),
+    ]
+
+
+def test_read_through_f2r1_copies_with_different_forward_trims_stay_one_linked_family(tmp_path):
+    """
+    Fully read-through 200 bp insert: both mates start at 1000. The forward mates' 3' trims differ, so their
+    alignment ends (1198, 1199, 1197) are not the fragment end; the reverse mate's end (1200) is.
+    """
+    recs = flatten(
+        fr_pair("r_a", 1000, 198, 1000, 200, UMI_B, UMI_A, r1_reverse=True),
+        fr_pair("r_b", 1000, 199, 1000, 200, UMI_B, UMI_A, r1_reverse=True),
+        fr_pair("f", 1000, 197, 1000, 200, UMI_A, UMI_B, r1_reverse=False),
+    )
+    got = marked(run(tmp_path, recs, "--use-umi", "--pair-orientation-tag", "po"))
+    assert (got["r_a"]["MI"], got["r_b"]["MI"], got["r_a"]["DS"]) == ("r_a", "r_a", 2)
+    assert {n: (got[n]["CS"], got[n]["po"]) for n in got} == {
+        "r_a": ("f", "F2R1"),
+        "r_b": ("f", "F2R1"),
+        "f": ("f", "F1R2"),
+    }
+
+
+@needs_samtools
+def test_a_dovetailed_family_spanning_more_than_pad_agrees_across_shards(tmp_path):
+    """
+    Key (3200, 3700). Pair `a` dovetails: its reverse mate starts at 2750, 450 bp before the key. Pair `c`'s
+    reverse mate starts at 3650. The family's reads span 900 bp > pad, across the shard edge at 3000.
+    """
+    recs = flatten(
+        fr_pair("a", 3200, 50, 2750, 950, UMI_A, UMI_B, r1_reverse=False),
+        fr_pair("c", 3200, 50, 3650, 50, UMI_A, UMI_B, r1_reverse=False),
+    )
+    inp = build_bam(tmp_path / "in.bam", recs)
+    whole, sharded = tmp_path / "whole.bam", tmp_path / "sharded.bam"
+    cli(inp, "--use-umi", out=whole)
+    cli(inp, "--use-umi", "--shard-size", "3000", "--pad", "500", "--jobs", "2", out=sharded)
+    assert snapshot(sharded) == snapshot(whole)
+    got = marked(sharded)
+    assert (got["a"]["MI"], got["c"]["MI"], got["a"]["DS"]) == ("a", "a", 2)
+
+
+# --- CRAM and the remaining sharded-writer paths ------------------------------------------------------
+
+
+@needs_samtools
+@pytest.mark.parametrize("sharded", [False, True], ids=["whole", "sharded"])
+def test_cram_in_and_out_with_a_reference_matches_the_bam_run(tmp_path, dataset_bam, sharded):
+    """Production reads CRAM with --reference; CRAM output goes through the samtools cat | view pipe when sharded."""
+    ref = tmp_path / "ref.fa"
+    ref.write_text("".join(f">{c}\n{'A' * CONTIG_LEN}\n" for c in ("chr1", "chr2")))
+    pysam.faidx(str(ref))
+    inp = tmp_path / "in.cram"
+    pysam.view("-C", "-T", str(ref), "-o", str(inp), str(dataset_bam), catch_stdout=False)
+    pysam.index(str(inp))
+    mode = ("--jobs", "2", "--shard-size", "3000") if sharded else ()
+    cli(dataset_bam, "--use-umi", *mode, out=tmp_path / "out.bam")
+    cli(inp, "--use-umi", "--reference", ref, *mode, out=tmp_path / "out.cram")
+    assert snapshot(tmp_path / "out.cram", reference=ref) == snapshot(tmp_path / "out.bam")
+
+
+@needs_samtools
+def test_sharded_strips_run_ids_mate_suffixes_and_stale_mi_like_whole_file(tmp_path):
+    recs = []
+    for stem in ("606174-b", "606174-a"):
+        r1, r2 = pair(stem, "chr1", 1000, 1200, UMI_A, UMI_B)
+        r1.query_name, r2.query_name = f"{stem}/1", f"{stem}/2"
+        recs += [r1, r2]
+    recs += pair("606174-solo", "chr1", 5000, 5200, UMI_A, UMI_B, tags={"MI": "stale", "CS": "stale"})
+    inp = build_bam(tmp_path / "in.bam", recs)
+    whole, sharded = tmp_path / "whole.bam", tmp_path / "sharded.bam"
+    cli(inp, "--use-umi", "--strip-run-id", out=whole)
+    cli(inp, "--use-umi", "--strip-run-id", "--jobs", "2", "--shard-size", "3000", out=sharded)
+    assert snapshot(sharded) == snapshot(whole)
+    assert {(s[0], *s[5:8]) for s in snapshot(sharded)} == {
+        ("606174-a/1", "a", 2, "a"),
+        ("606174-a/2", "a", 2, "a"),
+        ("606174-b/1", "a", 2, "a"),
+        ("606174-b/2", "a", 2, "a"),
+        ("606174-solo", None, 1, "solo"),
+    }
+
+
+@needs_samtools
+def test_supplementaries_of_dovetailed_and_outward_families_agree_across_shards(tmp_path):
+    """
+    The 5' key is not an alignment bounding box: the reverse mate can start before key[1]. With the mates
+    within pad, a shard emitting a nearby supplementary still holds the whole family, so it is tagged as in
+    whole-file mode. "o" pairs face outward (key (1700, 1460)) and reach 2*pad before the supplementary;
+    "d" pairs dovetail by 90 bp.
+    """
+    recs = []
+    for n in ("o1", "o2"):
+        recs += [
+            segment(n, "chr1", 1700, flag=1 | 64, tags={"u5": UMI_A}),
+            segment(n, "chr1", 1410, flag=1 | 128 | 16, tags={"u3": UMI_B}),
+        ]
+    for n in ("d1", "d2"):
+        recs += [
+            segment(n, "chr1", 3990, flag=1 | 64, tags={"u5": UMI_A}),
+            segment(n, "chr1", 3900, flag=1 | 128 | 16, length=150, tags={"u3": UMI_B}),
+        ]
+    recs += [
+        segment("o1", "chr1", 2000, flag=1 | 64 | 2048, tags={"u5": UMI_A}),
+        segment("d1", "chr1", 4250, flag=1 | 64 | 2048, tags={"u5": UMI_A}),
+    ]
+    inp = build_bam(tmp_path / "in.bam", recs)
+    whole, sharded = tmp_path / "whole.bam", tmp_path / "sharded.bam"
+    cli(inp, "--use-umi", "--pad", "300", out=whole)
+    cli(inp, "--use-umi", "--pad", "300", "--shard-size", "1000", "--jobs", "2", out=sharded)
+    assert snapshot(sharded) == snapshot(whole)
+    supp = {s[0]: s[5:8] for s in snapshot(sharded) if s[1] & 2048}
+    assert supp == {"o1": ("o1", 2, "o1"), "d1": ("d1", 2, "d1")}
