@@ -1225,9 +1225,9 @@ def call_depth_cnvs(  # noqa: PLR0913
     chrx_name, chry_name : str, optional
         Sex chromosome names in the reference (default: from the fasta index, sex_chromosome_names).
     par_bed : str, optional
-        Pseudoautosomal regions (BED, e.g. the par_regions genome resource). In a male, the chrX PARs keep baseline 2
-        (their chrY copy is masked in the reference, so all their reads map to chrX). Without it the whole male chrX
-        is haploid.
+        Pseudoautosomal regions (BED, e.g. the par_regions genome resource). With one X and a Y, the chrX PARs keep
+        baseline 2 (their chrY copy is masked in the reference, so all their reads map to chrX); without a Y (X0) they
+        stay haploid. Without it the whole one-X chrX is haploid.
     params : Params, optional
         Caller parameters.
 
@@ -1247,10 +1247,16 @@ def call_depth_cnvs(  # noqa: PLR0913
     setup = inferred
     if karyotype:
         setup = sex_chromosome_setup(karyotype, chrx_name, chry_name)
-        if x_ratio is not None and (inferred.haploid, inferred.skipped) != (setup.haploid, setup.skipped):
+        # compare the copy numbers; chrY "not called" only differs when it has no data (e.g. not among the bins)
+        if x_ratio is not None and (inferred.haploid, inferred.skipped - {chry_name}) != (
+            setup.haploid,
+            setup.skipped - {chry_name},
+        ):
             logger.warning(f"given karyotype {karyotype}, but the depth gives {inferred.karyotype}")
-    # male chrX PARs: two copies (X + Y); every supported reference masks the chrY copy, so all their reads map to chrX
-    par = read_par_bed(par_bed, chrx_name) if par_bed and chrx_name in setup.haploid else []
+    # one X and a Y: the chrX PARs have two copies (X + Y); every supported reference masks the chrY copy, so all
+    # their reads map to chrX. Not for a karyotype without a Y (X0: chrY not called), whose PARs have one copy.
+    one_x_with_y = chrx_name in setup.haploid and chry_name not in setup.skipped
+    par = read_par_bed(par_bed, chrx_name) if par_bed and one_x_with_y else []
     setup.diploid = par  # in the header, so the candidate steps score the PARs against 2 copies too
     logger.info(
         f"sex chromosomes: {setup.karyotype}; haploid {sorted(setup.haploid)}, not called {sorted(setup.skipped)}"

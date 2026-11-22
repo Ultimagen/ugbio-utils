@@ -377,7 +377,7 @@ class TestPseudoautosomal:
 
     PAR = (0, 60_000)  # chrX:0-60 kb in these tests
 
-    def run(self, tmp_path, monkeypatch, cn, *, par=True):
+    def run(self, tmp_path, monkeypatch, cn, *, par=True, karyotype=None):
         bins = make_bins(cn)
         monkeypatch.setattr(dc, "load_bins", lambda *a, **k: bins)
         par_bed = tmp_path / "par.bed"
@@ -385,12 +385,22 @@ class TestPseudoautosomal:
         fai = tmp_path / "ref.fa.fai"
         fai.write_text("chr1\t500000\t6\t60\t61\nchrX\t300000\t508480\t60\t61\n")
         out = str(tmp_path / "calls.vcf.gz")
-        return dc.call_depth_cnvs("q0", "q20", "ann", "S", str(fai), out, par_bed=str(par_bed) if par else None)
+        par_bed = str(par_bed) if par else None
+        return dc.call_depth_cnvs("q0", "q20", "ann", "S", str(fai), out, karyotype=karyotype, par_bed=par_bed)
 
     def male(self, rng):
         x = noisy_cn(3000, rng, level=1.0)
         x[: self.PAR[1] // dc.BIN_SIZE] = noisy_cn(self.PAR[1] // dc.BIN_SIZE, rng, level=2.0)
         return {"chr1": noisy_cn(5000, rng), "chrX": x}
+
+    @pytest.mark.parametrize("karyotype, par_diploid", [("XY", True), ("X0", False), ("XX", False)])
+    def test_pars_diploid_only_with_a_y(self, tmp_path, monkeypatch, karyotype, par_diploid):
+        """X0 has one X and no Y: its PARs have one copy, so they stay haploid like the rest of chrX."""
+        rng = np.random.default_rng(3)
+        cn = {"chr1": noisy_cn(5000, rng), "chrX": noisy_cn(3000, rng, level=1.0 if karyotype != "XX" else 2.0)}
+        self.run(tmp_path, monkeypatch, cn, karyotype=karyotype)
+        diploid = dc.read_sex_chromosomes(str(tmp_path / "calls.vcf.gz")).diploid
+        assert diploid == ([("chrX", *self.PAR)] if par_diploid else [])
 
     def test_genotype_from_copy_number(self):
         """No copy left (on an autosome or a male chrX alike) is 1/1; a partial loss 0/1; gains are not genotyped."""

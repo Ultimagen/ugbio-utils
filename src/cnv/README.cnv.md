@@ -158,8 +158,9 @@ filter_nested_cnv_candidates --input-vcf sample.refined.vcf.gz --output-vcf samp
 ```
 
 Sex chromosomes are inferred from the depth (or set with `--karyotype`, e.g. `XX`, `XY`, `XXY`, `X0`: one X makes
-chrX haploid, a Y makes chrY haploid, no Y leaves chrY uncalled). For a sample with one X, pass
-`--par-bed` (the `par_regions` genome resource); otherwise the chrX pseudoautosomal regions look like gains.
+chrX haploid, a Y makes chrY haploid, no Y leaves chrY uncalled). For a sample with one X and a Y, pass
+`--par-bed` (the `par_regions` genome resource); otherwise the chrX pseudoautosomal regions look like gains. Without a
+Y (X0) the PARs stay at one copy.
 
 Filter the calls with `filter_variants_pipeline` and a `cnv` model. Pass the fields in
 `ugbio_filtering.transformers.CNV_INFO_FIELDS` as `--custom_annotations` and use `--overwrite_qual_tag`. Without
