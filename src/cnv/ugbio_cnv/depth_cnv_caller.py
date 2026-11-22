@@ -246,7 +246,7 @@ def load_bins(depth_mq0: str, depth_mq20: str, annotation: str, contigs: list[st
     return bins.sort_values(["chrom", "start"], kind="stable").reset_index(drop=True)
 
 
-SEXES = ("male", "female")
+KARYOTYPES = ("XX", "XY", "XXY", "XYY", "X0", "XXX", "XXXY")  # estimate_ploidy.determine_karyotype labels
 
 
 def sex_chromosome_names(fasta_index: str) -> tuple[str, str]:
@@ -270,34 +270,62 @@ def sex_chromosome_names(fasta_index: str) -> tuple[str, str]:
     return "chrX", "chrY"
 
 
-def sex_chromosome_setup(sex: str, chrx_name: str = "chrX", chry_name: str = "chrY") -> SexChromosomes:
+def karyotype_copies(karyotype: str, chrx_name: str = "chrX", chry_name: str = "chrY") -> tuple[set[str], bool]:
     """
-    Sex chromosome setup from a given sex.
+    Haploid sex chromosomes of a karyotype: chrX if it has one X, chrY if it has a Y.
 
-    Male: chrX and chrY are haploid. Female: chrX is diploid and chrY is not called.
+    Extra copies (XXX, XYY, XXXY) are called against two chrX / one chrY copy (logged as a warning).
 
     Parameters
     ----------
-    sex : str
-        "male" or "female".
+    karyotype : str
+        Karyotype label, e.g. XY, XXY or X0 (estimate_ploidy.determine_karyotype).
+    chrx_name, chry_name : str
+        Sex chromosome names in the reference.
+
+    Returns
+    -------
+    tuple[set[str], bool]
+        The haploid contigs, and whether the karyotype has a Y.
+    """
+    n_x, n_y = karyotype.count("X"), karyotype.count("Y")
+    if n_x > 2 or n_y > 1:  # noqa: PLR2004
+        logger.warning(f"Karyotype {karyotype}: extra sex chromosome copies are called against 2 (chrX) / 1 (chrY)")
+    haploid = {chrx_name} if n_x == 1 else set()
+    if n_y:
+        haploid.add(chry_name)
+    return haploid, n_y > 0
+
+
+def sex_chromosome_setup(karyotype: str, chrx_name: str = "chrX", chry_name: str = "chrY") -> SexChromosomes:
+    """
+    Sex chromosome setup from a given karyotype, the same as for an inferred one.
+
+    One chrX copy makes chrX haploid, two or more diploid; chrY is haploid if present and not called otherwise. E.g.
+    XY: chrX and chrY haploid; XX: chrX diploid, chrY not called; XXY: chrX diploid, chrY haploid; X0: chrX haploid,
+    chrY not called.
+
+    Parameters
+    ----------
+    karyotype : str
+        One of KARYOTYPES.
     chrx_name, chry_name : str
         Sex chromosome names in the reference.
 
     Returns
     -------
     SexChromosomes
-        The setup, karyotype "XY (given)" or "XX (given)".
+        The setup, karyotype e.g. "XY (given)".
 
     Raises
     ------
     ValueError
-        If sex is not one of SEXES.
+        If karyotype is not one of KARYOTYPES.
     """
-    if sex not in SEXES:
-        raise ValueError(f"sex must be one of {SEXES}, got {sex!r}")
-    if sex == "male":
-        return SexChromosomes({chrx_name, chry_name}, set(), "XY (given)")
-    return SexChromosomes(set(), {chry_name}, "XX (given)")
+    if karyotype not in KARYOTYPES:
+        raise ValueError(f"karyotype must be one of {KARYOTYPES}, got {karyotype!r}")
+    haploid, has_y = karyotype_copies(karyotype, chrx_name, chry_name)
+    return SexChromosomes(haploid, set() if has_y else {chry_name}, f"{karyotype} (given)")
 
 
 def sex_chromosome_ratios(
@@ -379,15 +407,9 @@ def infer_sex_chromosomes(
             f"{chrx_name} and {chry_name} are not called (give the sex to call them)"
         )
         return SexChromosomes(skipped={chrx_name, chry_name}, karyotype=f"UNDETERMINED (inferred: {found})")
-    n_x, has_y = karyotype.count("X"), "Y" in karyotype
-    if n_x > 2 or karyotype.count("Y") > 1:  # noqa: PLR2004
-        logger.warning(f"Karyotype {karyotype}: extra sex chromosome copies are called against 2 (chrX) / 1 (chrY)")
-    sex = SexChromosomes(karyotype=f"{karyotype} (inferred: {found})")
-    if n_x == 1:
-        sex.haploid.add(chrx_name)
-    if has_y:
-        sex.haploid.add(chry_name)
-    elif y_ratio is not None or chry_in_bins:
+    haploid, has_y = karyotype_copies(karyotype, chrx_name, chry_name)
+    sex = SexChromosomes(haploid=haploid, karyotype=f"{karyotype} (inferred: {found})")
+    if not has_y and (y_ratio is not None or chry_in_bins):
         if y_ratio is None:
             logger.warning(f"{chry_name} has too few clean bins for its copy number: it is not called")
         sex.skipped.add(chry_name)
@@ -1173,7 +1195,7 @@ def call_depth_cnvs(  # noqa: PLR0913
     sample_name: str,
     fasta_index: str,
     output_vcf: str,
-    sex: str | None = None,
+    karyotype: str | None = None,
     contigs: list[str] | None = None,
     chrx_name: str | None = None,
     chry_name: str | None = None,
@@ -1195,9 +1217,9 @@ def call_depth_cnvs(  # noqa: PLR0913
         Reference .fai (VCF contigs).
     output_vcf : str
         Output .vcf.gz.
-    sex : str, optional
-        "male" or "female". By default the sex chromosome copy numbers are inferred from the depth of chrX and chrY;
-        if the depth is ambiguous, chrX and chrY are not called.
+    karyotype : str, optional
+        Sex karyotype, one of KARYOTYPES (sex_chromosome_setup). By default it is inferred from the depth of chrX and
+        chrY; if the depth is ambiguous, chrX and chrY are not called.
     contigs : list[str], optional
         Contigs to call (default: all annotated contigs).
     chrx_name, chry_name : str, optional
@@ -1223,10 +1245,10 @@ def call_depth_cnvs(  # noqa: PLR0913
         x_ratio, y_ratio, chrx_name, chry_name, chry_in_bins=bool((bins["chrom"] == chry_name).any())
     )
     setup = inferred
-    if sex:
-        setup = sex_chromosome_setup(sex, chrx_name, chry_name)
+    if karyotype:
+        setup = sex_chromosome_setup(karyotype, chrx_name, chry_name)
         if x_ratio is not None and (inferred.haploid, inferred.skipped) != (setup.haploid, setup.skipped):
-            logger.warning(f"given sex {sex} ({setup.karyotype}), but the depth gives {inferred.karyotype}")
+            logger.warning(f"given karyotype {karyotype}, but the depth gives {inferred.karyotype}")
     # male chrX PARs: two copies (X + Y); every supported reference masks the chrY copy, so all their reads map to chrX
     par = read_par_bed(par_bed, chrx_name) if par_bed and chrx_name in setup.haploid else []
     setup.diploid = par  # in the header, so the candidate steps score the PARs against 2 copies too
@@ -1276,10 +1298,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--depth-mq20", required=True, help="mosdepth regions.bed.gz, 100 bp windows, MAPQ>=20")
     parser.add_argument("--annotation", required=True, help="Reference annotation parquet (build_depth_annotation)")
     parser.add_argument(
-        "--sex",
-        choices=SEXES,
+        "--karyotype",
+        choices=KARYOTYPES,
         default=None,
-        help="Sample sex (default: inferred from chrX / chrY depth; chrX / chrY are not called if it is ambiguous)",
+        help="Sex karyotype of the sample (default: inferred from chrX / chrY depth; chrX / chrY are not called if it "
+        "is ambiguous). One X: chrX haploid, else diploid; a Y: chrY haploid, else not called",
     )
     parser.add_argument("--sample-name", required=True, help="Sample name for the output VCF")
     parser.add_argument("--fasta-index", required=True, help="Reference .fai")
@@ -1316,7 +1339,7 @@ def run(argv: list[str]):
         args.sample_name,
         args.fasta_index,
         args.output_vcf,
-        args.sex,
+        args.karyotype,
         args.contigs,
         args.chrx_name,
         args.chry_name,

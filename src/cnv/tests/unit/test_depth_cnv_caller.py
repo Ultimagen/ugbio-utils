@@ -59,15 +59,36 @@ class TestPelt:
 
 
 class TestGivenSex:
-    def test_male_and_female_setup(self):
-        male, female = dc.sex_chromosome_setup("male"), dc.sex_chromosome_setup("female")
-        assert (male.haploid, male.skipped) == ({"chrX", "chrY"}, set())
-        assert (female.haploid, female.skipped) == (set(), {"chrY"})
-        assert dc.sex_chromosome_setup("male", "X", "Y").haploid == {"X", "Y"}
+    @pytest.mark.parametrize(
+        "karyotype, haploid, skipped",
+        [
+            ("XY", {"chrX", "chrY"}, set()),
+            ("XX", set(), {"chrY"}),
+            ("XXY", {"chrY"}, set()),
+            ("X0", {"chrX"}, {"chrY"}),
+            ("XXX", set(), {"chrY"}),
+            ("XYY", {"chrX", "chrY"}, set()),
+        ],
+    )
+    def test_karyotype_setup(self, karyotype, haploid, skipped):
+        setup = dc.sex_chromosome_setup(karyotype)
+        assert (setup.haploid, setup.skipped, setup.karyotype) == (haploid, skipped, f"{karyotype} (given)")
 
-    def test_invalid_sex(self):
-        with pytest.raises(ValueError, match="sex must be"):
-            dc.sex_chromosome_setup("M")
+    def test_karyotype_setup_b37_names(self):
+        assert dc.sex_chromosome_setup("XY", "X", "Y").haploid == {"X", "Y"}
+
+    @pytest.mark.parametrize("karyotype", ["male", "female", "M", "UNDETERMINED", "X"])
+    def test_invalid_karyotype(self, karyotype):
+        with pytest.raises(ValueError, match="karyotype must be"):
+            dc.sex_chromosome_setup(karyotype)
+
+    def test_cli_karyotype(self):
+        base = ["--depth-mq0", "a", "--depth-mq20", "b", "--annotation", "c", "--sample-name", "S"]
+        base += ["--fasta-index", "f", "--output-vcf", "o"]
+        assert dc.parse_args([*base, "--karyotype", "XXY"]).karyotype == "XXY"
+        assert dc.parse_args(base).karyotype is None
+        with pytest.raises(SystemExit):
+            dc.parse_args([*base, "--karyotype", "male"])
 
     def test_given_sex_overrides_the_depth(self, tmp_path, monkeypatch):
         rng = np.random.default_rng(9)
@@ -78,7 +99,7 @@ class TestGivenSex:
         out = str(tmp_path / "calls.vcf.gz")
         fai = tmp_path / "ref.fa.fai"
         fai.write_text("chr1\t500000\t6\t60\t61\nchrX\t300000\t508480\t60\t61\n")
-        calls = dc.call_depth_cnvs("q0", "q20", "ann", "S", str(fai), out, sex="female")
+        calls = dc.call_depth_cnvs("q0", "q20", "ann", "S", str(fai), out, karyotype="XX")
         sex = dc.read_sex_chromosomes(out)
         assert (sex.haploid, sex.skipped, sex.karyotype) == (set(), {"chrY"}, "XX (given)")
         assert any("but the depth gives X " in w for w in warnings)
@@ -281,7 +302,7 @@ class TestOutput:
         out = str(tmp_path / "calls.vcf.gz")
         fai = tmp_path / "ref.fa.fai"
         fai.write_text("chr1\t500000\t6\t60\t61\n")
-        calls = dc.call_depth_cnvs("q0", "q20", "ann", "S", str(fai), out, sex="female")
+        calls = dc.call_depth_cnvs("q0", "q20", "ann", "S", str(fai), out, karyotype="XX")
         assert calls.empty
         with pysam.VariantFile(out) as v:
             assert list(v.header.samples) == ["S"] and not list(v)

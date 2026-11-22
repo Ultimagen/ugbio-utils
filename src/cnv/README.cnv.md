@@ -157,7 +157,8 @@ refine_cnv_breakpoints --input-vcf sample.ann.vcf.gz --alignment sample.cram --r
 filter_nested_cnv_candidates --input-vcf sample.refined.vcf.gz --output-vcf sample.calls.vcf.gz
 ```
 
-Sex chromosomes are inferred from the depth (or set with `--sex male|female`). For a male sample, pass
+Sex chromosomes are inferred from the depth (or set with `--karyotype`, e.g. `XX`, `XY`, `XXY`, `X0`: one X makes
+chrX haploid, a Y makes chrY haploid, no Y leaves chrY uncalled). For a sample with one X, pass
 `--par-bed` (the `par_regions` genome resource); otherwise the chrX pseudoautosomal regions look like gains.
 
 Filter the calls with `filter_variants_pipeline` and a `cnv` model. Pass the fields in
