@@ -19,8 +19,11 @@ RUN pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
-# Install wheels — C extensions compile here, not in runtime
-RUN pip install ${OUT_DIR}/*.whl
+# Install wheels — C extensions compile here, not in runtime.
+# Build pywfa and pyabpoa (truvari dependencies) without -march=native, so the image runs on
+# hosts without AVX-512 (as in src/cnv/Dockerfile)
+RUN PYWFA_MARCH=x86-64-v3 pip install --no-binary pywfa "pywfa>=0.6.0"
+RUN AVX2=1 pip install ${OUT_DIR}/*.whl
 RUN pip install pytest
 
 # SigProfiler needs numpy>=2 while the ugbio packages pin numpy<2, so it gets its own
