@@ -10,12 +10,12 @@ from ugbio_cnv.estimate_ploidy import (
     _call_aneuploidy,
     _call_whole_genome_ploidy_by_baf,
     _compute_ploidy_from_chr_data,
-    _determine_karyotype,
     _is_position_excluded,
     _is_standard_biallelic_snp,
     _ploidy_from_sites,
     _sample_genome,
     _sex_label_from_karyotype,
+    determine_karyotype,
     estimate_allosomes_from_cram,
     estimate_ploidy_from_coverage,
     estimate_ploidy_from_vcf,
@@ -29,22 +29,27 @@ PLOIDY_RESOURCES = Path(__file__).parent.parent / "resources" / "ploidy"
 
 class TestDetermineKaryotype:
     def test_xx(self):
-        assert _determine_karyotype(1.0, 0.0) == "XX"
+        assert determine_karyotype(1.0, 0.0) == "XX"
 
     def test_xy(self):
-        assert _determine_karyotype(0.5, 0.5) == "XY"
+        assert determine_karyotype(0.5, 0.5) == "XY"
 
     def test_xxy(self):
-        assert _determine_karyotype(1.0, 0.5) == "XXY"
+        assert determine_karyotype(1.0, 0.5) == "XXY"
 
     def test_xyy(self):
-        assert _determine_karyotype(0.5, 1.0) == "XYY"
+        assert determine_karyotype(0.5, 1.0) == "XYY"
 
     def test_x0(self):
-        assert _determine_karyotype(0.5, 0.0) == "X0"
+        assert determine_karyotype(0.5, 0.0) == "X0"
 
     def test_undetermined(self):
-        assert _determine_karyotype(2.0, 2.0) == "UNDETERMINED"
+        assert determine_karyotype(2.0, 2.0) == "UNDETERMINED"
+
+    def test_without_chry_chrx_alone_decides(self):
+        assert determine_karyotype(0.5) == "X"
+        assert determine_karyotype(1.0) == "XX"
+        assert determine_karyotype(1.5) == "UNDETERMINED"
 
 
 class TestSexLabelFromKaryotype:

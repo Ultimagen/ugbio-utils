@@ -19,8 +19,11 @@ from ugbio_cnv.analyze_cnv_breakpoint_reads import (
     analyze_interval_breakpoints,
     check_pair_cnv_consistency,
     check_read_cnv_consistency,
+    create_bam_header,
     get_parser,
     get_supplementary_alignments,
+    junction_svtype,
+    pair_svtype,
 )
 
 
@@ -237,6 +240,37 @@ def test_check_read_cnv_consistency_deletion():
     assert insert_size > 0
 
 
+@pytest.mark.parametrize(
+    ("is_reverse", "mate_is_reverse", "pos", "mate_pos", "tlen", "expected"),
+    [
+        (False, True, 1000, 2000, 1150, "DEL"),  # FR
+        (True, False, 2000, 1000, -1150, "DEL"),  # FR, seen from the right mate
+        (False, True, 1000, 1500, 650, None),  # FR below the span floor
+        (True, False, 1000, 2000, 1150, "DUP"),  # RF
+        (False, True, 2000, 1000, -1150, "DUP"),  # RF, seen from the right mate
+        (False, False, 1000, 2000, 1150, None),  # same strand
+        (True, False, 1000, 1000, 150, None),  # mates not orderable
+    ],
+)
+def test_pair_svtype(is_reverse, mate_is_reverse, pos, mate_pos, tlen, expected):
+    kw = {"is_reverse": is_reverse, "mate_is_reverse": mate_is_reverse, "pos": pos, "mate_pos": mate_pos}
+    assert pair_svtype(**kw, tlen=tlen, min_del_span=800) == expected
+
+
+def test_junction_svtype():
+    assert junction_svtype(1000, 2000) == "DEL"
+    assert junction_svtype(2000, 1000) == "DUP"
+    assert junction_svtype(1000, 1000) is None
+
+
+def test_pair_svtype_duplication_floors():
+    kw = {"is_reverse": True, "mate_is_reverse": False, "pos": 1000}
+    assert pair_svtype(**kw, mate_pos=1040, tlen=190, min_dup_gap=50) is None  # overlapping short fragment
+    assert pair_svtype(**kw, mate_pos=1060, tlen=210, min_dup_gap=50) == "DUP"
+    assert pair_svtype(**kw, mate_pos=1600, tlen=750, min_dup_span=800) is None
+    assert pair_svtype(**kw, mate_pos=1700, tlen=850, min_dup_span=800) == "DUP"
+
+
 def test_analyze_interval_breakpoints(temp_bam_file):
     """Test interval analysis."""
     with pysam.AlignmentFile(temp_bam_file, "rb") as bam:
@@ -307,11 +341,11 @@ def test_analyze_interval_breakpoints_scans_both_breakpoint_windows():
         Path(bam_path + ".bai").unlink(missing_ok=True)
 
 
-def test_collect_fragments_from_region_uses_independent_fetch_iterators(monkeypatch):
-    """Regression test for fetch iterator invalidation between breakpoint windows."""
+def test_collect_fragments_from_region_reads_each_window_before_the_next_fetch(monkeypatch):
+    """Both breakpoint windows count, although a new fetch on the same handle invalidates the previous iterator."""
 
     class FakeAlignmentFile:
-        """Fake alignment file that invalidates prior iterators unless multiple_iterators=True."""
+        """Fake alignment file whose fetch invalidates prior iterators unless multiple_iterators=True."""
 
         def __init__(self, start_reads, end_reads):
             self.start_reads = start_reads
@@ -660,6 +694,7 @@ def test_analyze_cnv_breakpoints_with_bam_output(temp_bam_file, temp_vcf_file, d
             # Collect reads and their read groups
             reads = list(bam_out)
             assert len(reads) == 4  # Four reads: 2 primary + 2 supplementary
+            assert {read.get_tag("RG") for read in reads} <= rg_ids  # every RG written is declared
 
             # Group reads by query_name
             reads_by_name = {}
@@ -1309,8 +1344,8 @@ def test_pair_fields_are_written_for_paired_input(pe_bam_factory, dummy_fasta_fi
 def test_pair_only_support_is_written_under_the_pair_read_group(pe_bam_factory, dummy_fasta_file):
     """Pair-only fragments enter the evidence BAM, but under their own read group, never DUP/DEL.
 
-    breakpoint_refinement selects reads by RG == DUP/DEL and would read breakpoints off the mates'
-    incidental soft clips instead of a real junction.
+    Readers of the evidence BAM that select split reads by RG == DUP/DEL would otherwise read breakpoints off the
+    mates' incidental soft clips instead of a real junction.
     """
     bam_file = pe_bam_factory([_make_pe_mate("frag", PE_LEFT_START), _make_right_mate("frag")])
 
@@ -1381,3 +1416,79 @@ def test_parser_pair_options():
 
     assert args.min_pair_span == 900
     assert args.min_pair_mapping_quality == 30
+
+
+def test_analyze_cnv_breakpoints_threads_match_serial(tmp_path):
+    """Contigs in parallel give the same annotated records, in the input order, and the same evidence reads."""
+    resources_dir = Path(__file__).parent.parent / "resources"
+    bam = str(resources_dir / "duplication.bam")
+    vcf = tmp_path / "calls.vcf"
+    header = (
+        "##fileformat=VCFv4.2\n"
+        + "".join(f"##contig=<ID={c},length=250000000>\n" for c in ("chr1", "chr2", "chr3"))
+        + '##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">\n'
+        + '##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant">\n'
+        + "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+    )
+    # interleaved contigs: the output must keep this order
+    rows = [
+        ("chr2", 122526001, 122537000, "DUP"),
+        ("chr1", 1000001, 1005000, "DEL"),
+        ("chr2", 122530001, 122534000, "DEL"),
+        ("chr3", 2000001, 2003000, "DUP"),
+        ("chr2", 50000001, 50002000, "DEL"),
+    ]
+    vcf.write_text(
+        header
+        + "".join(f"{c}\t{s}\tc{k}\tN\t<{t}>\t.\tPASS\tSVTYPE={t};END={e}\n" for k, (c, s, e, t) in enumerate(rows))
+    )
+    outputs = {}
+    for threads in (1, 3):
+        out_vcf, out_bam = str(tmp_path / f"out{threads}.vcf"), str(tmp_path / f"out{threads}.bam")
+        analyze_cnv_breakpoints(
+            bam_file=bam,
+            vcf_file=str(vcf),
+            reference_fasta=str(resources_dir / "chr19.fasta"),
+            cushion=1000,
+            output_file=out_vcf,
+            output_bam=out_bam,
+            threads=threads,
+        )
+        with pysam.VariantFile(out_vcf) as v:
+            records = [str(r) for r in v]
+        with pysam.AlignmentFile(out_bam) as b:
+            reads = sorted((r.query_name, r.flag, r.reference_name, r.reference_start, r.get_tag("RG")) for r in b)
+        outputs[threads] = (records, reads)
+    assert [r.split("\t")[2] for r in outputs[1][0]] == [f"c{k}" for k in range(len(rows))]
+    assert outputs[3] == outputs[1]
+    assert len(outputs[1][1]) > 0  # the duplication has supporting reads
+
+
+def test_breakpoint_windows_are_read_from_one_handle(temp_bam_file):
+    """Each window is fetched once, without multiple_iterators (which reopens the file and reloads the index)."""
+    calls = []
+
+    class RecordingAlignmentFile:
+        def __init__(self, alignment_file):
+            self.alignment_file = alignment_file
+
+        def fetch(self, chrom, start, end, **kwargs):
+            calls.append((start, end, kwargs.get("multiple_iterators", False)))
+            return self.alignment_file.fetch(chrom, start, end)
+
+    with pysam.AlignmentFile(temp_bam_file, "rb") as bam:
+        evidence = analyze_interval_breakpoints(RecordingAlignmentFile(bam), "chr1", 1000, 2000, 100)
+    assert calls == [(900, 1100, False), (1900, 2100, False)]
+    assert evidence.supporting_reads
+    assert evidence.supplementary_reads  # taken from the same two windows
+
+
+def test_create_bam_header_declares_the_evidence_read_groups():
+    """DUP / DEL (split reads) and PAIR (discordant pairs) are added once; the input's read groups are kept."""
+    reads_header = pysam.AlignmentHeader.from_dict(
+        {"SQ": [{"SN": "chr1", "LN": 1000}], "RG": [{"ID": "orig", "SM": "S1"}, {"ID": "DEL", "SM": "S1"}]}
+    )
+    rg_ids = [rg["ID"] for rg in create_bam_header(reads_header).to_dict()["RG"]]
+    assert sorted(rg_ids) == sorted(["orig", "DEL", "DUP", PAIR_READ_GROUP])
+    no_rg = create_bam_header(pysam.AlignmentHeader.from_dict({"SQ": [{"SN": "chr1", "LN": 1000}]}))
+    assert sorted(rg["ID"] for rg in no_rg.to_dict()["RG"]) == sorted(["DEL", "DUP", PAIR_READ_GROUP])

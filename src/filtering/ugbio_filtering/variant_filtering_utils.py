@@ -66,7 +66,18 @@ def train_model(
     x_train_df = pd.DataFrame(transformer.fit_transform(df_train))
     _validate_data(x_train_df)
     logger.info("Transform: done")
-    if vtype != VcfType.CNV:
+    if vtype == VcfType.CNV:
+        # out-of-bag scores choose the decision threshold (max_f1_decision_threshold in train_models_pipeline)
+        clf = RandomForestClassifier(
+            n_estimators=500,
+            max_depth=5,
+            min_samples_leaf=5,
+            class_weight="balanced",
+            random_state=0,
+            n_jobs=-1,
+            oob_score=True,
+        )
+    else:
         clf = xgboost.XGBClassifier(
             n_estimators=100,
             learning_rate=0.15,
@@ -76,20 +87,41 @@ def train_model(
             colsample_bytree=0.4,
             n_jobs=14,
         )
-    else:
-        clf = RandomForestClassifier(
-            n_estimators=300,
-            max_depth=4,
-            min_samples_split=30,
-            min_samples_leaf=15,
-            max_features="sqrt",
-            random_state=42,
-            n_jobs=-1,
-            class_weight="balanced",
-        )
 
     clf.fit(x_train_df, labels_train)
     return clf, transformer
+
+
+def max_f1_decision_threshold(scores: np.ndarray, labels: np.ndarray) -> int:
+    """
+    FilterVCF decision threshold with the best F1: the integer threshold (24 - 38, i.e. probabilities of about
+    0.20 - 0.88) with the best F1 of (scores, labels), on the score FilterVCF compares it to,
+    30 + 10 log10(p / (1 - p)), with FilterVCF's rule: a call passes when its score is above the threshold.
+    The lowest threshold wins a tie.
+
+    The scores should not be in-sample: e.g. out-of-bag scores of a random forest, or scores of held-out rows.
+
+    Parameters
+    ----------
+    scores : np.ndarray
+        Probability of the true class for each row.
+    labels : np.ndarray
+        Labels (0 / 1) of the same rows.
+
+    Returns
+    -------
+    int
+        Decision threshold for filter_variants_pipeline --decision_threshold.
+    """
+    p = np.asarray(scores, dtype=float)
+    y = np.asarray(labels).astype(bool)
+    quals = np.clip(30 + 10 * np.log10((p + 1e-10) / (1 - p + 1e-10)), 0, None)  # as filter_variants_pipeline
+
+    def f1(t):
+        passed = quals > t
+        return 2 * (y & passed).sum() / max(y.sum() + passed.sum(), 1)
+
+    return int(max(range(24, 39), key=f1))
 
 
 def apply_model(
@@ -180,7 +212,7 @@ def eval_model(
     """
     df = df.copy()  # noqa PD901
     predictions, probs = apply_model(df, model, transformer)
-    phred_pls = -math_utils.phred(probs)
+    phred_pls = -math_utils.phred(probs + 1e-10)  # as FilterVCF: a random forest gives probabilities of exactly 0
     sorted_pls = np.sort(phred_pls, axis=1)
     gqs = sorted_pls[:, -1] - sorted_pls[:, -2]
     quals = phred_pls[:, 1:].max(axis=1) - phred_pls[:, 0]
@@ -209,7 +241,7 @@ def eval_model(
 
     df = df.loc[select]  # noqa PD901
 
-    if vtype == VcfType.CNV:
+    if vtype == VcfType.CNV:  # CNV calls have no indel / hmer groups: report per SV type
         df["group_testing"] = df["svtype"]
         result = evaluate_results(df, pd.Series(list(labels), index=df.index), add_testing_group_column=False)
     else:

@@ -136,18 +136,18 @@ class TestPlotCnvResults:
         assert out_coverage_fig.size() > 0
         assert out_dup_del_fig.size() > 0
 
-    def test_plot_cnv_with_vcf_like_format_cn_tag(self, tmpdir, resources_dir):
-        # Create a temporary CNV calls file with CN= tag only
+    def test_plot_cnv_with_vcf_like_format_cn_mean_tag(self, tmpdir, resources_dir):
+        # CNV calls with the depth caller's CN_MEAN tag only
         del_content = (
-            "chr1\t3000000\t3500000\tSVTYPE=DEL;CN=1;END=3500000\n"
-            "chr2\t4000000\t4500000\tSVTYPE=DEL;CN=0.5;QUAL=30\n"
+            "chr1\t3000000\t3500000\tSVTYPE=DEL;CN_MEAN=1.02;BASE_CN=2;END=3500000\n"
+            "chr2\t4000000\t4500000\tSVTYPE=DEL;CN_MEAN=0.05;BASE_CN=2;FILTER=PASS\n"
         )
 
         del_file = tmpdir.join("test_del.bed")
         del_file.write(del_content)
 
         input_germline_coverage = pjoin(resources_dir, "NA11428.chr1_chr2.ReadCounts.bed")
-        sample_name = "test_cn_tag"
+        sample_name = "test_cn_mean_tag"
         out_dir = str(tmpdir)
 
         plot_cnv_results.run(

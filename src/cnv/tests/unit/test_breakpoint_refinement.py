@@ -1,445 +1,171 @@
-"""
-Unit tests for CNV breakpoint refinement module.
-"""
-
-import shutil
+from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_cnv.analyze_cnv_breakpoint_reads import PAIR_READ_GROUP
-from ugbio_cnv.breakpoint_refinement import (
-    BamRefinementResult,
-    estimate_refined_breakpoints,
-    extract_reads_windowed,
-    refine_cnv_breakpoints_from_vcf,
-    select_best_bam,
-)
+from ugbio_cnv import breakpoint_refinement as bs
 
 
-@pytest.fixture
-def temp_bam_with_rg_tags(tmp_path):
-    """Create synthetic BAM with multiple RG tags per read."""
-    bam_path = tmp_path / "test.bam"
-    header = {
-        "HD": {"VN": "1.0"},
-        "SQ": [{"SN": "chr1", "LN": 10000000}],
-        "RG": [{"ID": "DEL"}, {"ID": "DUP"}],
-    }
+class TestJunctionParsing:
+    def test_read_length_includes_clips(self):
+        assert bs.read_length_from_cigar("20S100M30H") == 150
+        assert bs.read_length_from_cigar("50M5I45M") == 100
 
-    with pysam.AlignmentFile(str(bam_path), "wb", header=header) as bam:
-        # Create read with RG=DEL and SA tag
-        read1 = pysam.AlignedSegment()
-        read1.query_name = "read001"
-        read1.reference_id = 0
-        read1.reference_start = 999900  # Near start boundary (1000000)
-        read1.query_sequence = "A" * 100
-        read1.cigarstring = "50S50M"
-        read1.set_tag("RG", "DEL")
-        read1.set_tag("SA", "chr1,999950,+,50M50S,60,0;")
-        bam.write(read1)
+    def test_piece_forward_and_reverse(self):
+        # 100M50S on + strand: query 0-100, reference 1000-1100
+        assert bs.alignment_piece(1000, "+", "100M50S", 150) == (0, 100, 1000, 1100)
+        # same alignment on - strand: in read orientation the aligned part is the last 100 bases
+        assert bs.alignment_piece(1000, "-", "100M50S", 150) == (50, 150, 1000, 1100)
 
-        # Same read name but RG=DUP (should be tracked separately)
-        read2 = pysam.AlignedSegment()
-        read2.query_name = "read001"
-        read2.reference_id = 0
-        read2.reference_start = 999900
-        read2.query_sequence = "A" * 100
-        read2.cigarstring = "50S50M"
-        read2.set_tag("RG", "DUP")
-        read2.set_tag("SA", "chr1,999960,+,50M50S,60,0;")
-        bam.write(read2)
+    def test_deletion_junction_forward(self):
+        # read: first 100 bases end at 10100, last 50 bases start at 15000 -> deletion 10100-15000
+        js = bs.split_read_junctions("chr1", 10000, "100M50S", "chr1,15001,+,100S50M,60,0;", is_reverse=False)
+        assert js == [(10100, 15000, "DEL")]
 
-        # Additional DEL reads for median calculation
-        for i in range(2, 5):
-            read = pysam.AlignedSegment()
-            read.query_name = f"read{i:03d}"
-            read.reference_id = 0
-            read.reference_start = 999900 + i * 10
-            read.query_sequence = "A" * 100
-            read.cigarstring = "50M50S"
-            read.set_tag("RG", "DEL")
-            read.set_tag("SA", f"chr1,{999950 + i * 5},+,50S50M,60,0;")
-            bam.write(read)
+    def test_deletion_junction_reverse_strand(self):
+        # on the minus strand the read runs right to left: the primary piece (end of the read) is on the right
+        js = bs.split_read_junctions("chr1", 15000, "100S50M", "chr1,10001,-,100M50S,60,0;", is_reverse=True)
+        assert js == [(10100, 15000, "DEL")]
 
-        # Right window reads
-        for i in range(5, 8):
-            read = pysam.AlignedSegment()
-            read.query_name = f"read{i:03d}"
-            read.reference_id = 0
-            read.reference_start = 1002900 + i * 10
-            read.query_sequence = "A" * 100
-            read.cigarstring = "50M50S"
-            read.set_tag("RG", "DEL")
-            read.set_tag("SA", f"chr1,{1003050 + i * 5},+,50S50M,60,0;")
-            bam.write(read)
+    def test_tandem_duplication_junction(self):
+        # read start maps to the duplication end (20100), its continuation maps back to the duplication start (12000)
+        js = bs.split_read_junctions("chr1", 20000, "100M50S", "chr1,12001,+,100S50M,60,0;", is_reverse=False)
+        assert js == [(12000, 20100, "DUP")]
 
-    pysam.index(str(bam_path))
-    return bam_path
+    def test_microhomology_is_left_normalized(self):
+        # 3 bases aligned in both pieces: read 0-100 -> 10000-10100 and read 97-150 -> 15000-15053;
+        # the shared bases go to the second piece: deletion 10097-15000 (the left-normalized VCF position)
+        js = bs.split_read_junctions("chr1", 10000, "100M50S", "chr1,15001,+,97S53M,60,0;", is_reverse=False)
+        assert js == [(10097, 15000, "DEL")]
+        # the same read on the minus strand
+        js = bs.split_read_junctions("chr1", 14999, "97S53M", "chr1,10001,-,100M50S,60,0;", is_reverse=True)
+        assert js == [(10097, 14999, "DEL")]  # left piece 10000-10100, right piece from 14999, 3 bases shared
+        # tandem duplication: the end of the duplicated segment moves left by the overlap
+        js = bs.split_read_junctions("chr1", 20000, "100M50S", "chr1,12001,+,97S53M,60,0;", is_reverse=False)
+        assert js == [(12000, 20097, "DUP")]
+
+    def test_inserted_bases_at_the_junction_keep_the_breakpoints(self):
+        # 5 read bases in neither piece (an insertion at the junction): no overlap, breakpoints unchanged
+        js = bs.split_read_junctions("chr1", 10000, "100M55S", "chr1,15001,+,105S50M,60,0;", is_reverse=False)
+        assert js == [(10100, 15000, "DEL")]
+
+    def test_other_chromosome_strand_or_low_mapq_ignored(self):
+        assert bs.split_read_junctions("chr1", 10000, "100M50S", "chr2,15001,+,100S50M,60,0;", is_reverse=False) == []
+        assert bs.split_read_junctions("chr1", 10000, "100M50S", "chr1,15001,-,100S50M,60,0;", is_reverse=False) == []
+        assert bs.split_read_junctions("chr1", 10000, "100M50S", "chr1,15001,+,100S50M,0,0;", is_reverse=False) == []
 
 
-@pytest.fixture
-def temp_vcf_with_cipos(tmp_path):
-    """Create VCF with CNVs and CIPOS fields."""
-    vcf_path = tmp_path / "input.vcf"
+class TestBestCluster:
+    def test_median_of_largest_group(self):
+        js = [(10100, 15000), (10102, 15003), (10098, 14999), (30000, 36000)]
+        assert bs.best_junction_cluster(js, 10000, 15000, bs.RefineParams()) == (10100, 15000, 3)
+
+    def test_needs_two_reads(self):
+        assert bs.best_junction_cluster([(10100, 15000)], 10000, 15000, bs.RefineParams()) is None
+
+    @pytest.mark.parametrize(("call_len", "expected"), [(2000, (1000, 1600, 2)), (20000, None)])
+    def test_large_calls_need_large_junctions(self, call_len, expected):
+        # a 600 bp junction may refine a 2 kb call but must not shrink a 20 kb call (edges within the shift limit)
+        js = [(1000, 1600), (1001, 1600)]
+        p = bs.RefineParams(max_edge_shift=call_len)
+        assert bs.best_junction_cluster(js, 500, 500 + call_len, p) == expected
+
+    def test_small_indels_ignored(self):
+        assert bs.best_junction_cluster([(1000, 1050), (1000, 1050)], 1000, 2000, bs.RefineParams()) is None
+
+    def test_no_refinement_below_the_minimum_length(self):
+        # a 1.2 kb call with a 300 bp junction near its edges keeps its breakpoints: refined calls stay >= 500 bp
+        js = [(1100, 1400), (1101, 1400), (1099, 1401)]
+        assert bs.best_junction_cluster(js, 1000, 2200, bs.RefineParams()) is None
+        assert bs.best_junction_cluster(js, 1000, 2200, bs.RefineParams(min_len=200)) == (1100, 1400, 3)
+
+    def test_junction_away_from_the_call_edges_ignored(self):
+        # a 1.2 kb call; the reads near its end point to another deletion that starts 400 bp after it and ends 4 kb
+        # after it: the call is not moved onto that event
+        js = [(12400, 16100), (12405, 16100), (12398, 16102)]
+        assert bs.best_junction_cluster(js, 10800, 12000, bs.RefineParams()) is None
+        # with both junction ends near the call's edges, the call is refined
+        js = [(10900, 12100), (10902, 12100)]
+        assert bs.best_junction_cluster(js, 10800, 12000, bs.RefineParams()) == (10901, 12100, 2)
+
+
+def _write_pairs_bam(path, pairs, chrom_len=20000):
+    """BAM of FR pairs: each (start, mate_start) is a forward 100 bp read and its reverse mate."""
+    header = {"HD": {"VN": "1.6", "SO": "coordinate"}, "SQ": [{"SN": "chr1", "LN": chrom_len}]}
+    reads = []
+    for i, (s, m) in enumerate(pairs):
+        for pos, mate, rev in ((s, m, False), (m, s, True)):
+            r = pysam.AlignedSegment()
+            r.query_name, r.reference_id, r.reference_start = f"pair{i}", 0, pos
+            r.query_sequence, r.query_qualities = "A" * 100, pysam.qualitystring_to_array("I" * 100)
+            r.cigartuples, r.mapping_quality = [(0, 100)], 60
+            r.flag = 1 | 2 | (16 if rev else 32) | (128 if rev else 64)
+            r.next_reference_id, r.next_reference_start = 0, mate
+            r.template_length = (mate + 100 - pos) if not rev else -(pos + 100 - mate)
+            reads.append(r)
+    with pysam.AlignmentFile(path, "wb", header=header) as out:
+        for r in sorted(reads, key=lambda x: x.reference_start):
+            out.write(r)
+    pysam.index(path)
+    return path
+
+
+def _write_calls_vcf(path, calls):
     header = pysam.VariantHeader()
-    header.add_line('##INFO=<ID=CIPOS,Number=2,Type=Integer,Description="CIPOS">')
-    header.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type">')
-    header.add_line('##INFO=<ID=END,Number=1,Type=Integer,Description="End">')
-    header.contigs.add("chr1", length=10000000)
-
-    with pysam.VariantFile(str(vcf_path), "w", header=header) as vcf:
-        record = vcf.new_record()
-        record.chrom = "chr1"
-        record.pos = 1000000
-        record.stop = 1003000
-        record.info["CIPOS"] = (-500, 500)
-        record.info["SVTYPE"] = "DEL"
-        vcf.write(record)
-
-    return vcf_path
-
-
-def test_extract_reads_windowed_rg_filtering(temp_bam_with_rg_tags):
-    """Test RG filtering extracts only matching reads."""
-    per_bam_reads = extract_reads_windowed(
-        bam_files=[str(temp_bam_with_rg_tags)],
-        cnv_chrom="chr1",
-        cnv_start=1000000,
-        cnv_end=1003000,
-        cnv_type="DEL",
-        cushion=2500,
-    )
-
-    # Should have single BAM entry
-    assert len(per_bam_reads) == 1
-    assert 0 in per_bam_reads
-
-    left, right = per_bam_reads[0]
-
-    # Should have 4 DEL reads in left window (read001 with RG=DEL + read002-004)
-    assert len(left) == 4
-    assert all(read.get_tag("RG") == "DEL" for read in left)
-
-    # Should have 3 DEL reads in right window
-    assert len(right) == 3
-    assert all(read.get_tag("RG") == "DEL" for read in right)
-
-
-def test_extract_reads_windowed_multi_bam(temp_bam_with_rg_tags, tmp_path):
-    """Test separates reads by BAM file."""
-    # Copy BAM to create second file
-    bam2_path = tmp_path / "test2.bam"
-
-    shutil.copy(temp_bam_with_rg_tags, bam2_path)
-    pysam.index(str(bam2_path))
-
-    per_bam_reads = extract_reads_windowed(
-        bam_files=[str(temp_bam_with_rg_tags), str(bam2_path)],
-        cnv_chrom="chr1",
-        cnv_start=1000000,
-        cnv_end=1003000,
-        cnv_type="DEL",
-        cushion=2500,
-    )
-
-    # Should have 2 BAM entries
-    assert len(per_bam_reads) == 2
-    assert 0 in per_bam_reads and 1 in per_bam_reads
-
-    left0, right0 = per_bam_reads[0]
-    left1, right1 = per_bam_reads[1]
-
-    # Each BAM should have same reads (identical files)
-    assert len(left0) == 4
-    assert len(left1) == 4
-    assert len(right0) == 3
-    assert len(right1) == 3
-
-
-def _write_discordant_pair_bam(bam_path, read_group):
-    """Write both mates of one discordant DEL pair, each with an incidental soft clip, under `read_group`."""
-    header = {
-        "HD": {"VN": "1.0"},
-        "SQ": [{"SN": "chr1", "LN": 10000000}],
-        "RG": [{"ID": "DEL"}, {"ID": "DUP"}, {"ID": PAIR_READ_GROUP}],
-    }
-    with pysam.AlignmentFile(str(bam_path), "wb", header=header) as bam:
-        for is_read1, start, cigar in ((True, 999900, "90M10S"), (False, 1002950, "10S90M")):
-            read = pysam.AlignedSegment()
-            read.query_name = "pair001"
-            read.reference_id = 0
-            read.reference_start = start
-            read.query_sequence = "A" * 100
-            read.cigarstring = cigar
-            read.is_paired = True
-            read.is_read1 = is_read1
-            read.is_read2 = not is_read1
-            read.set_tag("RG", read_group)
-            bam.write(read)
-    pysam.index(str(bam_path))
-
-
-def test_extract_reads_windowed_ignores_the_pair_read_group(tmp_path):
-    """Discordant pair mates written under PAIR never reach DEL breakpoint refinement.
-
-    Under RG=DEL the same two mates would be selected in both windows and, having different flags,
-    matched by match_reads - so their incidental soft clips would be read as breakpoints.
-    """
-    windows = {"cnv_chrom": "chr1", "cnv_start": 1000000, "cnv_end": 1003000, "cnv_type": "DEL", "cushion": 2500}
-
-    as_del = tmp_path / "as_del.bam"
-    _write_discordant_pair_bam(as_del, "DEL")
-    left, right = extract_reads_windowed(bam_files=[str(as_del)], **windows)[0]
-    assert len(left) == 1
-    assert len(right) == 1
-
-    as_pair = tmp_path / "as_pair.bam"
-    _write_discordant_pair_bam(as_pair, PAIR_READ_GROUP)
-    assert extract_reads_windowed(bam_files=[str(as_pair)], **windows)[0] == ([], [])
-
-
-def test_estimate_refined_breakpoints_median_calculation():
-    """Test median and max deviation calculation from soft-clipped reads."""
-    # Create mock reads with soft clips at known positions
-    # Left breakpoint reads: soft clip at start, positions [999950, 999955, 999960, 999965]
-    # median=999957.5 → 999958
-    reads_left = []
-    for pos in [999950, 999955, 999960, 999965]:
-        read = pysam.AlignedSegment()
-        read.query_name = f"read_{pos}"
-        read.reference_start = pos - 1  # Convert 1-based to 0-based
-        read.cigartuples = [(4, 50), (0, 100)]  # 50S100M - left soft clip
-        reads_left.append(read)
-
-    # Right breakpoint reads: soft clip at end, positions [1003050, 1003055, 1003060, 1003065]
-    # median=1003057.5 → 1003058
-    reads_right = []
-    for pos in [1003050, 1003055, 1003060, 1003065]:
-        read = pysam.AlignedSegment()
-        read.query_name = f"read_{pos}"
-        read.reference_start = pos - 100  # Start 100bp before the breakpoint
-        read.cigartuples = [(0, 100), (4, 50)]  # 100M50S - right soft clip
-        # reference_end will be reference_start + 100 = pos
-        reads_right.append(read)
-
-    result = estimate_refined_breakpoints(
-        left_reads=reads_left,
-        right_reads=reads_right,
-        original_cipos=(-500, 501),  # Interval size: 1000
-    )
-
-    assert result is not None
-    refined_start, refined_end, refined_cipos = result
-
-    # Check medians
-    assert refined_start == 999958  # median of [999950, 999955, 999960, 999965]
-    assert refined_end == 1003058  # median of [1003050, 1003055, 1003060, 1003065]
-
-    # Max deviation from median: max(|999950-999958|, |999965-999958|) = 8
-    # CIPOS should be (-8, 8) → interval size: 16
-    assert refined_cipos == (-8, 9)
-
-
-def test_estimate_refined_breakpoints_no_improvement():
-    """Test returns None when refined CIPOS not tighter."""
-    # Create reads with wide spread - refined interval won't be tighter
-    reads_left = []
-    for pos in [999000, 999500, 1000000, 1000500]:  # Wide spread
-        read = pysam.AlignedSegment()
-        read.reference_start = pos - 1  # Convert 1-based to 0-based
-        read.cigartuples = [(4, 50), (0, 100)]  # 50S100M - left soft clip
-        reads_left.append(read)
-
-    reads_right = []
-    for pos in [1003000, 1003500, 1004000, 1004500]:  # Wide spread
-        read = pysam.AlignedSegment()
-        read.reference_start = pos - 100  # Start 100bp before the breakpoint
-        read.cigartuples = [(0, 100), (4, 50)]  # 100M50S - right soft clip
-        reads_right.append(read)
-
-    result = estimate_refined_breakpoints(reads_left, reads_right, original_cipos=(-100, 101))
-
-    # Should return None because refined interval (±750) > original interval (200)
-    assert result is None
-
-
-def test_estimate_refined_breakpoints_insufficient_reads():
-    """Test returns None with <3 reads per breakpoint."""
-    # Only 2 reads for left breakpoint (less than MIN_READS_PER_BREAKPOINT=3)
-    reads_left = []
-    for i in range(2):
-        read = pysam.AlignedSegment()
-        pos = 1000000 + i * 10
-        read.reference_start = pos - 1  # Convert 1-based to 0-based
-        read.cigartuples = [(4, 50), (0, 100)]  # 50S100M - left soft clip
-        reads_left.append(read)
-
-    # 4 reads for right breakpoint (enough)
-    reads_right = []
-    for i in range(4):
-        read = pysam.AlignedSegment()
-        pos = 1003000 + i * 10
-        read.reference_start = pos - 100
-        read.cigartuples = [(0, 100), (4, 50)]  # 100M50S - right soft clip
-        reads_right.append(read)
-
-    result = estimate_refined_breakpoints(reads_left, reads_right, (-500, 500))
-
-    # Should return None because left has <3 reads
-    assert result is None
-
-
-def test_refine_cnv_breakpoints_from_vcf(temp_vcf_with_cipos, temp_bam_with_rg_tags, tmp_path):
-    """Test end-to-end VCF refinement."""
-    output_vcf = tmp_path / "output.vcf"
-
-    refine_cnv_breakpoints_from_vcf(
-        input_vcf=str(temp_vcf_with_cipos),
-        bam_files=[str(temp_bam_with_rg_tags)],
-        output_vcf=str(output_vcf),
-        cushion=2500,
-    )
-
-    # Verify output VCF exists and has records
-    vcf_out = pysam.VariantFile(str(output_vcf))
-    records = list(vcf_out)
-    assert len(records) == 1
-
-    record = records[0]
-    # Should have CIPOS field (either original or refined)
-    assert "CIPOS" in record.info
-
-
-def test_refine_cnv_breakpoints_from_vcf_missing_cipos(tmp_path):
-    """Test raises ValueError when CIPOS missing."""
-    # Create VCF without CIPOS
-    vcf_path = tmp_path / "no_cipos.vcf"
-    header = pysam.VariantHeader()
-    header.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type">')
-    header.contigs.add("chr1", length=10000000)
-
-    with pysam.VariantFile(str(vcf_path), "w", header=header) as vcf:
-        record = vcf.new_record()
-        record.chrom = "chr1"
-        record.pos = 1000000
-        record.stop = 1003000
-        record.info["SVTYPE"] = "DEL"
-        vcf.write(record)
-
-    output_vcf = tmp_path / "output.vcf"
-
-    with pytest.raises(ValueError, match="missing CIPOS field"):
-        refine_cnv_breakpoints_from_vcf(
-            input_vcf=str(vcf_path),
-            bam_files=[],
-            output_vcf=str(output_vcf),
-        )
-
-
-def test_refine_cnv_breakpoints_from_vcf_sv_vcf_not_implemented(temp_vcf_with_cipos, tmp_path):
-    """Test raises NotImplementedError when sv_vcf provided."""
-    output_vcf = tmp_path / "output.vcf"
-
-    with pytest.raises(NotImplementedError, match="SV VCF integration not yet implemented"):
-        refine_cnv_breakpoints_from_vcf(
-            input_vcf=str(temp_vcf_with_cipos),
-            bam_files=[],
-            output_vcf=str(output_vcf),
-            sv_vcf="sv_calls.vcf",
-        )
-
-
-def test_select_best_bam_smallest_ci():
-    """Test select_best_bam chooses BAM with smallest CI."""
-
-    results = [
-        BamRefinementResult(
-            bam_index=0,
-            bam_path="bam0.bam",
-            read_count=5,
-            refined_start=1000000,
-            refined_end=1003000,
-            refined_cipos=(-20, 21),
-            ci_size=40,
-        ),
-        BamRefinementResult(
-            bam_index=1,
-            bam_path="bam1.bam",
-            read_count=8,
-            refined_start=1000010,
-            refined_end=1003010,
-            refined_cipos=(-10, 11),
-            ci_size=20,  # SMALLEST
-        ),
-        BamRefinementResult(
-            bam_index=2,
-            bam_path="bam2.bam",
-            read_count=4,
-            refined_start=1000005,
-            refined_end=1003005,
-            refined_cipos=(-30, 31),
-            ci_size=60,
-        ),
-    ]
-
-    best = select_best_bam(results)
-    assert best is not None
-    assert best.bam_index == 1
-    assert best.ci_size == 20
-
-
-def test_select_best_bam_read_count_threshold():
-    """Test filters by MIN_READS_PER_BREAKPOINT threshold."""
-
-    results = [
-        BamRefinementResult(
-            bam_index=0,
-            bam_path="bam0.bam",
-            read_count=2,  # Below threshold
-            refined_start=1000000,
-            refined_end=1003000,
-            refined_cipos=(-5, 6),
-            ci_size=10,  # Smallest CI but insufficient reads
-        ),
-        BamRefinementResult(
-            bam_index=1,
-            bam_path="bam1.bam",
-            read_count=5,
-            refined_start=1000010,
-            refined_end=1003010,
-            refined_cipos=(-15, 16),
-            ci_size=30,
-        ),
-    ]
-
-    best = select_best_bam(results)
-    assert best is not None
-    assert best.bam_index == 1  # BAM0 excluded despite smaller CI
-
-
-def test_select_best_bam_no_qualifying_bams():
-    """Test returns None when no BAMs have enough reads."""
-
-    results = [
-        BamRefinementResult(
-            bam_index=0,
-            bam_path="bam0.bam",
-            read_count=1,
-            refined_start=1000000,
-            refined_end=1003000,
-            refined_cipos=(-5, 6),
-            ci_size=10,
-        ),
-        BamRefinementResult(
-            bam_index=1,
-            bam_path="bam1.bam",
-            read_count=2,
-            refined_start=1000010,
-            refined_end=1003010,
-            refined_cipos=(-10, 11),
-            ci_size=20,
-        ),
-    ]
-
-    best = select_best_bam(results)
-    assert best is None
+    header.add_line("##contig=<ID=chr1,length=20000>")
+    header.info.add("SVTYPE", 1, "String", "type")
+    header.info.add("SVLEN", 1, "Integer", "length")
+    header.info.add("END", 1, "Integer", "end")
+    header.info.add("CIPOS", 2, "Integer", "confidence interval around POS")  # as in the depth calls
+    with pysam.VariantFile(path, "wz", header=header) as out:
+        for i, (s, e, t) in enumerate(calls):
+            rec = header.new_record(contig="chr1", start=s, stop=e, id=f"call{i}", alleles=("N", f"<{t}>"))
+            rec.info["SVTYPE"], rec.info["SVLEN"] = t, e - s
+            out.write(rec)
+    pysam.tabix_index(path, preset="vcf", force=True)
+    return path
+
+
+class TestPairBounds:
+    """Deletion edges from FR pairs spanning the call (no split reads)."""
+
+    def test_bounds_are_the_innermost_read_ends(self, tmp_path):
+        bam = _write_pairs_bam(str(tmp_path / "p.bam"), [(800, 2100), (850, 2050), (900, 2000)])
+        with pysam.AlignmentFile(bam) as aln:
+            left, right, n = bs.pair_bounds(aln, "chr1", 950, 2200, bs.RefineParams())
+        assert n == 3  # noqa: PLR2004
+        assert 950 <= left <= 1000 and 2000 <= right <= 2100  # 90th / 10th percentile of the read ends
+
+    def test_one_pair_is_not_enough(self, tmp_path):
+        bam = _write_pairs_bam(str(tmp_path / "p.bam"), [(900, 2000)])
+        with pysam.AlignmentFile(bam) as aln:
+            assert bs.pair_bounds(aln, "chr1", 950, 2200, bs.RefineParams()) is None
+
+    def test_deletion_without_split_reads_is_shrunk_by_the_pairs(self, tmp_path):
+        bam = _write_pairs_bam(str(tmp_path / "p.bam"), [(800, 2100), (850, 2050), (900, 2000)])
+        vcf = _write_calls_vcf(str(tmp_path / "calls.vcf.gz"), [(500, 2500, "DEL"), (500, 2500, "DUP")])
+        out = str(tmp_path / "refined.vcf.gz")
+        bs.refine_cnv_breakpoints(vcf, bam, None, out, threads=1)
+        with pysam.VariantFile(out) as v:
+            recs = {r.info["SVTYPE"]: r for r in v}
+        d = recs["DEL"]
+        assert d.info["BREAKPOINT_SOURCE"] == "pair" and d.info["BREAKPOINT_SUPPORT"] == 3  # noqa: PLR2004
+        assert (d.info["DEPTH_START"], d.info["DEPTH_END"]) == (501, 2500)  # the depth edges are kept
+        assert 950 <= d.start <= 1000 and 2000 <= d.stop <= 2100
+        assert recs["DUP"].info["BREAKPOINT_SOURCE"] == "depth" and (recs["DUP"].start, recs["DUP"].stop) == (500, 2500)
+
+    def test_input_without_index_is_left_untouched(self, tmp_path):
+        # a plain-text VCF with no index: it is refined from an indexed copy, and the caller's file stays as it was
+        bam = _write_pairs_bam(str(tmp_path / "p.bam"), [(800, 2100), (850, 2050), (900, 2000)])
+        gz = _write_calls_vcf(str(tmp_path / "calls.vcf.gz"), [(500, 2500, "DEL")])
+        plain = str(tmp_path / "plain.vcf")
+        with pysam.VariantFile(gz) as v, pysam.VariantFile(plain, "w", header=v.header) as o:
+            for r in v:
+                o.write(r)
+        before = Path(plain).read_text()
+        out = str(tmp_path / "refined.vcf.gz")
+        bs.refine_cnv_breakpoints(plain, bam, None, out, threads=1)
+        after = Path(plain).read_text()
+        assert after == before
+        assert not (tmp_path / "plain.vcf.gz").exists() and not (tmp_path / "plain.vcf.gz.tbi").exists()
+        with pysam.VariantFile(out) as v:
+            assert [r.info["BREAKPOINT_SOURCE"] for r in v] == ["pair"]
