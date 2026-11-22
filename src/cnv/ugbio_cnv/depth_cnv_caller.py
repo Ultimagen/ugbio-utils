@@ -112,7 +112,8 @@ class Params:
     min_sex_bins: int = 1000  # clean chrX / chrY bins needed to infer the sex chromosome copy numbers
 
 
-# VCF header keys carrying the sex chromosome setup from call_depth_cnvs to split_read_cnv_candidates
+# VCF header keys carrying the sex chromosome setup from call_depth_cnvs to the candidate steps (split-read, pair,
+# cn.mops)
 HAPLOID_HEADER_KEY = "depth_cnv_haploid_contigs"
 SKIPPED_HEADER_KEY = "depth_cnv_skipped_contigs"
 KARYOTYPE_HEADER_KEY = "depth_cnv_karyotype"

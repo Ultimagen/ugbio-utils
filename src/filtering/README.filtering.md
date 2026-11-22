@@ -42,7 +42,7 @@ filter_variants_pipeline \
 - `--input_file`: Input VCF file (requires .tbi index)
 - `--output_file`: Output VCF file with filtering annotations
 - `--model_file`: Pickle file containing trained XGBoost model and transformer
-- `--decision_threshold`: Score threshold for filtering variants (default: 30)
+- `--decision_threshold`: Score threshold for filtering variants (default: the threshold stored with the model, else 30)
 - `--treat_multiallelics`: Apply special handling for multiallelic sites
 - `--recalibrate_genotype`: Allow model to re-call genotypes
 
@@ -98,6 +98,8 @@ train_models_pipeline \
 - `--gt_type`: Ground truth type - "exact" or "approximate" (default: exact)
 - `--vcf_type`: VCF type - "single_sample", "deep_variant", or "cnv" (depth CNV caller; default: single_sample)
 - `--custom_annotations`: Additional INFO annotations to include in training
+- `--decision_threshold`: cnv only; FilterVCF threshold stored with the model (default: the out-of-bag score with the
+  best F1)
 
 #### `training_prep_pipeline`
 

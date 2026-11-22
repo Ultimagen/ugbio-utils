@@ -8,8 +8,9 @@ split_read_cnv_candidates:
      (breakpoint_refinement.split_read_junctions).
   2. Junctions are clustered (position +-100 bp, size +-10%); clusters with >= 2 reads and 500 bp - 1 Mb are kept,
      and clusters with >= 50% reciprocal overlap are collapsed to the one with most reads.
-  3. Each cluster is scored with depth (all reads, 100 bp): mean inside vs median of the 5 kb flanks. Candidates
-     without a depth change in the right direction (DEL ratio < 0.85, DUP > 1.15) are dropped.
+  3. Each cluster is scored with depth (all reads, 100 bp): mean inside vs median of the 5 kb flanks, over the
+     callable bins only (no N, GC in range). Candidates overlapping an assembly gap, and those without a depth change
+     in the right direction (DEL ratio < 0.85, DUP > 1.15), are dropped.
   4. Candidates with >= 50% reciprocal overlap with a same-type depth call are dropped (already called); the rest are
      added to the depth calls with CNV_SOURCE=split_read.
 """

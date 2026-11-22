@@ -85,7 +85,7 @@ def label_calls(call_vcf: str, truth_vcf: str, benchmark_bed: str, workdir: str,
     Returns
     -------
     pd.DataFrame
-        chrom, pos and label (1 matched, 0 unmatched).
+        chrom, pos, id and label (1 matched, 0 unmatched).
     """
     selected = os.path.join(workdir, "calls.selected.vcf.gz")
     allpass = os.path.join(workdir, "calls.allpass.vcf.gz")  # no FILTER, so truvari scores every call

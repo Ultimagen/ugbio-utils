@@ -21,7 +21,7 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
         "CNV_ID",
         ".",
         "String",
-        "IDs of CNV calls that were replaced by this SV call during merge",
+        "IDs of the calls merged into this call (CNV collapse or CNV / SV merge)",
         "INFO",
     ),
     "CNMOPS_SAMPLE_MEAN": (
@@ -112,7 +112,7 @@ FILTER_TAG_REGISTRY = {
     ),
 }
 
-# INFO tags written by the depth CNV caller (depth_cnv_caller, split_read_candidates, breakpoint_refinement).
+# INFO tags written by the depth CNV caller (depth_cnv_caller, the candidate steps, breakpoint_refinement).
 # Kept apart from INFO_TAG_REGISTRY, whose tags are added to every CNV VCF header (cn.mops, FREEC).
 CNV_INFO_TAGS: dict[str, tuple[str, int | str, str, str, str]] = {
     "END": ("END", 1, "Integer", "End position of the variant", "INFO"),

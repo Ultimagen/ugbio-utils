@@ -51,7 +51,7 @@ class BreakpointEvidence:
     dup_insert_sizes: list[int] = field(default_factory=list)
     del_insert_sizes: list[int] = field(default_factory=list)
     supporting_reads: list[tuple[pysam.AlignedSegment, str]] = field(default_factory=list)
-    supplementary_reads: dict[tuple[str, int], list[pysam.AlignedSegment]] = field(default_factory=dict)
+    supplementary_reads: dict[tuple[str, bool], list[pysam.AlignedSegment]] = field(default_factory=dict)
     # Discordant read pair evidence
     duplication_pairs: int = 0
     deletion_pairs: int = 0

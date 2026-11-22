@@ -29,7 +29,8 @@ def cnmops_cnv_candidates(
     """
     Add the cn.mops calls of cnmops_vcf that input_vcf does not have (>= min_overlap reciprocal, same type) as
     CNV_SOURCE=cn.mops candidates; returns the number added. Every DEL / DUP >= min_len is taken whatever its FILTER;
-    calls on sex chromosomes the depth caller does not call, and calls without depth flanks, are skipped.
+    calls on sex chromosomes the depth caller does not call, calls without depth flanks and calls overlapping an
+    assembly gap are skipped.
     """
     p = params or CandidateParams()
     sex = read_sex_chromosomes(input_vcf)

@@ -149,7 +149,7 @@ cnmops_cnv_candidates --input-vcf sample.pair_cand.vcf.gz --cnmops-vcf sample.cn
 analyze_cnv_breakpoint_reads --bam-file sample.cram --vcf-file sample.cnmops_cand.vcf.gz \
   --reference-fasta ref.fasta --cushion 1500 --output-file sample.ann.vcf.gz --output-bam sample.evidence.bam
 
-# moves the breakpoints to split-read junctions
+# moves the breakpoints to split-read junctions, or shrinks deletions to the discordant-pair interval
 refine_cnv_breakpoints --input-vcf sample.ann.vcf.gz --alignment sample.cram --reference-fasta ref.fasta \
   --output-vcf sample.refined.vcf.gz
 
@@ -161,8 +161,8 @@ Sex chromosomes are inferred from the depth (or set with `--sex male|female`). F
 `--par-bed` (the `par_regions` genome resource); otherwise the chrX pseudoautosomal regions look like gains.
 
 Filter the calls with `filter_variants_pipeline` and a `cnv` model. Pass the fields in
-`ugbio_filtering.transformers.CNV_INFO_FIELDS` as `--custom_annotations`, and use `--overwrite_qual_tag` and the
-model's threshold (`--decision_threshold 28` for `cnv_filtering_model_v2.0.0.pkl`; the default is 30).
+`ugbio_filtering.transformers.CNV_INFO_FIELDS` as `--custom_annotations` and use `--overwrite_qual_tag`. Without
+`--decision_threshold`, the threshold stored with the model is used (28 for `cnv_filtering_model_v2.0.0.pkl`), else 30.
 
 Then merge overlapping PASS calls of the same type into one call (DEL and DUP are never merged, so a position has at
 most two PASS calls). A non-PASS call at least half inside a PASS call of either type is dropped; the other non-PASS
