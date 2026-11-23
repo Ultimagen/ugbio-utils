@@ -121,8 +121,8 @@ build_depth_annotation --reference-fasta ref.fasta --output ref.depth_annotation
   --bed lowmap=GRCh38_lowmappabilityall.bed.gz segdup=GRCh38_segdups.bed.gz
 
 # depth in 100 bp bins, all reads and MAPQ >= 20
-mosdepth -n -x -b 100 -f ref.fasta -Q 0 sample.q0 sample.cram
-mosdepth -n -x -b 100 -f ref.fasta -Q 20 sample.q20 sample.cram
+mosdepth -n -b 100 -f ref.fasta -Q 0 sample.q0 sample.cram
+mosdepth -n -b 100 -f ref.fasta -Q 20 sample.q20 sample.cram
 
 # depth calls: GC correction, weighted change-point segmentation, one call per event
 call_depth_cnvs --depth-mq0 sample.q0.regions.bed.gz --depth-mq20 sample.q20.regions.bed.gz \
