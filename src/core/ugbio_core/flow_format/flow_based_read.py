@@ -126,6 +126,59 @@ def generate_key_from_sequence(
     return np.array(key)
 
 
+def decode_tp_tag(sam_record: pysam.AlignedSegment) -> np.ndarray:
+    """Decode the tp tag of a record to a dense per-base int array (values -1, 0, +1).
+
+    Supports the old format (tp:B:c, one value per base) and the new sparse format
+    (tp:Z holding only '+'/'-', zeros implied for bases whose QUAL equals the ``mq``
+    declared on the read's @RG header line; absent tag means all zeros).
+
+    Raises
+    ------
+    ValueError
+        If the sparse tp is malformed, has a length mismatch with the QUAL, or mq is missing.
+    """
+    tp = sam_record.get_tag("tp") if sam_record.has_tag("tp") else None
+    if tp is not None and not isinstance(tp, str):
+        return np.array(tp, dtype=int)  # old tp:B:c format
+
+    quals = sam_record.query_qualities
+    n = len(quals) if quals is not None else 0
+    mq = _get_read_group_mq(sam_record)
+    if mq is None:
+        raise ValueError(f"{sam_record.query_name}: sparse/missing tp requires @RG mq, which was not found")
+    if len(mq) != 1:
+        raise ValueError(f"{sam_record.query_name}: invalid @RG mq '{mq}'")
+    mq_val = ord(mq) - 33
+    tp = tp or ""
+    bad = set(tp) - {"+", "-"}
+    if bad:
+        raise ValueError(f"{sam_record.query_name}: invalid characters in tp: {sorted(bad)}")
+    dense = np.zeros(n, dtype=int)
+    if n == 0:
+        non_max = np.zeros(0, dtype=bool)
+    else:
+        non_max = np.asarray(quals, dtype=int) != mq_val
+    if int(non_max.sum()) != len(tp):
+        raise ValueError(
+            f"{sam_record.query_name}: tp length {len(tp)} != number of bases with QUAL != mq ({int(non_max.sum())})"
+        )
+    if len(tp):
+        dense[non_max] = np.where(np.frombuffer(tp.encode("ascii"), dtype=np.uint8) == ord("+"), 1, -1)
+    return dense
+
+
+def _get_read_group_mq(sam_record: pysam.AlignedSegment) -> str | None:
+    """Return the mq value of the @RG line of the record's read group, or None"""
+    if not sam_record.has_tag("RG") or sam_record.header is None:
+        return None
+    rgid = sam_record.get_tag("RG")
+    for rg in sam_record.header.to_dict().get("RG", []):
+        if rg.get("ID") == rgid:
+            return rg.get("mq")
+    return None
+
+
 class SupportedFormats(Enum):
     MATT = "matt"
     ILYA = "ilya"
@@ -351,7 +404,7 @@ class FlowBasedRead:
             flow_matrix = cls._matrix_from_qual_tp(
                 dct["key"],
                 np.array(sam_record.query_qualities, dtype=int),
-                tp_tag=np.array(sam_record.get_tag("tp"), dtype=int),
+                tp_tag=decode_tp_tag(sam_record),
                 t0_tag=t0,
                 fallback_filler=filler,
                 min_call_prob=min_call_prob,
@@ -1128,7 +1181,7 @@ def _extract_location(block: str) -> str:
     str: chrom:start-end
     """
 
-    return block.split("\n")[0].strip()
+    return block.split("\n", maxsplit=1)[0].strip()
 
 
 def _parse_active_region(block: str) -> list:

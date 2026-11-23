@@ -1,4 +1,5 @@
 import pickle
+import tempfile
 from os.path import join as pjoin
 from pathlib import Path
 
@@ -124,3 +125,46 @@ def test_get_flow_matrix_column_for_base(resources_dir):
                 assert (
                     rec.key[rec.base_to_flow_mapping[i]] == np.argmax(rec.get_flow_matrix_column_for_base(i)[1])
                 ) or np.max(rec.get_flow_matrix_column_for_base(i)[1]) < 0.9
+
+
+def _tp_record(qual: str, tp_tag: str | None, mq: str | None = "D", old_tp: list | None = None):
+    rg = "@RG\tID:A" + (f"\tmq:{mq}" if mq else "")
+    n = len(qual)
+    fields = ["r1", "0", "chr1", "1", "60", f"{n}M", "*", "0", "0", "A" * n, qual, "RG:Z:A"]
+    if tp_tag is not None:
+        fields.append(f"tp:Z:{tp_tag}")
+    if old_tp is not None:
+        fields.append("tp:B:c," + ",".join(str(x) for x in old_tp))
+    sam = f"@HD\tVN:1.6\n@SQ\tSN:chr1\tLN:1000\n{rg}\n" + "\t".join(fields) + "\n"
+    with tempfile.NamedTemporaryFile("w", suffix=".sam") as f:
+        f.write(sam)
+        f.flush()
+        return next(iter(pysam.AlignmentFile(f.name, "r")))
+
+
+def test_decode_tp_old_bc_format():
+    rec = _tp_record("DDD:", None, mq=None, old_tp=[0, 1, -1, 1])
+    assert fbr.decode_tp_tag(rec).tolist() == [0, 1, -1, 1]
+
+
+def test_decode_tp_sparse_z():
+    rec = _tp_record("DDDD:::*:D:D::", "+--+++++")
+    assert fbr.decode_tp_tag(rec).tolist() == [0, 0, 0, 0, 1, -1, -1, 1, 1, 0, 1, 0, 1, 1]
+
+
+def test_decode_tp_absent_is_zeros():
+    rec = _tp_record("DDDD", None)
+    assert fbr.decode_tp_tag(rec).tolist() == [0, 0, 0, 0]
+
+
+@pytest.mark.parametrize("tp_tag", ["+-", "+-+++", "+x+"])
+def test_decode_tp_length_mismatch_or_bad_char(tp_tag):
+    rec = _tp_record("DD:::", tp_tag)
+    with pytest.raises(ValueError):
+        fbr.decode_tp_tag(rec)
+
+
+def test_decode_tp_no_mq_raises():
+    rec = _tp_record("DD:::", "+-+", mq=None)
+    with pytest.raises(ValueError):
+        fbr.decode_tp_tag(rec)
