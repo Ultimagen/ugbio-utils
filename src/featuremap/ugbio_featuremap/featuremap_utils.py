@@ -88,6 +88,26 @@ def hmer_bin_cell(bin_label: str) -> str:
     return f"{CELL_HMER_INDEL}{CELL_SEP}{bin_label}"
 
 
+def nearest_bin_cell(cell: str, available) -> str | None:
+    """Nearest hmer run-length bin cell (in ``HMER_RUN_BINS`` order) that is in ``available``, else None.
+
+    For a bin without its own recalibration table (too sparse at training) the closest run-length bin is a better
+    stand-in than the pooled class table, whose count-limited ceiling can sit far above a long-run bin's (e.g.
+    L10+ falling back to a pooled 78 while L7-9 tops at 55). Ties go to the shorter-run bin. Returns ``cell`` itself
+    when it is available, and None for non-bin cells or when no bin is available.
+    """
+    labels = [label for label, _, _ in HMER_RUN_BINS]
+    prefix = f"{CELL_HMER_INDEL}{CELL_SEP}"
+    if not cell.startswith(prefix) or cell[len(prefix) :] not in labels:
+        return None
+    i = labels.index(cell[len(prefix) :])
+    for d in range(len(labels)):
+        for j in (i - d, i + d):
+            if 0 <= j < len(labels) and hmer_bin_cell(labels[j]) in available:
+                return hmer_bin_cell(labels[j])
+    return None
+
+
 def cell_key_expr(columns: list[str] | set[str], *, with_bins: bool = True) -> pl.Expr:
     """Polars expression giving each featuremap row its recalibration cell key.
 
