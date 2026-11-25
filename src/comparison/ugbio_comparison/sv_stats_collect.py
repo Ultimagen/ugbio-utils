@@ -120,7 +120,7 @@ def concordance_with_gt_roc(df_base: pd.DataFrame, df_calls: pd.DataFrame) -> pd
     gt = gt["label"]
     gt = gt.replace({"FN": "TP"})
     pos_label = "TP"
-    precision, recall, thresholds, _ = stats_utils.precision_recall_curve(
+    precision, recall, _, thresholds = stats_utils.precision_recall_curve(
         np.array(gt),
         np.array(predictions),
         np.array(fn_mask),

@@ -4,6 +4,7 @@ uv run --project src/comparison/sigprofiler pytest src/comparison/sigprofiler/te
 """
 
 import gzip
+import shutil
 from pathlib import Path
 
 import pytest
@@ -33,12 +34,15 @@ def test_prepare_input_vcf(tmp_path, compressed):
     assert records == ["100", "300"]
 
 
-def test_prepare_input_vcf_requires_new_dir(tmp_path):
+def test_prepare_input_vcf_replaces_existing_dir(tmp_path):
     input_vcf = tmp_path / "tumor.vcf"
     input_vcf.write_text(VCF)
     (tmp_path / "input").mkdir()
-    with pytest.raises(FileExistsError):
-        somatic_signatures.prepare_input_vcf(input_vcf, tmp_path / "input")
+    (tmp_path / "input" / "stale.vcf").write_text(VCF)
+
+    output_vcf = somatic_signatures.prepare_input_vcf(input_vcf, tmp_path / "input")
+
+    assert list((tmp_path / "input").iterdir()) == [output_vcf]
 
 
 def test_png_name():
@@ -58,3 +62,20 @@ def test_run_from_matrices(tmp_path):
     )
     assert summary == {"sample_name": "somatic_test", "contexts": ["SBS96", "ID83", "DBS78"]}
     assert (tmp_path / "final_results" / "SBS_96_plots_somatic_test.png").is_file()
+
+
+def test_run_from_indel_matrix_only(tmp_path):
+    matrices_dir = tmp_path / "matrices"
+    (matrices_dir / "ID").mkdir(parents=True)
+    shutil.copy(MATRICES_DIR / "ID" / "sample.ID83.all", matrices_dir / "ID")
+    summary = somatic_signatures.run_somatic_signatures(
+        output_dir=tmp_path / "out", genome="GRCh38", cosmic_version=3.3, matrices_dir=matrices_dir
+    )
+    assert summary == {"sample_name": "somatic_test", "contexts": ["ID83"]}
+
+
+def test_run_without_matrices(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        somatic_signatures.run_somatic_signatures(
+            output_dir=tmp_path / "out", genome="GRCh38", cosmic_version=3.3, matrices_dir=tmp_path
+        )

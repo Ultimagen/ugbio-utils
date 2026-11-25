@@ -30,7 +30,8 @@ def read_mock_vcf(vcf_data: str) -> pd.DataFrame:
 
 
 def mock_precision_recall_curve(gt, predictions, fn_mask, pos_label, min_class_counts_to_output):
-    return [0.8, 0.9], [0.7, 0.8], [0.5, 0.6], []
+    # precisions, recalls, f1 scores, thresholds
+    return [0.8, 0.9], [0.7, 0.8], [0.75, 0.85], [0.5, 0.6]
 
 
 @pytest.fixture

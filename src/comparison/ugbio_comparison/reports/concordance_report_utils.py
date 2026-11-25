@@ -399,7 +399,8 @@ class ReportUtils:
         # Change tree_score such that PASS will get high score values. FNs will be the lowest
         score_pass = d.query(f'filter == "PASS" & {score_name} == {score_name}').head(20)[score_name].mean()
         score_not_pass = d.query(f'filter != "PASS" & {score_name} == {score_name}').head(20)[score_name].mean()
-        dir_switch = 1 if score_pass > score_not_pass else -1
+        # Reverse the score only if both means are known and the PASS variants score lower
+        dir_switch = -1 if score_pass < score_not_pass else 1
         score = d[score_name] * dir_switch
         score = score - score.min()
 

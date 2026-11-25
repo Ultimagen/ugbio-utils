@@ -18,6 +18,7 @@ Outputs in ``--output_dir``:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import shutil
@@ -102,14 +103,18 @@ def prepare_input_vcf(input_vcf: Path, output_dir: Path) -> Path:
     input_vcf : Path
         VCF, bgzipped VCF or BCF
     output_dir : Path
-        Directory to create; must not exist
+        Directory to hold the VCF; replaced if it exists (e.g. when re-running)
 
     Returns
     -------
     Path
         The uncompressed VCF in ``output_dir``
     """
-    output_dir.mkdir(parents=True)
+    # Tolerate a missing directory on delete, and an existing one on create: HealthOmics dynamic
+    # run storage (NFS) does not guarantee idempotent CREATE/DELETE
+    with contextlib.suppress(FileNotFoundError):
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     output_vcf = output_dir / f"{sample_name_from_vcf(input_vcf)}.vcf"
     cmd = ["bcftools", "view", "--no-version", "-e", 'ALT="."', "-Ov", "-o", str(output_vcf), str(input_vcf)]
     logger.info(" ".join(cmd))
@@ -262,7 +267,13 @@ def run_somatic_signatures(
         install_genome(genome, genome_archive, reference_dir)
         vcf = prepare_input_vcf(input_vcf, output_dir / "input_vcf")
         matrices_dir = generate_matrices(vcf.parent, genome, reference_dir)
-    sample_name = pd.read_csv(matrices_dir / CONTEXTS[0].matrix, sep="\t", index_col=0, nrows=1).columns[0]
+    # Take the sample name from any matrix: an indel-only VCF has no SBS96 matrix
+    first_matrix = next(
+        (matrices_dir / context.matrix for context in CONTEXTS if (matrices_dir / context.matrix).is_file()), None
+    )
+    if first_matrix is None:
+        raise FileNotFoundError(f"No SigProfiler matrices in {matrices_dir}")
+    sample_name = pd.read_csv(first_matrix, sep="\t", index_col=0, nrows=1).columns[0]
 
     contexts = [
         context.name
