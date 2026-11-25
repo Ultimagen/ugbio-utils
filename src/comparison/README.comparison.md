@@ -6,10 +6,14 @@ This module includes comparison python scripts and utilities for bioinformatics 
 
 The comparison module is built on top of `ugbio_core` and provides command-line tools for variant benchmarking against ground truth datasets. For detailed usage of each tool, see the [CLI Scripts](#cli-scripts) section below.
 
-The comparison module provides two main CLI scripts for variant comparison:
+The comparison module provides these CLI scripts:
 
 1. **run_comparison_pipeline** - Compare small variant callsets to ground truth using VCFEVAL
 2. **sv_comparison_pipeline** - Compare structural variant (SV) callsets using Truvari
+3. **run_no_gt_report** - Collect the statistics of a callset without ground truth (and its COSMIC signatures)
+4. **collect_sv_stats** - Collect SV statistics (sizes, types and, optionally, concordance with the ground truth)
+
+It also includes the report notebooks that present these results (see [Reports](#reports)).
 
 ## Installation
 
@@ -182,6 +186,59 @@ sv_comparison_pipeline \
   --ignore_filter
 ```
 
+
+### 3. run_no_gt_report
+
+Statistics of a callset without ground truth, presented by the `report_wo_gt.ipynb` report. Three subcommands:
+
+- `variant_eval`: GATK VariantEval tables, optionally per annotation (`--annotation_names`); written to `<output_prefix>.h5`
+- `full_analysis`: VariantEval tables, indel and allele-frequency histograms, SNP trinucleotide motifs and the callable region size
+- `somatic_analysis`: COSMIC mutational signatures (SBS96, ID83, DBS78) with the SigProfiler suite. Activities
+  and sample profiles go to `<output_prefix>.h5` (keys `<context>_activity`, `<context>_profile` and
+  `signatures_sample_name`), plots to `<output_prefix>/final_results/`
+
+```bash
+run_no_gt_report full_analysis --input_file calls.vcf.gz --dbsnp dbsnp.vcf.gz --reference ref.fasta \
+  --output_prefix sample_wgs
+run_no_gt_report somatic_analysis --input_file somatic.vcf --genome_archive GRCh38.tar.gz \
+  --reference_name GRCh38 --output_prefix sample_wgs
+```
+
+SigProfiler does not download anything at runtime: the reference genome is installed from the SigProfiler genome
+archive (`GRCh38.tar.gz` or `GRCh37.tar.gz`, about 0.8 GB; installed it takes about 3 GB) passed with
+`--genome_archive`, into `--reference_dir` (default: `<output_prefix>/sigprofiler_reference`).
+
+#### The SigProfiler environment
+
+The SigProfiler packages need numpy>=2, while the workspace pins numpy<2, so the signature analysis
+(`sigprofiler/`, package `ugbio_sigprofiler`) is a separate uv project with pinned SigProfiler versions. It is not a workspace
+member and not part of the `ugbio_comparison` package. `run_no_gt_report` runs it as a subprocess, with:
+
+1. `$UGBIO_SIGPROFILER_PYTHON`, if set; the Docker image installs the environment in `/opt/sigprofiler_venv` and sets it
+2. otherwise, in a repository checkout, `uv run --project src/comparison/sigprofiler`, which creates or updates
+   `src/comparison/sigprofiler/.venv` on first use
+
+Its own tests run in its environment: `uv run --project src/comparison/sigprofiler pytest src/comparison/sigprofiler/tests`.
+
+### 4. collect_sv_stats
+
+```bash
+collect_sv_stats sv_calls.vcf.gz sv_stats.pkl [--concordance_h5 sv_comparison.h5] [--ignore_filter]
+```
+
+Writes a pickle with the type, length and length-by-type counts, and, with `--concordance_h5` (the output of
+`sv_comparison_pipeline`), the concordance per SV type and length and the false positive counts. The input of
+`createSVReport.ipynb`.
+
+## Reports
+
+Notebooks in `ugbio_comparison/reports/`, executed with papermill (e.g. with `generate_report` of `ugbio_core`):
+
+| Notebook | Input | Parameters |
+|----------|-------|------------|
+| `createVarReport.ipynb` | `run_comparison_pipeline` HDF5 | `h5_concordance_file`, `h5outfile`, `verbosity`, `run_id`, `pipeline_version`, `reference_version`, `truth_sample_name`, `exome_column_name`, `model_name`, `model_pkl` |
+| `createSVReport.ipynb` | `collect_sv_stats` pickle | `statistics_file`, `h5outfile`, `run_id`, `pipeline_version`, `reference_version`, `truth_sample_name` |
+| `report_wo_gt.ipynb` | `run_no_gt_report` HDF5 files | `h5_statistics`, `h5_statistics_wgs`, `h5outfile`, `annotation_intervals_names` (comma-separated), `is_somatic`, `filtered_vcf`, `signature_plots_folder`, `cosmic_signatures`, `run_id`, `pipeline_version` |
 
 ## Dependencies
 
