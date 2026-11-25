@@ -258,6 +258,14 @@ def run_somatic_signatures(
     dict
         The summary also written to ``summary.json``
     """
+    # Drop the results of a previous run in this directory: a context without mutations now
+    # must not keep its old plots and tables (tolerate missing paths, see prepare_input_vcf)
+    for stale_dir in (output_dir / FINAL_RESULTS_DIR, output_dir / "work"):
+        with contextlib.suppress(FileNotFoundError):
+            shutil.rmtree(stale_dir)
+    for context in CONTEXTS:
+        for suffix in ("profile", "activity"):
+            (output_dir / f"{context.name}_{suffix}.tsv").unlink(missing_ok=True)
     (output_dir / FINAL_RESULTS_DIR).mkdir(parents=True, exist_ok=True)
     if matrices_dir is None:
         if input_vcf is None or genome_archive is None:

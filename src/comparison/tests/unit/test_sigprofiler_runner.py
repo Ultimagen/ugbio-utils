@@ -66,6 +66,29 @@ def test_save_signatures_to_h5(tmp_path):
     assert pd.read_hdf(h5_file, sigprofiler_runner.SAMPLE_NAME_KEY).iloc[0] == "sample"
 
 
+def test_save_signatures_to_h5_drops_omitted_contexts(tmp_path):
+    h5_file = str(tmp_path / "stats.h5")
+    pd.Series([1.0]).to_hdf(h5_file, key="callable_size")
+    pd.Series([1.0]).to_hdf(h5_file, key="ID83_activity")
+    pd.DataFrame({"MutationType": ["x"], "sample": [1]}).to_hdf(h5_file, key="ID83_profile")
+    pd.DataFrame({"signature": ["SBS1"], "activity": [5.0]}).to_csv(
+        tmp_path / "SBS96_activity.tsv", sep="\t", index=False
+    )
+    pd.DataFrame({"MutationType": ["A[C>A]A"], "sample": [3]}).to_csv(
+        tmp_path / "SBS96_profile.tsv", sep="\t", index=False
+    )
+
+    sigprofiler_runner.save_signatures_to_h5(tmp_path, {"sample_name": "sample", "contexts": ["SBS96"]}, h5_file)
+
+    with pd.HDFStore(h5_file) as store:
+        assert set(store.keys()) == {
+            "/callable_size",
+            "/SBS96_activity",
+            "/SBS96_profile",
+            f"/{sigprofiler_runner.SAMPLE_NAME_KEY}",
+        }
+
+
 @pytest.fixture
 def sigprofiler_available():
     try:

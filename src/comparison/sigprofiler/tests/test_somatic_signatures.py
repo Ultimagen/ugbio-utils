@@ -79,3 +79,23 @@ def test_run_without_matrices(tmp_path):
         somatic_signatures.run_somatic_signatures(
             output_dir=tmp_path / "out", genome="GRCh38", cosmic_version=3.3, matrices_dir=tmp_path
         )
+
+
+def test_rerun_removes_stale_context_results(tmp_path):
+    out = tmp_path / "out"
+    somatic_signatures.run_somatic_signatures(
+        output_dir=out, genome="GRCh38", cosmic_version=3.3, matrices_dir=MATRICES_DIR
+    )
+    assert (out / "ID83_activity.tsv").is_file()
+
+    matrices_dir = tmp_path / "matrices"
+    (matrices_dir / "SBS").mkdir(parents=True)
+    shutil.copy(MATRICES_DIR / "SBS" / "sample.SBS96.all", matrices_dir / "SBS")
+    summary = somatic_signatures.run_somatic_signatures(
+        output_dir=out, genome="GRCh38", cosmic_version=3.3, matrices_dir=matrices_dir
+    )
+
+    assert summary["contexts"] == ["SBS96"]
+    assert not (out / "ID83_activity.tsv").exists()
+    assert not (out / "ID83_profile.tsv").exists()
+    assert not list((out / "final_results").glob("ID_83_*"))

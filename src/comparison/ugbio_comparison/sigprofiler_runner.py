@@ -82,6 +82,14 @@ def save_signatures_to_h5(output_dir: Path, summary: dict, h5_file: str) -> None
     Keys: ``<context>_activity`` (activity per assigned signature), ``<context>_profile`` (sample mutation
     matrix) for every context with mutations, and ``signatures_sample_name`` (the name in the plot file names).
     """
+    # to_hdf appends: drop the signatures of contexts that are absent from this run
+    if Path(h5_file).exists():
+        new_keys = {f"/{context}_{kind}" for context in summary["contexts"] for kind in ("activity", "profile")}
+        with pd.HDFStore(h5_file) as store:
+            for key in store.keys():
+                is_signature_key = any(key in (f"/{c}_activity", f"/{c}_profile") for c in SIGNATURE_CONTEXTS)
+                if is_signature_key and key not in new_keys:
+                    store.remove(key)
     pd.Series([summary["sample_name"]]).to_hdf(h5_file, key=SAMPLE_NAME_KEY)
     for context in summary["contexts"]:
         activities = pd.read_csv(output_dir / f"{context}_activity.tsv", sep="\t", index_col=0)["activity"]
