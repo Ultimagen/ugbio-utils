@@ -111,7 +111,7 @@ COL_X_HMER_RUN = "X_HMER_RUN"  # length of the reference homopolymer run an hmer
 COL_X_IC = "X_IC"  # Indel-class column emitted by snvfind: "ins"/"del" for hmer-indels, null for SNVs
 
 # Duplex / consensus per-read tags used to classify a read's molecule type for the duplex oversampling of the
-# training set (ramp_ppmseq_duplex_pe consensus CRAMs, paired-end):
+# training set (duplex_pe consensus CRAMs, paired-end):
 #   * CS = the molecule id, shared across BOTH strands and BOTH mates -> the ONLY correct molecule key.
 #   * dx:i:1 marks a DUPLEX molecule (both strands present); absent (null) otherwise. It is coverage-based (set on
 #     every read of the molecule), so it tags a duplex molecule even when only one strand flagged the variant
