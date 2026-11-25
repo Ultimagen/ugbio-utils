@@ -19,7 +19,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 
 # Install wheels with all extras — C extensions compile here, not in runtime
 RUN WHEEL_FILE=$(find ${OUT_DIR} -name "ugbio_core*.whl") && \
-    pip install "${WHEEL_FILE}[vcfbed,reports,ml]"
+    pip install "${WHEEL_FILE}[vcfbed,reports,ml,onnx]"
 
 # ##################################################################
 FROM $BASE_IMAGE
