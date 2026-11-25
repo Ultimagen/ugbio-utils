@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 import warnings
-from configparser import ConfigParser
 from enum import Enum
 
 import matplotlib.pyplot as plt
@@ -10,41 +9,23 @@ import numpy as np
 import pandas as pd
 from IPython.display import Markdown, display
 from matplotlib.ticker import FormatStrFormatter
-from scipy.interpolate import interp1d
+from ugbio_core.stats_utils import get_f1, get_precision, get_recall
 
-from ugvc.utils.stats_utils import get_f1, get_precision, get_recall
-
-
-def parse_config(config_file):
-    parser = ConfigParser()
-    parser.read(config_file)
-    param_names = ["run_id", "pipeline_version", "h5_concordance_file"]
-    parameters = {p: parser.get("VarReport", p) for p in param_names}
-    parameters["verbosity"] = parser.get("VarReport", "verbosity", fallback="5")
-    param_names.append("verbosity")
-
-    # Optional parameters
-    parameters["reference_version"] = parser.get("VarReport", "reference_version", fallback="hg38")
-    parameters["truth_sample_name"] = parser.get("VarReport", "truth_sample_name", fallback="NA")
-    parameters["h5outfile"] = parser.get("VarReport", "h5_output", fallback="var_report.h5")
-    parameters["trained_w_gt"] = parser.get("VarReport", "h5_model_file", fallback=None)
-
-    if parameters["truth_sample_name"]:
-        param_names.append("truth_sample_name")
-
-    for opt_param_name in (
-        "model_name_with_gt",
-        "model_name_without_gt",
-        "model_pkl_with_gt",
-        "model_pkl_without_gt",
-        "model_name",
-    ):
-        opt_param = parser.get("VarReport", opt_param_name, fallback=None)
-        if opt_param:
-            parameters[opt_param_name] = opt_param
-            param_names.append(opt_param_name)
-
-    return parameters, param_names
+# Minimal number of variants in a category to calculate its precision/recall curve
+MIN_VARIANTS_FOR_PR_CURVE = 10
+# Categories that are calculated but not displayed in the plots and in the error-types tables
+HIDDEN_HMER_CATEGORIES = tuple(f"hmer Indel {i}" for i in range(4, 10))
+# hmer-indel categories: (lower bound - exclusive, upper bound - inclusive) of the hmer length
+HMER_INDEL_CATEGORIES = {
+    "hmer Indel <=4": (0, 4),
+    "hmer Indel >4,<=8": (4, 8),
+    "hmer Indel >8,<=10": (8, 10),
+    "hmer Indel >10,<=12": (10, 12),
+    "hmer Indel >12,<=14": (12, 14),
+    "hmer Indel >15,<=19": (14, 19),
+    "hmer Indel >=20": (19, np.inf),
+    "non-hmer Indel + hmer Indel <=12": (-np.inf, 12),
+} | {f"hmer Indel {i}": (i - 1, i) for i in range(1, 10)}
 
 
 class ErrorType(Enum):
@@ -82,7 +63,7 @@ class ReportUtils:
             sec_error_types_tab.to_hdf(self.h5outfile, key=f"{out_key_sec}_error_types")
 
             sec_opt_tab = pd.concat([opt_tab, sec_opt_tab], keys=[out_key, "After filtering systematic errors"], axis=1)
-            self.__display_tables(
+            error_types_tab = self.__display_tables(
                 sec_opt_tab,
                 error_types_tab,
                 out_key,
@@ -97,7 +78,7 @@ class ReportUtils:
                     opt_res_sec=sec_opt_res,
                 )
         else:
-            self.__display_tables(opt_tab, error_types_tab, out_key)
+            error_types_tab = self.__display_tables(opt_tab, error_types_tab, out_key)
             if self.verbosity > 1:
                 self.plot_performance(perf_curve, opt_res, categories, out_key)
 
@@ -119,7 +100,7 @@ class ReportUtils:
         ]
 
         opt_tab, opt_res, perf_curve, _ = self.get_performance(base_data, categories)
-        opt_tab.rename(index={a: "{0} ({1}/{2})".format(a, bases[0], bases[1]) for a in opt_tab.index}, inplace=True)
+        opt_tab = opt_tab.rename(index={a: f"{a} ({bases[0]}/{bases[1]})" for a in opt_tab.index})
         display(opt_tab)
         if self.verbosity > 1:
             self.plot_performance(perf_curve, opt_res, categories, str(bases))
@@ -134,68 +115,57 @@ class ReportUtils:
         opt_res_sec=None,
     ):
         m = self.num_plots_in_row
-        for i in range(4, 10):
-            drop_cat = f"hmer Indel {i}"
-            if drop_cat in categories:
-                categories.remove(drop_cat)
+        categories = [cat for cat in categories if cat not in HIDDEN_HMER_CATEGORIES]
         n = math.ceil(len(categories) / m)
         num_empty_subplots = n * m - len(categories)
 
-        fig_pr, ax_pr = plt.subplots(n, m, figsize=(3 * m, 3 * n + 0.5 * (n - 1)))
-        fig_score, ax_score = plt.subplots(n, m, figsize=(3 * m, 3 * n + 0.5 * (n - 1)))
+        figsize = (3 * m, 3 * n + 0.5 * (n - 1))
+        fig_pr, ax_pr = plt.subplots(n, m, figsize=figsize, squeeze=False)
+        fig_score, ax_score = plt.subplots(n, m, figsize=figsize, squeeze=False)
 
-        opt_sec, ax_pr_row, ax_score_row = None, None, None
         for cat_index, cat in enumerate(categories):
-            i = math.floor(cat_index / m)
-            j = cat_index % m
-            if len(ax_pr.shape) == 2:
-                ax_pr_row = ax_pr[i]
-                ax_score_row = ax_score[i]
-            else:
-                ax_pr_row = ax_pr
-                ax_score_row = ax_score
-            ax_pr_row[0].set_ylabel("Precision")
-
-            perf = perf_curve[cat]
-
-            opt = opt_res[cat]
-            if opt_res_sec is not None:
-                opt_sec = opt_res_sec[cat]
-            if not perf.empty and not np.all(pd.isnull(perf.precision)) and not np.all(pd.isnull(perf.recall)):
-                ax_pr_row[j].plot(perf.recall, perf.precision, "-", color="r")
-                ax_pr_row[j].plot(opt.get("recall"), opt.get("precision"), "o", color="red")
-                if opt_res_sec is not None:
-                    ax_pr_row[j].plot(opt_sec.get("recall"), opt_sec.get("precision"), "o", color="black")
-                ax_score_row[j].plot(perf[self.score_name], perf.precision, label="precision")
-                ax_score_row[j].plot(perf[self.score_name], perf.recall, label="recall")
-                ax_score_row[j].plot(perf[self.score_name], perf.f1, label="f1")
-
-                title = cat
-                ax_pr_row[j].set_title(title)
-                ax_score_row[j].set_title(title)
-                ax_pr_row[j].set_xlabel("Recall")
-                ax_score_row[j].set_xlabel("score")
-                ax_score_row[j].grid(True)
-                ax_score_row[0].legend(loc="upper right")
-
-                best_f1 = perf.f1.max()
-                if not math.isnan(best_f1):
-                    f1_range = self.__get_range_from_gap(best_f1)
-                    ax_pr_row[j].set_xlim(f1_range)
-                    ax_pr_row[j].set_ylim(f1_range)
-                    max_score = max(perf[perf.f1 >= f1_range[0]][self.score_name].max(), 0.01)
-                    ax_score_row[j].set_xlim([0, max_score])
-                    ax_score_row[j].set_ylim(f1_range)
-                ax_pr_row[j].grid(True)
+            i, j = divmod(cat_index, m)
+            ax_pr[i][0].set_ylabel("Precision")
+            opt_sec = opt_res_sec[cat] if opt_res_sec is not None else None
+            self.__plot_category_performance(ax_pr[i][j], ax_score[i][j], perf_curve[cat], opt_res[cat], opt_sec, cat)
+            if ax_score[i][j].has_data():
+                ax_score[i][0].legend(loc="upper right")
         for i in range(num_empty_subplots):
-            if ax_pr_row is not None:
-                fig_pr.delaxes(ax_pr_row[m - i - 1])
-                fig_score.delaxes(ax_score_row[m - i - 1])
+            fig_pr.delaxes(ax_pr[-1][m - i - 1])
+            fig_score.delaxes(ax_score[-1][m - i - 1])
         fig_pr.suptitle(f"Precision/Recall curve ({name})", fontsize=20)
         fig_score.suptitle(f"Score vs. accuracy ({name})", fontsize=20)
         fig_pr.tight_layout()
         fig_score.tight_layout()
         plt.show()
+
+    def __plot_category_performance(self, ax_pr, ax_score, perf, opt, opt_sec, title):
+        """Plot the precision/recall curve and the accuracy vs. score of a single category"""
+        if perf.empty or np.all(pd.isna(perf.precision)) or np.all(pd.isna(perf.recall)):
+            return
+        ax_pr.plot(perf.recall, perf.precision, "-", color="r")
+        ax_pr.plot(opt.get("recall"), opt.get("precision"), "o", color="red")
+        if opt_sec is not None:
+            ax_pr.plot(opt_sec.get("recall"), opt_sec.get("precision"), "o", color="black")
+        ax_score.plot(perf[self.score_name], perf.precision, label="precision")
+        ax_score.plot(perf[self.score_name], perf.recall, label="recall")
+        ax_score.plot(perf[self.score_name], perf.f1, label="f1")
+
+        ax_pr.set_title(title)
+        ax_score.set_title(title)
+        ax_pr.set_xlabel("Recall")
+        ax_score.set_xlabel("score")
+        ax_score.grid(visible=True)
+
+        best_f1 = perf.f1.max()
+        if not math.isnan(best_f1):
+            f1_range = self.__get_range_from_gap(best_f1)
+            ax_pr.set_xlim(f1_range)
+            ax_pr.set_ylim(f1_range)
+            max_score = max(perf[perf.f1 >= f1_range[0]][self.score_name].max(), 0.01)
+            ax_score.set_xlim([0, max_score])
+            ax_score.set_ylim(f1_range)
+        ax_pr.grid(visible=True)
 
     @staticmethod
     def __get_range_from_gap(metric):
@@ -323,7 +293,8 @@ class ReportUtils:
         fig.legend()
         fig.xaxis.set_ticks(np.arange(min_value, max_value, tick_width))
 
-    def __display_tables(self, opt_tab, error_types_tab, name, sec_error_types_tab=None):
+    def __display_tables(self, opt_tab, error_types_tab, name, sec_error_types_tab=None) -> pd.DataFrame:
+        """Display the accuracy and error types tables; return the error types table as displayed"""
         anchor = self.get_anchor(f"gen_acc_{name}")
         display(Markdown(f"### General accuracy ({name}) {anchor}"))
         if self.verbosity > 1:
@@ -348,20 +319,14 @@ class ReportUtils:
                     "* miss - completely missed true variants\n"
                 )
             )
-            drop_list = [
-                "hmer Indel 4",
-                "hmer Indel 5",
-                "hmer Indel 6",
-                "hmer Indel 7",
-                "hmer Indel 8",
-            ]
-            error_types_tab.drop(drop_list, errors="ignore", inplace=True)
+            drop_list = [f"hmer Indel {i}" for i in range(4, 9)]
+            error_types_tab = error_types_tab.drop(drop_list, errors="ignore")
             display(error_types_tab)
             if sec_error_types_tab is not None:
                 display(Markdown("After systematic error correction:"))
-                sec_error_types_tab.drop(drop_list, errors="ignore", inplace=True)
-                display(sec_error_types_tab)
+                display(sec_error_types_tab.drop(drop_list, errors="ignore"))
             error_types_tab.plot.bar(stacked=True, figsize=(8, 6))
+        return error_types_tab
 
     def __get_general_performance_df(self, cat, performance_dict):
         if self.verbosity > 1:
@@ -486,7 +451,7 @@ class ReportUtils:
             "filter_true": filtered_true,
             "miss_candidate": missing_candidates,
         }
-        if len(d) < 10:
+        if len(d) < MIN_VARIANTS_FOR_PR_CURVE:
             return result_dict, pr_curve
 
         # Sort by score to get precision/recall curve
@@ -497,41 +462,21 @@ class ReportUtils:
         d["fn"] = initial_fn + np.cumsum(d["tp"])
         d["tp"] = initial_tp - np.cumsum(d["tp"])  # how many tps pass score threshold
         d["fp"] = initial_fp - np.cumsum(d["fp"])  # how many fps pass score threshold
-        d["recall"] = d[["fn", "tp"]].apply(lambda t: get_recall(t[0], t[1], np.nan), axis=1)
-        d["precision"] = d[["fp", "tp"]].apply(lambda t: get_precision(t[0], t[1], np.nan), axis=1)
-        d["f1"] = d[["precision", "recall"]].apply(lambda t: get_f1(t[0], t[1], np.nan), axis=1)
+        d["recall"] = d[["fn", "tp"]].apply(lambda t: get_recall(t["fn"], t["tp"], np.nan), axis=1)
+        d["precision"] = d[["fp", "tp"]].apply(lambda t: get_precision(t["fp"], t["tp"], np.nan), axis=1)
+        d["f1"] = d[["precision", "recall"]].apply(lambda t: get_f1(t["precision"], t["recall"], np.nan), axis=1)
         pr_curve = d[[score_name, "recall", "precision", "f1"]]
         return result_dict, pr_curve
 
     @staticmethod
     def __filter_by_category(data, cat) -> pd.DataFrame:
-        result = None
         if cat == "SNP":
-            result = data[~data["indel"]]
-        elif cat == "Indel":
-            result = data[data["indel"]]
-        elif cat == "non-hmer Indel":
-            result = data[(data["indel"]) & (data["hmer_length"] == 0) & (data["indel_length"] > 0)]
-        elif cat == "hmer Indel <=4":
-            result = data[(data["indel"]) & (data["hmer_length"] > 0) & (data["hmer_length"] <= 4)]
-        elif cat == "hmer Indel >4,<=8":
-            result = data[(data["indel"]) & (data["hmer_length"] > 4) & (data["hmer_length"] <= 8)]
-        elif cat == "hmer Indel >8,<=10":
-            result = data[(data["indel"]) & (data["hmer_length"] > 8) & (data["hmer_length"] <= 10)]
-        elif cat == "hmer Indel >10,<=12":
-            result = data[(data["indel"]) & (data["hmer_length"] > 10) & (data["hmer_length"] <= 12)]
-        elif cat == "hmer Indel >12,<=14":
-            result = data[(data["indel"]) & (data["hmer_length"] > 12) & (data["hmer_length"] <= 14)]
-        elif cat == "hmer Indel >15,<=19":
-            result = data[(data["indel"]) & (data["hmer_length"] > 14) & (data["hmer_length"] <= 19)]
-        elif cat == "hmer Indel >=20":
-            result = data[(data["indel"]) & (data["hmer_length"] >= 20)]
-        elif cat == "non-hmer Indel + hmer Indel <=12":
-            result = data[(data["indel"]) & (data["hmer_length"] <= 12)]            
-        for i in range(1, 10):
-            if cat == "hmer Indel {0:d}".format(i):
-                result = data[(data["indel"]) & (data["hmer_length"] == i)]
-                return result
-        if result is None:
+            return data[~data["indel"]]
+        if cat == "Indel":
+            return data[data["indel"]]
+        if cat == "non-hmer Indel":
+            return data[(data["indel"]) & (data["hmer_length"] == 0) & (data["indel_length"] > 0)]
+        if cat not in HMER_INDEL_CATEGORIES:
             raise RuntimeError(f"No such category: {cat}")
-        return result
+        min_length, max_length = HMER_INDEL_CATEGORIES[cat]
+        return data[(data["indel"]) & data["hmer_length"].between(min_length, max_length, inclusive="right")]

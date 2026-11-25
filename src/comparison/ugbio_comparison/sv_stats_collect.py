@@ -10,10 +10,11 @@ from ugbio_core import stats_utils
 from ugbio_core.vcfbed import vcftools
 
 SVBINS = [0, 100, 300, 500, 1000, 2000, 3000, 5000, 10000, 100000, 1000000, float("inf")]
+MIN_CLASS_COUNTS_TO_OUTPUT = 20
 SVLABELS = ["50-100", "100-300", "300-500", "0.5-1k", "1k-2k", "2k-3k", "3k-5k", "5k-10k", "10k-100k", "100k-1M", ">1M"]
 
 
-def collect_size_type_histograms(svcall_vcf, ignore_filter: bool = False) -> dict[str, pd.DataFrame]:
+def collect_size_type_histograms(svcall_vcf, *, ignore_filter: bool = False) -> dict[str, pd.DataFrame]:
     """
     Collect size and type histograms from SV call VCF.
 
@@ -45,7 +46,7 @@ def collect_size_type_histograms(svcall_vcf, ignore_filter: bool = False) -> dic
     type_counts = vcf_df["svtype"].value_counts()
     length_counts = vcf_df["binned_svlens"].value_counts().sort_index()
 
-    svlens_counts_by_type = vcf_df.groupby(["svtype", "binned_svlens"]).size().unstack().fillna(0)
+    svlens_counts_by_type = pd.crosstab(vcf_df["svtype"], vcf_df["binned_svlens"])
     svlens_counts_by_type = svlens_counts_by_type.reindex(
         columns=SVLABELS,
         fill_value=0,
@@ -119,7 +120,6 @@ def concordance_with_gt_roc(df_base: pd.DataFrame, df_calls: pd.DataFrame) -> pd
     gt = gt["label"]
     gt = gt.replace({"FN": "TP"})
     pos_label = "TP"
-    MIN_CLASS_COUNTS_TO_OUTPUT = 20
     precision, recall, thresholds, _ = stats_utils.precision_recall_curve(
         np.array(gt),
         np.array(predictions),
@@ -127,11 +127,11 @@ def concordance_with_gt_roc(df_base: pd.DataFrame, df_calls: pd.DataFrame) -> pd
         pos_label=pos_label,
         min_class_counts_to_output=MIN_CLASS_COUNTS_TO_OUTPUT,
     )
-    return pd.Series(dict(zip(["precision", "recall", "thresholds"], [precision, recall, thresholds])))
+    return pd.Series(dict(zip(["precision", "recall", "thresholds"], [precision, recall, thresholds], strict=False)))
 
 
 def collect_sv_stats(
-    svcall_vcf: str, concordance_h5: str | None = None, ignore_filter: bool = False
+    svcall_vcf: str, concordance_h5: str | None = None, *, ignore_filter: bool = False
 ) -> tuple[dict, dict, pd.Series]:
     """
     Collect SV statistics from a VCF file. Optionally, collect also statistics about concordance with the ground truth
@@ -207,6 +207,12 @@ def collect_sv_stats(
     return sv_stats, concordance_stats, fp_stats
 
 
+def _split_stat_name(name: str) -> tuple[str, str]:
+    """Split ``<svtype>[_<length bin>]_<statistic>`` into the SV type and the length bin ("" if absent)"""
+    svtype, *length_bin, _ = name.split("_")
+    return svtype, length_bin[0] if length_bin else ""
+
+
 def run(args: list[str]):
     """
     Run the SV statistics collection pipeline.
@@ -235,21 +241,21 @@ def run(args: list[str]):
     p_args = parser.parse_args(args[1:])
 
     sv_stats, concordance_stats, fp_stats_df = collect_sv_stats(
-        p_args.svcall_vcf, p_args.concordance_h5, p_args.ignore_filter
+        p_args.svcall_vcf, p_args.concordance_h5, ignore_filter=p_args.ignore_filter
     )
     results = {}
     if concordance_stats:
         concordance_df = pd.DataFrame({k: v for k, v in concordance_stats.items() if "concordance" in k}).T
-        df = pd.DataFrame(
-            [x.split("_") if x.count("_") == 2 else x.replace("_", "__").split("_") for x in concordance_df.index]
+        stat_index = pd.DataFrame(
+            [_split_stat_name(name) for name in concordance_df.index], columns=["SV type", "SV length"]
         )
-        df = df.drop(2, axis=1)
-        df.columns = ["SV type", "SV length"]
-        concordance_df = pd.concat([df, concordance_df.reset_index().drop("index", axis=1)], axis=1).set_index(
+        concordance_df = pd.concat([stat_index, concordance_df.reset_index().drop("index", axis=1)], axis=1).set_index(
             ["SV type", "SV length"]
         )
         roc_df = pd.DataFrame({k: v for k, v in concordance_stats.items() if "roc" in k}).T
-        roc_df = pd.concat([df, roc_df.reset_index().drop("index", axis=1)], axis=1).set_index(["SV type", "SV length"])
+        roc_df = pd.concat([stat_index, roc_df.reset_index().drop("index", axis=1)], axis=1).set_index(
+            ["SV type", "SV length"]
+        )
         roc_df = roc_df.rename(columns={"precision": "precision roc", "recall": "recall roc"})
         concordance_df = pd.concat((concordance_df, roc_df), axis=1)
         results["concordance"] = concordance_df

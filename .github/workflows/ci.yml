@@ -132,8 +132,13 @@ jobs:
         working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
         run: uv sync --all-extras --all-packages
 
+      - name: install SigProfiler venv (separate project, see src/comparison/ugbio_comparison/sigprofiler_runner.py)
+        working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
+        run: uv sync --frozen --project src/comparison/sigprofiler
+
       - name: run tests
         working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
         run: |
           export PATH=/home/linuxbrew/.linuxbrew/bin/:$PATH
           uv run pytest --durations=0 src/ --ignore src/cnv/cnmops  # cn.mops tests need R: run in the cnv image
+          uv run --project src/comparison/sigprofiler pytest src/comparison/sigprofiler/tests

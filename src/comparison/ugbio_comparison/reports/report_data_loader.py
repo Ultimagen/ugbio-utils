@@ -2,7 +2,7 @@ import dill as pickle
 import numpy as np
 from ugbio_core.h5_utils import read_hdf
 
-from ugvc.reports.report_utils import ErrorType
+from ugbio_comparison.reports.concordance_report_utils import ErrorType
 
 
 class ReportDataLoader:
@@ -13,26 +13,25 @@ class ReportDataLoader:
         self.rename_dict = self.__get_rename_dict()
 
     def load_concordance_df(self):
-        df = read_hdf(
+        concordance = read_hdf(
             self.concordance_file, key="all", skip_keys=["concordance", "input_args"], columns_subset=self.columns
         )
-        df.rename(columns=self.rename_dict, inplace=True)
-        df["fp"] = (df["call"] == "FP") | (df["call"] == "FP_CA")
-        df["fn"] = (df["base"] == "FN") | (df["base"] == "FN_CA")
-        df["tp"] = df["call"] == "TP"
+        concordance = concordance.rename(columns=self.rename_dict)
+        concordance["fp"] = (concordance["call"] == "FP") | (concordance["call"] == "FP_CA")
+        concordance["fn"] = (concordance["base"] == "FN") | (concordance["base"] == "FN_CA")
+        concordance["tp"] = concordance["call"] == "TP"
         np.seterr(invalid="ignore")
-        if "vaf" not in df.columns:
-            df["vaf"] = df[["ad", "dp"]].apply(
-                lambda x: tuple([0]) if not isinstance(x.ad, tuple) else tuple(np.array(x.ad) / x.dp), axis=1
+        if "vaf" not in concordance.columns:
+            concordance["vaf"] = concordance[["ad", "dp"]].apply(
+                lambda x: (0,) if not isinstance(x.ad, tuple) else tuple(np.array(x.ad) / x.dp), axis=1
             )
-        df["max_vaf"] = df["vaf"].apply(lambda x: 0 if isinstance(x, float) else max(x))
-        if "qual" not in df or (~df.qual.isna()).sum() == 0:
-            df["qual"] = df["tree_score"]
+        concordance["max_vaf"] = concordance["vaf"].apply(lambda x: 0 if isinstance(x, float) else max(x))
+        if "qual" not in concordance or (~concordance.qual.isna()).sum() == 0:
+            concordance["qual"] = concordance["tree_score"]
 
-        genotypes = df["gt_ground_truth"] + df["gt_ultima"]
-        df["error_type"] = genotypes.apply(self.get_error_type)
-        df.rename(columns={"hmer_indel_length": "hmer_length"}, inplace=True)
-        return df
+        genotypes = concordance["gt_ground_truth"] + concordance["gt_ultima"]
+        concordance["error_type"] = genotypes.apply(self.get_error_type)
+        return concordance.rename(columns={"hmer_indel_length": "hmer_length"})
 
     def load_sv_concordance_df(self) -> tuple[dict, dict]:
         """
@@ -46,7 +45,7 @@ class ReportDataLoader:
             No GT statistics and GT statistics dictionaries.
         """
         with open(self.concordance_file, "rb") as f:
-            data = pickle.load(f)
+            data = pickle.load(f)  # noqa: S301 - statistics pickled by collect_sv_stats
         dfs_no_gt = {k: v for k, v in data.items() if k.endswith("counts")}
         dfs_with_gt = {k: v for k, v in data.items() if not k.endswith("counts")}
 
@@ -76,8 +75,10 @@ class ReportDataLoader:
         str
             Simplified reference version ('hg38' or 'hg19')
         """
-        hg38_patterns = ["hg38", "GRCh38"] # Other options not covered: hs38DH, GCA_000001405.15, GCF_000001405.26
-        hg19_patterns = ["hg19", "GRCh37", "b37"] # Other options not covered: hs37d5, human_g1k_v37, GCA_000001405.1, GCF_000001405.13
+        # Other options not covered: hs38DH, GCA_000001405.15, GCF_000001405.26 (hg38),
+        # hs37d5, human_g1k_v37, GCA_000001405.1, GCF_000001405.13 (hg19)
+        hg38_patterns = ["hg38", "GRCh38"]
+        hg19_patterns = ["hg19", "GRCh37", "b37"]
 
         for pattern in hg38_patterns:
             if pattern in reference_version:

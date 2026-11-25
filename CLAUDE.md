@@ -27,7 +27,7 @@ This file provides guidance for Claude Code and developers working with the ugbi
 src/
 ├── core/         (74 files) ugbio_core         - Foundation (ALL depend on this)
 ├── cnv/          (57 files) ugbio_cnv          - CNV calling (depth caller, FREEC)
-├── comparison/   (11 files) ugbio_comparison   - Variant comparison (Truvari)
+├── comparison/   (17 files) ugbio_comparison   - Variant comparison (Truvari), concordance / no-GT / SV reports
 ├── featuremap/   (13 py) ugbio_featuremap     - FeatureMap VCF→Parquet, Parquet filters, somatic SNVfind
 ├── filtering/    (50 files) ugbio_filtering    - ML filtering, SEC, training
 ├── mrd/          (6 files)  ugbio_mrd          - Minimal residual disease
@@ -335,10 +335,11 @@ gh run view <run-id>
 
 ### Other Modules
 
-**ugbio_comparison** (11 files):
-- Truvari-based SV comparison
-- Produces concordance analysis
-- Entry points: `run_comparison_pipeline`, `sv_comparison_pipeline`
+**ugbio_comparison** (17 files):
+- Truvari-based SV comparison, VCFEVAL concordance
+- Report notebooks (`reports/`): variant calling, SV and no-ground-truth reports
+- COSMIC signatures (SigProfiler) in a separate uv project, `src/comparison/sigprofiler` (numpy>=2, own lock and venv, run as a subprocess via `sigprofiler_runner.py`)
+- Entry points: `run_comparison_pipeline`, `sv_comparison_pipeline`, `run_no_gt_report`, `collect_sv_stats`
 
 **ugbio_srsnv** (20 files):
 - Single-read SNV detection, training, inference with SHAP
