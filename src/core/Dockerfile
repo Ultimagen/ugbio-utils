@@ -1,6 +1,6 @@
 # BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE)
-ARG BASE_IMAGE
-ARG BASE_BUILD_IMAGE
+ARG BASE_IMAGE=ugbio_base:samtools1.25
+ARG BASE_BUILD_IMAGE=ugbio_base_build:samtools1.25
 ARG OUT_DIR=/tmp/ugbio
 FROM $BASE_BUILD_IMAGE AS build
 
