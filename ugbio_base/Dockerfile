@@ -4,8 +4,8 @@
 FROM python:3.11-slim-bookworm AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG BCFTOOLS_VERSION=1.20
-ARG SAMTOOLS_VERSION=1.20
+ARG BCFTOOLS_VERSION=1.25
+ARG SAMTOOLS_VERSION=1.25
 ARG BEDTOOLS_VERSION=2.31.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
