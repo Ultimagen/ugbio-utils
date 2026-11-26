@@ -26,10 +26,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 # Install wheels — C extensions compile here, not in runtime.
-# pywfa and pyabpoa (truvari, used by merge_cnv_sv) are built without -march=native, so the image runs on hosts
-# without AVX-512 (a native build exits with SIGILL there)
-RUN PYWFA_MARCH=x86-64-v3 pip install --no-binary pywfa "pywfa>=0.6.0"
-RUN AVX2=1 pip install ${OUT_DIR}/*.whl
+RUN pip install ${OUT_DIR}/*.whl
 RUN pip install pytest
 
 # Optional cn.mops path (src/cnv/cnmops): R and the R packages its scripts load, compiled here into /opt/rlib
